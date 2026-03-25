@@ -2406,8 +2406,9 @@ def pit_auto_grade(apodo: str, ronda_id: str, my_record: dict) -> tuple[int, int
                 else:
                     # Get last pick description for asesino
                     try:
-                        ws_p = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
-                        all_p = _safe_get_records(ws_p)
+                        _ss2 = get_ss()
+                        ws_p = ensure_tab(_ss2, "pit_picks", PIT_PICKS_HEADERS) if _ss2 else None
+                        all_p = _safe_get_records(ws_p) if ws_p else []
                         my_p  = [r for r in all_p
                                  if str(r.get("ronda_id",""))==str(ronda_id)
                                  and r.get("apodo","").lower()==apodo.lower()]
@@ -2958,7 +2959,11 @@ def main():
     with t3: tab_analytics(df, bank)
     with t4: tab_challenge(apodo, df, bank)
     with t5: tab_simulador(df, bank)
-    with t6: tab_the_pit(apodo, bank)
+    with t6:
+        try:
+            tab_the_pit(apodo, bank)
+        except Exception as _pit_err:
+            st.error(f"THE PIT error: {type(_pit_err).__name__}: {_pit_err}")
 
 
 if __name__ == "__main__":
