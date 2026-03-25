@@ -85,20 +85,20 @@ ESPN_LEAGUES_GROUPED = {
         "Liga MX Femenil":       ("soccer", "mex.w.1"),
     },
     "🌍 Fútbol — Selecciones": {
-        "🔍 Buscar por equipo":    ("soccer", "__team_search__"),
-        "Eliminatorias UEFA":      ("soccer", "fifa.worldq.6"),
-        "Playoffs Eliminat. UEFA": ("soccer", "fifa.worldq.europe"),
-        "Elim. UEFA (alt)":        ("soccer", "uefa.qualifiers"),
-        "Eliminatorias CONMEBOL":  ("soccer", "fifa.worldq.2"),
-        "Eliminatorias CONCACAF":  ("soccer", "fifa.worldq.5"),
-        "Eliminatorias AFC":       ("soccer", "fifa.worldq.3"),
-        "Nations League UEFA":     ("soccer", "uefa.nations"),
-        "Copa América":            ("soccer", "conmebol.america"),
-        "Eurocopa":                ("soccer", "uefa.euro"),
-        "Gold Cup":                ("soccer", "concacaf.gold"),
-        "Amistosos Internac.":     ("soccer", "fifa.friendly"),
-        "Mundial de Clubes":       ("soccer", "fifa.cwc"),
-        "Fútbol Internacional":    ("soccer", "fifa.worldq"),
+        "🔍 Buscar por equipo":         ("soccer", "__team_search__"),
+        "Playoffs UEFA WC2026":          ("soccer", "fifa.worldq.uefa"),
+        "Eliminatorias UEFA":            ("soccer", "fifa.worldq.6"),
+        "Playoffs Eliminat. UEFA (alt)": ("soccer", "fifa.worldq.europe"),
+        "Eliminatorias CONMEBOL":        ("soccer", "fifa.worldq.2"),
+        "Eliminatorias CONCACAF":        ("soccer", "fifa.worldq.5"),
+        "Eliminatorias AFC":             ("soccer", "fifa.worldq.3"),
+        "Nations League UEFA":           ("soccer", "uefa.nations"),
+        "Copa América":                  ("soccer", "conmebol.america"),
+        "Eurocopa":                      ("soccer", "uefa.euro"),
+        "Gold Cup":                      ("soccer", "concacaf.gold"),
+        "Amistosos Internac.":           ("soccer", "fifa.friendly"),
+        "Mundial de Clubes":             ("soccer", "fifa.cwc"),
+        "Fútbol Internacional":          ("soccer", "fifa.worldq"),
     },
     "🏀 Basketball": {
         "NBA":                   ("basketball", "nba"),
@@ -544,15 +544,17 @@ def _get_odds_key() -> str:
     except Exception:
         return "2d5024df981ff5f4a44eccc2ff61affd"
 
-# Sport keys for The Odds API
+# Sport keys for The Odds API — verified keys
 ODDS_SPORT_MAP = {
-    # Soccer international
-    "fifa.worldq":         "soccer_fifa_world_cup_qualifier_europe",
+    # International soccer — WC qualifiers
+    "fifa.worldq":         "soccer_fifa_world_cup_qualifier",
     "fifa.worldq.6":       "soccer_fifa_world_cup_qualifier_europe",
     "fifa.worldq.europe":  "soccer_fifa_world_cup_qualifier_europe",
+    "fifa.worldq.uefa":    "soccer_fifa_world_cup_qualifier_europe",
     "uefa.qualifiers":     "soccer_fifa_world_cup_qualifier_europe",
     "fifa.worldq.2":       "soccer_conmebol_copa_america",
-    "fifa.worldq.5":       "soccer_concacaf_gold_cup",
+    "fifa.worldq.5":       "soccer_fifa_world_cup_qualifier_concacaf",
+    "fifa.worldq.3":       "soccer_fifa_world_cup_qualifier_asia",
     "__team_search__":     "soccer_fifa_world_cup_qualifier_europe",
     # Club soccer
     "eng.1":               "soccer_epl",
@@ -575,13 +577,127 @@ ODDS_SPORT_MAP = {
     "wta":                 "tennis_wta_french_open",
 }
 
-@st.cache_data(ttl=21600, show_spinner=False)  # 6 hours — minimize API calls
+# All WC qualifier sport keys to try — covers all paths/confederations
+WC_QUALIFIER_KEYS = [
+    "soccer_fifa_world_cup_qualifier_europe",
+    "soccer_fifa_world_cup_qualifier_concacaf",
+    "soccer_fifa_world_cup_qualifier_conmebol",
+    "soccer_fifa_world_cup_qualifier_asia",
+    "soccer_fifa_world_cup_qualifier_africa",
+    "soccer_fifa_world_cup_qualifier_oceania",
+    "soccer_international_friendlies",
+    "soccer_uefa_nations_league",
+]
+
+ODDS_CACHE_TAB     = "odds_cache"
+ODDS_CACHE_HEADERS = ["sport_key","fetched_at","event_id","home","away",
+                       "date_raw","home_odds","away_odds","draw_odds","odds_sport"]
+ODDS_CACHE_TTL_HRS = 6  # hours before Sheet cache is considered stale
+
+def _odds_sheet_read(sport_key: str) -> list:
+    """Read cached odds from Google Sheet. Returns [] if stale or missing."""
+    try:
+        ss = get_ss()
+        if not ss: return []
+        ws = ensure_tab(ss, ODDS_CACHE_TAB, ODDS_CACHE_HEADERS)
+        rows = _safe_get_records(ws)
+        if not rows: return []
+        # Find rows for this sport_key
+        now = datetime.utcnow()
+        sport_rows = [r for r in rows if r.get("sport_key","") == sport_key]
+        if not sport_rows: return []
+        # Check freshness — use fetched_at of first matching row
+        try:
+            fetched = datetime.fromisoformat(str(sport_rows[0].get("fetched_at","")))
+            if (now - fetched).total_seconds() > ODDS_CACHE_TTL_HRS * 3600:
+                return []  # stale
+        except Exception:
+            return []
+        # Rebuild event list
+        results = []
+        for r in sport_rows:
+            home = r.get("home",""); away = r.get("away","")
+            date_raw = r.get("date_raw","")
+            try:
+                dt_mx = datetime.fromisoformat(date_raw.replace("Z","+00:00")) - timedelta(hours=6)
+                d_str = dt_mx.strftime("%d %b %H:%M")
+            except Exception:
+                d_str = date_raw[:10]
+            # Skip past events
+            try:
+                ev_dt = datetime.fromisoformat(date_raw.replace("Z","+00:00"))
+                if ev_dt.replace(tzinfo=None) < datetime.utcnow() - timedelta(hours=2):
+                    continue
+            except Exception:
+                pass
+            results.append({
+                "id":           f"odds_{r.get('event_id','')}",
+                "name":         f"{away} @ {home}",
+                "short":        f"{away} @ {home}",
+                "home":         home, "away": away,
+                "home_logo":    "", "away_logo": "",
+                "home_flag":    _get_flag_url(home),
+                "away_flag":    _get_flag_url(away),
+                "home_score":   "", "away_score": "",
+                "date":         d_str, "date_raw": date_raw,
+                "status":       "STATUS_SCHEDULED", "status_state": "pre",
+                "status_detail":"", "completed": False, "is_live": False,
+                "sport":        "soccer", "odds_sport": sport_key,
+                "home_odds":    round(float(r.get("home_odds",0) or 0), 2),
+                "away_odds":    round(float(r.get("away_odds",0) or 0), 2),
+                "draw_odds":    round(float(r.get("draw_odds",0) or 0), 2),
+            })
+        results.sort(key=lambda e: e["date_raw"])
+        return results
+    except Exception:
+        return []
+
+def _odds_sheet_write(sport_key: str, events: list):
+    """Write odds to Google Sheet cache. Replaces existing rows for this sport_key."""
+    try:
+        ss = get_ss()
+        if not ss: return
+        ws  = ensure_tab(ss, ODDS_CACHE_TAB, ODDS_CACHE_HEADERS)
+        all_rows = _safe_get_records(ws)
+        now_str  = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S")
+
+        # Delete existing rows for this sport_key (bottom-up)
+        rows_to_del = [i for i, r in enumerate(all_rows) if r.get("sport_key","") == sport_key]
+        for idx in reversed(rows_to_del):
+            try: ws.delete_rows(idx + 2)
+            except Exception: pass
+
+        # Write new rows
+        new_rows = []
+        for ev in events:
+            new_rows.append([
+                sport_key, now_str,
+                ev["id"].replace("odds_",""),
+                ev["home"], ev["away"],
+                ev["date_raw"],
+                ev.get("home_odds",0),
+                ev.get("away_odds",0),
+                ev.get("draw_odds",0),
+                sport_key,
+            ])
+        if new_rows:
+            ws.append_rows(new_rows)
+    except Exception:
+        pass
+
+
+@st.cache_data(ttl=21600, show_spinner=False)  # 6-hour Streamlit cache
 def odds_fetch_sport(sport_key: str) -> list:
     """
-    Fetch ALL upcoming events + h2h odds for a sport in ONE single API call.
-    Cached 6 hours — this is the only place we hit The Odds API for events.
-    Returns list of events with odds already embedded.
+    Fetch ALL upcoming events + h2h odds for a sport.
+    Priority: 1) Streamlit cache  2) Google Sheet cache  3) The Odds API (uses quota)
     """
+    # Try Google Sheet cache first
+    sheet_data = _odds_sheet_read(sport_key)
+    if sheet_data:
+        return sheet_data
+
+    # Sheet cache miss — call The Odds API
     key = _get_odds_key()
     try:
         r = requests.get(
@@ -621,8 +737,8 @@ def odds_fetch_sport(sport_key: str) -> list:
                 for mkt in bk.get("markets",[]):
                     if mkt.get("key") == "h2h":
                         for oc in mkt.get("outcomes",[]):
-                            if oc["name"] == home:   home_odds = float(oc["price"])
-                            elif oc["name"] == away: away_odds = float(oc["price"])
+                            if oc["name"] == home:     home_odds = float(oc["price"])
+                            elif oc["name"] == away:   away_odds = float(oc["price"])
                             elif oc["name"] == "Draw": draw_odds = float(oc["price"])
                         break
                 if home_odds: break
@@ -640,13 +756,17 @@ def odds_fetch_sport(sport_key: str) -> list:
                 "status":       "STATUS_SCHEDULED", "status_state": "pre",
                 "status_detail":"", "completed": False, "is_live": False,
                 "sport":        "soccer", "odds_sport": sport_key,
-                # Odds embedded — no extra call needed
                 "home_odds":    round(home_odds, 2),
                 "away_odds":    round(away_odds, 2),
                 "draw_odds":    round(draw_odds, 2),
             })
 
         results.sort(key=lambda e: e["date_raw"])
+
+        # Save to Google Sheet cache for future requests
+        if results:
+            _odds_sheet_write(sport_key, results)
+
         return results
 
     except Exception:
@@ -656,27 +776,33 @@ def odds_fetch_sport(sport_key: str) -> list:
 def odds_search_events(league_slug: str, query: str = "") -> list:
     """
     Search events using cached sport data — NO extra API call per search.
-    Filters locally from the cached odds_fetch_sport result.
+    For international/WC qualifier searches, tries ALL confederation keys.
     """
     sport_key = ODDS_SPORT_MAP.get(league_slug, "")
     q_low     = query.strip().lower()
 
-    # Sports to search — single key or fallback list for international
-    if sport_key:
+    # For international soccer, try ALL WC qualifier keys to find all paths
+    is_international = league_slug in (
+        "fifa.worldq", "fifa.worldq.6", "fifa.worldq.europe",
+        "uefa.qualifiers", "__team_search__", "fifa.friendly",
+        "fifa.worldq.2", "fifa.worldq.3", "fifa.worldq.5",
+    )
+
+    if is_international:
+        sports = WC_QUALIFIER_KEYS  # try all confederations
+    elif sport_key:
         sports = [sport_key]
     else:
-        sports = [
-            "soccer_fifa_world_cup_qualifier_europe",
-            "soccer_international_friendlies",
-            "soccer_uefa_nations_league",
-        ]
+        sports = WC_QUALIFIER_KEYS
 
     all_events = []
+    seen = set()
     for sk in sports:
         cached = odds_fetch_sport(sk)
-        all_events.extend(cached)
-        if cached:
-            break  # found results, stop searching
+        for ev in cached:
+            if ev["id"] not in seen:
+                all_events.append(ev)
+                seen.add(ev["id"])
 
     # Filter by query locally — no API call
     if q_low:
@@ -687,6 +813,7 @@ def odds_search_events(league_slug: str, query: str = "") -> list:
                    for w in q_low.split() if len(w) > 2)
         ]
 
+    all_events.sort(key=lambda e: e["date_raw"])
     return all_events
 
 
@@ -1591,12 +1718,13 @@ ALL_TODAY_LEAGUES = [
     ("⚽ Fútbol — Clubes", "Liga Portugal",        "soccer", "por.1"),
     ("⚽ Fútbol — Clubes", "Superliga Argentina",  "soccer", "arg.1"),
     # Soccer selecciones
-    ("🌍 Fútbol — Selecciones", "Eliminatorias UEFA",     "soccer", "fifa.worldq.6"),
-    ("🌍 Fútbol — Selecciones", "Eliminatorias CONMEBOL", "soccer", "fifa.worldq.2"),
-    ("🌍 Fútbol — Selecciones", "Eliminatorias CONCACAF", "soccer", "fifa.worldq.5"),
-    ("🌍 Fútbol — Selecciones", "Nations League UEFA",    "soccer", "uefa.nations"),
-    ("🌍 Fútbol — Selecciones", "Amistosos Internac.",    "soccer", "fifa.friendly"),
-    ("🌍 Fútbol — Selecciones", "Fútbol Internacional",   "soccer", "fifa.worldq"),
+    ("🌍 Fútbol — Selecciones", "Playoffs UEFA WC2026",      "soccer", "fifa.worldq.uefa"),
+    ("🌍 Fútbol — Selecciones", "Eliminatorias UEFA",        "soccer", "fifa.worldq.6"),
+    ("🌍 Fútbol — Selecciones", "Eliminatorias CONMEBOL",    "soccer", "fifa.worldq.2"),
+    ("🌍 Fútbol — Selecciones", "Eliminatorias CONCACAF",    "soccer", "fifa.worldq.5"),
+    ("🌍 Fútbol — Selecciones", "Nations League UEFA",       "soccer", "uefa.nations"),
+    ("🌍 Fútbol — Selecciones", "Amistosos Internac.",       "soccer", "fifa.friendly"),
+    ("🌍 Fútbol — Selecciones", "Fútbol Internacional",      "soccer", "fifa.worldq"),
     # Other sports
     ("🏀 Basketball", "NBA",  "basketball", "nba"),
     ("⚾ Baseball",   "MLB",  "baseball",   "mlb"),
@@ -1673,18 +1801,34 @@ def load_all_today() -> dict:
         except Exception:
             continue
 
-    # Also fetch from Odds API for international soccer
+    # Also fetch from Odds API for ALL international soccer (all confederations)
     try:
-        odds_events = odds_fetch_sport("soccer_fifa_world_cup_qualifier_europe")
-        if odds_events:
-            grp = "🌍 Fútbol — Selecciones"
-            liga = "Playoffs Eliminat. UEFA"
+        intl_events = []
+        seen_intl = set()
+        for sk in WC_QUALIFIER_KEYS:
+            try:
+                evs = odds_fetch_sport(sk)
+                for e in evs:
+                    if e["id"] not in seen_intl:
+                        intl_events.append(e)
+                        seen_intl.add(e["id"])
+            except Exception:
+                continue
+
+        if intl_events:
+            grp  = "🌍 Fútbol — Selecciones"
+            liga = "Partidos Internacionales (The Odds API)"
             if grp not in result:
                 result[grp] = {}
-            existing_ids = {e["id"] for ligas in result.get(grp,{}).values() for e in ligas}
-            new_evs = [e for e in odds_events if e["id"] not in existing_ids]
+            # Remove duplicates with ESPN data
+            espn_ids = {
+                e["id"]
+                for ligas in result.get(grp,{}).values()
+                for e in ligas
+            }
+            new_evs = [e for e in intl_events if e["id"] not in espn_ids]
             if new_evs:
-                result[grp][liga] = new_evs
+                result[grp][liga] = sorted(new_evs, key=lambda e: e["date_raw"])
     except Exception:
         pass
 
@@ -1728,88 +1872,76 @@ def render_all_today(apodo: str):
     selected = st.session_state.get("selected_event", None)
 
     for sport_group, ligas in data.items():
-        # Sport group header
-        st.markdown(
-            f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:1.1rem;'
-            f'color:var(--neon);letter-spacing:3px;margin:18px 0 8px;'
-            f'border-bottom:1px solid rgba(240,255,0,.15);padding-bottom:4px">'
-            f'{sport_group}</div>',
-            unsafe_allow_html=True
-        )
+        total_in_group = sum(len(evs) for evs in ligas.values())
+        # Sport group as expander — open by default
+        with st.expander(f"{sport_group}  ·  {total_in_group} partidos", expanded=True):
+            for liga_name, events in ligas.items():
+                # League as nested expander — collapsed by default if many
+                with st.expander(f"▸ {liga_name}  ·  {len(events)} partidos", expanded=len(events) <= 6):
+                    is_tennis = events[0].get("sport") == "tennis" if events else False
+                    brad      = "50%" if is_tennis else "8px"
 
-        for liga_name, events in ligas.items():
-            # League sub-header
-            st.markdown(
-                f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.58rem;'
-                f'color:#BF5FFF;letter-spacing:2px;margin:10px 0 6px">'
-                f'▸ {liga_name.upper()} — {len(events)} partidos</div>',
-                unsafe_allow_html=True
-            )
+                    for row_start in range(0, len(events), 3):
+                        row_evs = events[row_start:row_start+3]
+                        cols    = st.columns(3)
+                        for col_idx in range(3):
+                            with cols[col_idx]:
+                                if col_idx >= len(row_evs):
+                                    st.empty(); continue
+                                ev      = row_evs[col_idx]
+                                is_live = ev.get("is_live", False)
+                                is_sel  = selected and selected.get("id") == ev["id"]
+                                away    = ev["away"]; home = ev["home"]
+                                s_txt   = "● LIVE" if is_live else ev["date"]
+                                s_col   = "#FF3D00" if is_live else "#00FFD1"
+                                border  = "rgba(240,255,0,.6)" if is_sel else ("rgba(255,61,0,.4)" if is_live else "rgba(255,255,255,.09)")
+                                bg      = "rgba(240,255,0,.05)" if is_sel else "rgba(255,255,255,.02)"
+                                a_lg    = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 36, brad)
+                                h_lg    = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 36, brad)
 
-            is_tennis = events[0].get("sport") == "tennis" if events else False
-            brad      = "50%" if is_tennis else "8px"
+                                # Odds badges
+                                odds_html = ""
+                                if ev.get("home_odds",0) > 1:
+                                    odds_html = (
+                                        f'<div style="display:flex;gap:4px;justify-content:center;'
+                                        f'margin-top:4px;font-family:\'JetBrains Mono\',monospace;font-size:.5rem">'
+                                        f'<span style="background:rgba(0,255,136,.12);color:#00FF88;'
+                                        f'padding:1px 5px;border-radius:4px">{ev["away_odds"]}</span>'
+                                    )
+                                    if ev.get("draw_odds",0) > 1:
+                                        odds_html += (
+                                            f'<span style="background:rgba(255,184,0,.12);color:#FFB800;'
+                                            f'padding:1px 5px;border-radius:4px">{ev["draw_odds"]}</span>'
+                                        )
+                                    odds_html += (
+                                        f'<span style="background:rgba(0,180,255,.12);color:#00B4FF;'
+                                        f'padding:1px 5px;border-radius:4px">{ev["home_odds"]}</span>'
+                                        f'</div>'
+                                    )
 
-            for row_start in range(0, len(events), 3):
-                row_evs = events[row_start:row_start+3]
-                cols    = st.columns(3)
-                for col_idx in range(3):
-                    with cols[col_idx]:
-                        if col_idx >= len(row_evs):
-                            st.empty(); continue
-                        ev      = row_evs[col_idx]
-                        is_live = ev.get("is_live", False)
-                        is_sel  = selected and selected.get("id") == ev["id"]
-                        away    = ev["away"]; home = ev["home"]
-                        s_txt   = "● LIVE" if is_live else ev["date"]
-                        s_col   = "#FF3D00" if is_live else "#00FFD1"
-                        border  = "rgba(240,255,0,.6)" if is_sel else ("rgba(255,61,0,.4)" if is_live else "rgba(255,255,255,.09)")
-                        bg      = "rgba(240,255,0,.05)" if is_sel else "rgba(255,255,255,.02)"
-                        a_lg    = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 36, brad)
-                        h_lg    = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 36, brad)
-
-                        # Odds badges
-                        odds_html = ""
-                        if ev.get("home_odds",0) > 1:
-                            odds_html = (
-                                f'<div style="display:flex;gap:4px;justify-content:center;'
-                                f'margin-top:4px;font-family:\'JetBrains Mono\',monospace;font-size:.5rem">'
-                                f'<span style="background:rgba(0,255,136,.12);color:#00FF88;'
-                                f'padding:1px 5px;border-radius:4px">{ev["away_odds"]}</span>'
-                            )
-                            if ev.get("draw_odds",0) > 1:
-                                odds_html += (
-                                    f'<span style="background:rgba(255,184,0,.12);color:#FFB800;'
-                                    f'padding:1px 5px;border-radius:4px">{ev["draw_odds"]}</span>'
+                                st.markdown(
+                                    f'<div style="background:{bg};border:1px solid {border};'
+                                    f'border-radius:12px;padding:10px 8px;text-align:center">'
+                                    f'<div style="display:flex;align-items:center;justify-content:center;'
+                                    f'gap:5px;margin-bottom:5px">'
+                                    f'<div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex:1">'
+                                    f'{a_lg}<div style="font-size:.58rem;font-weight:700;color:#EEEEF5;'
+                                    f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px">'
+                                    f'{away}</div></div>'
+                                    f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.7rem;color:#44445A">VS</div>'
+                                    f'<div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex:1">'
+                                    f'{h_lg}<div style="font-size:.58rem;font-weight:700;color:#EEEEF5;'
+                                    f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px">'
+                                    f'{home}</div></div></div>'
+                                    f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.48rem;'
+                                    f'color:{s_col}">{s_txt}</div>'
+                                    f'{odds_html}</div>',
+                                    unsafe_allow_html=True
                                 )
-                            odds_html += (
-                                f'<span style="background:rgba(0,180,255,.12);color:#00B4FF;'
-                                f'padding:1px 5px;border-radius:4px">{ev["home_odds"]}</span>'
-                                f'</div>'
-                            )
-
-                        st.markdown(
-                            f'<div style="background:{bg};border:1px solid {border};'
-                            f'border-radius:12px;padding:10px 8px;text-align:center">'
-                            f'<div style="display:flex;align-items:center;justify-content:center;'
-                            f'gap:5px;margin-bottom:5px">'
-                            f'<div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex:1">'
-                            f'{a_lg}<div style="font-size:.58rem;font-weight:700;color:#EEEEF5;'
-                            f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px">'
-                            f'{away}</div></div>'
-                            f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.7rem;color:#44445A">VS</div>'
-                            f'<div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex:1">'
-                            f'{h_lg}<div style="font-size:.58rem;font-weight:700;color:#EEEEF5;'
-                            f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px">'
-                            f'{home}</div></div></div>'
-                            f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.48rem;'
-                            f'color:{s_col}">{s_txt}</div>'
-                            f'{odds_html}</div>',
-                            unsafe_allow_html=True
-                        )
-                        lbl = "⚡ SELECCIONADO" if is_sel else "✔ Seleccionar"
-                        if st.button(lbl, key=f"at_{ev['id'][:12]}", type="primary" if is_sel else "secondary"):
-                            st.session_state["selected_event"] = ev
-                            st.rerun()
+                                lbl = "⚡ SELECCIONADO" if is_sel else "✔ Seleccionar"
+                                if st.button(lbl, key=f"at_{ev['id'][:12]}", type="primary" if is_sel else "secondary"):
+                                    st.session_state["selected_event"] = ev
+                                    st.rerun()
 
 
 # ─────────────────────────────────────────────────────────────
@@ -2061,25 +2193,66 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
 
             pick_desc = pick_type + pick_extra
 
-            # Pre-fill momio from cached Odds API event data (no extra API call)
+            # Pre-fill momio from Odds API — reset session key when event/pick changes
+            ev_id       = selected.get("id","")
+            momio_key   = f"pick_momio_{ev_id}_{pick_type[:8]}"
             default_momio = 1.85
-            if selected.get("id","").startswith("odds_"):
+
+            # Try to get odds — either from event object (Odds API events) or by matching
+            ho = float(selected.get("home_odds") or 0)
+            ao = float(selected.get("away_odds") or 0)
+            do = float(selected.get("draw_odds") or 0)
+
+            # If ESPN event (no odds), try to find matching event in Odds API cache
+            if ho == 0 and sport_sel == "soccer":
                 try:
-                    if "Home" in pick_type or home in pick_type:
-                        default_momio = float(selected.get("home_odds") or 1.85)
-                    elif "Away" in pick_type or away in pick_type:
-                        default_momio = float(selected.get("away_odds") or 1.85)
-                    elif "Empate" in pick_type or "Draw" in pick_type:
-                        default_momio = float(selected.get("draw_odds") or 1.85)
-                    default_momio = max(1.01, round(default_momio, 2))
-                    if default_momio > 1.01:
-                        st.caption(f"💰 Momio The Odds API: {default_momio}x")
+                    for sk in WC_QUALIFIER_KEYS + [
+                        ODDS_SPORT_MAP.get(liga_sel,""),
+                        "soccer_epl","soccer_spain_la_liga","soccer_italy_serie_a",
+                        "soccer_germany_bundesliga","soccer_france_ligue_one",
+                        "soccer_uefa_champs_league","soccer_conmebol_libertadores",
+                    ]:
+                        if not sk: continue
+                        cached = odds_fetch_sport(sk)
+                        for cev in cached:
+                            ch = cev["home"].lower(); ca = cev["away"].lower()
+                            eh = home.lower();        ea = away.lower()
+                            if (eh[:5] in ch or ch[:5] in eh) and (ea[:5] in ca or ca[:5] in ea):
+                                ho = cev.get("home_odds",0)
+                                ao = cev.get("away_odds",0)
+                                do = cev.get("draw_odds",0)
+                                break
+                        if ho > 0: break
                 except Exception:
-                    default_momio = 1.85
+                    pass
+
+            if ho > 1 or ao > 1:
+                pt_low = pick_type.lower()
+                hn_low = home.lower(); an_low = away.lower()
+                if any(w in pt_low for w in [hn_low[:5], "home gana", "local gana"]) and ho > 1:
+                    default_momio = round(ho, 2)
+                elif any(w in pt_low for w in [an_low[:5], "away gana", "visita gana"]) and ao > 1:
+                    default_momio = round(ao, 2)
+                elif any(w in pt_low for w in ["empate","draw"]) and do > 1:
+                    default_momio = round(do, 2)
+                elif ao > 1:
+                    default_momio = round(ao, 2)
+
+            # Show all three odds as reference
+            if ho > 1:
+                odds_ref = (f"💰 **{away}** {ao}  ·  Empate {do}  ·  **{home}** {ho}"
+                            if do > 1 else f"💰 **{away}** {ao}  ·  **{home}** {ho}")
+                st.caption(odds_ref)
 
             c1, c2 = st.columns(2)
             with c1:
-                momio = st.number_input("Momio (decimal)", min_value=1.01, max_value=99.0, value=default_momio, step=0.01, key="pick_momio")
+                momio = st.number_input(
+                    "Momio (decimal)",
+                    min_value=1.01, max_value=99.0,
+                    value=default_momio,
+                    step=0.01,
+                    key=momio_key  # unique key per event+pick — always reflects correct default
+                )
             with c2:
                 apuesta = st.number_input(
                     "¿Cuánto apostaste? ($MXN)",
