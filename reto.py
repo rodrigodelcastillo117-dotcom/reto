@@ -1402,50 +1402,11 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
         ligas_in_group = list(ESPN_LEAGUES_GROUPED[sport_group].keys())
         liga_sel = st.selectbox("Liga / Torneo", ligas_in_group, key="reg_liga")
     with c2:
-        # HTML input with autocomplete=off — reads value via query params trick
-        st.markdown("""
-<label style="font-family:'Rajdhani',sans-serif;font-weight:600;font-size:.9rem;color:#8888AA">
-  Buscar equipo / jugador
-</label>
-<input
-  id="espn_query_input"
-  type="text"
-  autocomplete="off"
-  autocorrect="off"
-  autocapitalize="off"
-  spellcheck="false"
-  placeholder="ej: Liverpool, Djokovic, Lakers…"
-  style="width:100%;padding:10px 14px;margin-top:4px;
-         background:#1A1A28;border:1px solid rgba(255,255,255,.18);
-         border-radius:10px;color:#EEEEF5;font-family:'Rajdhani',sans-serif;
-         font-size:1rem;outline:none;caret-color:#F0FF00;box-sizing:border-box"
-  oninput="document.getElementById('espn_query_hidden').value=this.value"
-  onfocus="this.style.borderColor='rgba(240,255,0,.5)';this.style.boxShadow='0 0 14px rgba(240,255,0,.12)'"
-  onblur="this.style.borderColor='rgba(255,255,255,.18)';this.style.boxShadow='none'"
-/>
-<input type="hidden" id="espn_query_hidden" value="">
-<script>
-// Sync HTML input value into Streamlit session via a hidden st.text_input
-var _qInput = document.getElementById('espn_query_input');
-var _interval = setInterval(function(){
-  var stInput = document.querySelector('input[data-testid="espn_query_st"]');
-  if(!stInput){ stInput = document.querySelectorAll('input[aria-label="__espn_q__"]')[0]; }
-  if(_qInput && stInput){
-    stInput.value = _qInput.value;
-    stInput.dispatchEvent(new Event('input',{bubbles:true}));
-  }
-}, 300);
-</script>
-""", unsafe_allow_html=True)
-        # Hidden Streamlit input that captures the value
-        query = st.text_input("__espn_q__", value=st.session_state.get("espn_query",""),
-                               label_visibility="hidden", key="espn_query_st")
-        # Also store in session for persistence
-        if query:
-            st.session_state["espn_query"] = query
-
-    # Use session query as fallback
-    query = st.session_state.get("espn_query_st", "") or st.session_state.get("espn_query", "")
+        query = st.text_input(
+            "Buscar equipo / jugador",
+            placeholder="ej: Turkey, Italy, Liverpool, Lakers…",
+            key="reg_query"
+        )
 
     sport, league = ESPN_LEAGUES[liga_sel]
     events = []
