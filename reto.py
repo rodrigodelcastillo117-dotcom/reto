@@ -82,18 +82,19 @@ ESPN_LEAGUES_GROUPED = {
         "Liga MX Femenil":       ("soccer", "mex.w.1"),
     },
     "🌍 Fútbol — Selecciones": {
-        "Eliminatorias UEFA":     ("soccer", "fifa.worldq.6"),
-        "Playoffs Eliminat. UEFA":("soccer", "fifa.worldq.europe"),
-        "Eliminatorias CONMEBOL": ("soccer", "fifa.worldq.2"),
-        "Eliminatorias CONCACAF": ("soccer", "fifa.worldq.5"),
-        "Eliminatorias AFC":      ("soccer", "fifa.worldq.3"),
-        "Nations League UEFA":    ("soccer", "uefa.nations"),
-        "Copa América":           ("soccer", "conmebol.america"),
-        "Eurocopa":               ("soccer", "uefa.euro"),
-        "Gold Cup":               ("soccer", "concacaf.gold"),
-        "Amistosos Internac.":    ("soccer", "fifa.friendly"),
-        "Mundial de Clubes":      ("soccer", "fifa.cwc"),
-        "Fútbol Internacional":   ("soccer", "fifa.worldq"),
+        "Eliminatorias UEFA":      ("soccer", "fifa.worldq.6"),
+        "Playoffs Eliminat. UEFA": ("soccer", "fifa.worldq.europe"),
+        "Elim. UEFA (alt)":        ("soccer", "uefa.qualifiers"),
+        "Eliminatorias CONMEBOL":  ("soccer", "fifa.worldq.2"),
+        "Eliminatorias CONCACAF":  ("soccer", "fifa.worldq.5"),
+        "Eliminatorias AFC":       ("soccer", "fifa.worldq.3"),
+        "Nations League UEFA":     ("soccer", "uefa.nations"),
+        "Copa América":            ("soccer", "conmebol.america"),
+        "Eurocopa":                ("soccer", "uefa.euro"),
+        "Gold Cup":                ("soccer", "concacaf.gold"),
+        "Amistosos Internac.":     ("soccer", "fifa.friendly"),
+        "Mundial de Clubes":       ("soccer", "fifa.cwc"),
+        "Fútbol Internacional":    ("soccer", "fifa.worldq"),
     },
     "🏀 Basketball": {
         "NBA":                   ("basketball", "nba"),
@@ -673,14 +674,15 @@ def espn_search_events(sport: str, league: str, query: str) -> list:
     # ── Fallback: if no results and it's a soccer intl league, try alternate slugs ──
     if not results and sport == "soccer":
         FALLBACK_SLUGS = {
-            "fifa.worldq.6":      ["fifa.worldq.europe", "uefa.worldq", "fifa.worldq", "fifa.worldq.eu"],
-            "fifa.worldq.europe": ["fifa.worldq.6", "uefa.worldq", "fifa.worldq", "fifa.worldq.eu"],
-            "uefa.worldq":        ["fifa.worldq.6", "fifa.worldq.europe", "fifa.worldq"],
+            "fifa.worldq.6":      ["fifa.worldq.europe", "uefa.worldq", "uefa.qualifiers", "fifa.worldq", "fifa.worldq.eu"],
+            "fifa.worldq.europe": ["fifa.worldq.6", "uefa.worldq", "uefa.qualifiers", "fifa.worldq"],
+            "uefa.qualifiers":    ["fifa.worldq.6", "fifa.worldq.europe", "uefa.worldq", "fifa.worldq"],
+            "uefa.worldq":        ["fifa.worldq.6", "fifa.worldq.europe", "uefa.qualifiers", "fifa.worldq"],
             "fifa.worldq.2":      ["conmebol.worldq", "fifa.worldq"],
             "fifa.worldq.5":      ["concacaf.worldq", "fifa.worldq"],
             "fifa.worldq.3":      ["afc.worldq", "fifa.worldq"],
-            "fifa.worldq":        ["fifa.worldq.6", "fifa.worldq.europe", "fifa.worldq.2",
-                                   "fifa.worldq.3", "fifa.worldq.5"],
+            "fifa.worldq":        ["fifa.worldq.6", "fifa.worldq.europe", "uefa.qualifiers",
+                                   "fifa.worldq.2", "fifa.worldq.3", "fifa.worldq.5"],
             "fifa.friendly":      ["fifa.friendly.int", "soccer.friendly"],
         }
         tomorrow    = (date.today() + timedelta(days=1)).strftime("%Y%m%d")
@@ -820,7 +822,7 @@ def parse_result_from_event(event_data: dict, pick_desc: str, mercado: str) -> s
 # ─────────────────────────────────────────────────────────────
 SCOPE = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 
-@st.cache_resource(ttl=60)
+@st.cache_resource(ttl=1800)
 def get_client():
     try:
         creds_dict = {k: v for k, v in st.secrets["gsheets"].items() if k != "spreadsheet_id"}
@@ -830,17 +832,27 @@ def get_client():
         return None
 
 def get_ss():
+    """Get spreadsheet — auto-reconnect if OAuth token expired."""
     c = get_client()
     if not c: return None
     try:
         return c.open_by_key(st.secrets["gsheets"]["spreadsheet_id"])
     except Exception:
+        # Token likely expired — clear cache and rebuild
+        try:
+            get_client.clear()
+            c2 = get_client()
+            if c2:
+                return c2.open_by_key(st.secrets["gsheets"]["spreadsheet_id"])
+        except Exception:
+            pass
         return None
 
 def ensure_tab(ss, name: str, headers: list):
+    if ss is None:
+        raise ValueError("No spreadsheet connection")
     try:
         ws = ss.worksheet(name)
-        # Verify header row exists, add if missing
         try:
             first_row = ws.row_values(1)
             if not first_row:
@@ -852,6 +864,16 @@ def ensure_tab(ss, name: str, headers: list):
         ws = ss.add_worksheet(title=name, rows=2000, cols=max(len(headers), 20))
         ws.append_row(headers)
         return ws
+    except Exception as e:
+        # APIError (token expired mid-session) — try reconnect once
+        try:
+            get_client.clear()
+            ss2 = get_ss()
+            if ss2:
+                return ensure_tab(ss2, name, headers)
+        except Exception:
+            pass
+        raise e
 
 def load_picks(apodo: str) -> pd.DataFrame:
     ss = get_ss()
@@ -921,19 +943,13 @@ def update_pick_row(apodo: str, df_idx: int, resultado: str, ganancia: float, ba
         return False
 
 def load_users() -> list:
-    ss = get_ss()
-    if not ss: return []
-    ws = ensure_tab(ss, TAB_USERS, ["apodo","bankroll","wins","losses","created"])
     try:
-        return ws.get_all_records()
+        ss = get_ss()
+        if not ss: return []
+        ws = ensure_tab(ss, TAB_USERS, ["apodo","bankroll","wins","losses","created"])
+        return _safe_get_records(ws)
     except Exception:
-        try:
-            all_vals = ws.get_all_values()
-            if len(all_vals) < 2: return []
-            headers = all_vals[0]
-            return [dict(zip(headers, row)) for row in all_vals[1:] if any(row)]
-        except Exception:
-            return []
+        return []
 
 def upsert_user(apodo: str, bankroll: float, wins: int, losses: int):
     ss = get_ss()
