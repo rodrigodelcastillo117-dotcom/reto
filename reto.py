@@ -2697,41 +2697,91 @@ def tab_historial(apodo: str, df: pd.DataFrame):
     if f_merc != "Todos": filt = filt[filt["mercado"] == f_merc]
     filt = filt.sort_values("fecha", ascending=False)
 
+    # Sport icons
+    SPORT_ICON = {
+        "soccer":"⚽","football":"🏈","basketball":"🏀",
+        "baseball":"⚾","hockey":"🏒","tennis":"🎾",
+        "golf":"⛳","mma":"🥊","racing":"🏎️",
+    }
     res_c = {"ganado":"#00FF88","perdido":"#FF2D55","nulo":"#8888AA","pendiente":"#FFB800"}
     res_i = {"ganado":"✅","perdido":"❌","nulo":"➖","pendiente":"⏳"}
+    res_bg = {"ganado":"rgba(0,255,136,.08)","perdido":"rgba(255,45,85,.08)",
+               "nulo":"rgba(136,136,170,.05)","pendiente":"rgba(255,184,0,.06)"}
 
     for idx, row in filt.iterrows():
-        res  = row.get("resultado","pendiente")
-        clr  = res_c.get(res,"#888")
-        ico  = res_i.get(res,"·")
-        gan  = float(row.get("ganancia_neta",0))
-        gs   = f'+${gan:,.2f}' if gan>0 else f'${gan:,.2f}' if gan<0 else "—"
-        gc   = "#00FF88" if gan>0 else "#FF2D55" if gan<0 else "#8888AA"
-        fd   = str(row.get("fecha",""))[:10]
+        res      = str(row.get("resultado","pendiente"))
+        clr      = res_c.get(res,"#888")
+        ico      = res_i.get(res,"·")
+        bg       = res_bg.get(res,"rgba(255,255,255,.02)")
+        gan      = float(row.get("ganancia_neta",0))
+        apuesta  = float(row.get("apuesta",0))
+        momio    = row.get("momio","")
+        gs       = f'+${gan:,.2f}' if gan>0 else f'-${abs(gan):,.2f}' if gan<0 else "⏳ pendiente"
+        gc       = "#00FF88" if gan>0 else "#FF2D55" if gan<0 else "#FFB800"
+        fd       = str(row.get("fecha",""))[:10]
+        deporte  = str(row.get("deporte","soccer")).lower()
+        sp_ico   = SPORT_ICON.get(deporte, "🎯")
+        partido  = str(row.get("partido",""))
+        liga     = str(row.get("liga",""))
+        pick_d   = str(row.get("pick_desc",""))
+        mercado  = str(row.get("mercado",""))
+        notas    = str(row.get("notas",""))
 
-        col_card, col_del = st.columns([10, 1])
+        # Ganancia potencial si pendiente
+        pot = ""
+        if res == "pendiente" and apuesta > 0 and momio:
+            try:
+                pot_val = float(momio) * apuesta - apuesta
+                pot = f"Potencial: +${pot_val:,.0f}"
+            except Exception:
+                pass
+
+        col_card, col_del = st.columns([11, 1])
         with col_card:
             st.markdown(f"""
-<div class="pick-card">
-  <div class="pick-badge {res[0] if res in ('ganado','perdido') else 'n'}">{ico}</div>
-  <div style="flex:1;min-width:0">
-    <div style="font-size:.88rem;font-weight:700;color:var(--text);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">
-      {row.get('partido','')}
-    </div>
-    <div style="font-size:.65rem;color:var(--text3)">
-      {row.get('liga','')} · {row.get('mercado','')} · <span style="color:var(--neon2)">{row.get('pick_desc','')}</span>
-    </div>
-    <div style="font-size:.6rem;color:var(--text3)">{fd}</div>
+<div style="background:{bg};border:1px solid rgba(255,255,255,.08);border-left:3px solid {clr};
+     border-radius:12px;padding:12px 16px;margin-bottom:6px;display:flex;gap:12px;align-items:center">
+  <!-- Sport icon + result -->
+  <div style="text-align:center;flex-shrink:0;min-width:44px">
+    <div style="font-size:1.6rem">{sp_ico}</div>
+    <div style="font-size:.65rem;font-weight:700;color:{clr};font-family:'JetBrains Mono',monospace;
+         letter-spacing:1px">{ico}</div>
   </div>
-  <div style="text-align:right;flex-shrink:0">
-    <div style="font-family:'Bebas Neue',sans-serif;font-size:1.2rem;color:{gc}">{gs}</div>
-    <div style="font-size:.6rem;color:var(--text3)">{row.get('momio','')}x · ${float(row.get('apuesta',0)):,.0f}</div>
-    <div style="font-size:.6rem;color:{clr};font-weight:700;font-family:'JetBrains Mono',monospace">{res.upper()}</div>
+  <!-- Main info -->
+  <div style="flex:1;min-width:0">
+    <div style="font-size:.9rem;font-weight:700;color:var(--text);
+         white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px">
+      {partido}
+    </div>
+    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">
+      <span style="background:rgba(191,95,255,.15);color:#BF5FFF;padding:1px 7px;
+            border-radius:99px;font-size:.58rem;font-family:'JetBrains Mono',monospace">{sp_ico} {deporte.upper()}</span>
+      <span style="color:var(--text3);font-size:.6rem">{liga}</span>
+      <span style="color:var(--text3);font-size:.6rem">·</span>
+      <span style="color:var(--text3);font-size:.6rem">{mercado}</span>
+    </div>
+    <div style="font-size:.85rem;font-weight:700;color:var(--neon2);margin-bottom:2px">
+      🎯 {pick_d}
+    </div>
+    <div style="font-size:.58rem;color:var(--text3)">{fd}
+      {"· <span style='color:#FFB800'>" + pot + "</span>" if pot else ""}
+      {"· <i style='color:var(--text3)'>" + notas[:60] + "</i>" if notas and notas != "nan" else ""}
+    </div>
+  </div>
+  <!-- Right: amounts -->
+  <div style="text-align:right;flex-shrink:0;min-width:90px">
+    <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:{gc};line-height:1">{gs}</div>
+    <div style="font-size:.62rem;color:var(--text3);margin-top:2px">
+      @{momio}x &nbsp;·&nbsp; ${apuesta:,.0f}
+    </div>
+    <div style="font-size:.6rem;color:{clr};font-weight:700;
+         font-family:'JetBrains Mono',monospace;margin-top:3px">{res.upper()}</div>
   </div>
 </div>""", unsafe_allow_html=True)
         with col_del:
             if st.button("🗑", key=f"del_{idx}", help="Eliminar pick"):
                 if delete_pick(apodo, idx):
+                    st.session_state.pop("df_picks", None)
                     st.rerun()
 
 
