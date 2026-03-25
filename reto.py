@@ -60,49 +60,64 @@ RANGOS = [
 ]
 
 # ESPN sport slugs → league display name → ESPN league slug
-ESPN_LEAGUES = {
-    # ── SOCCER — Ligas de clubes
-    "Premier League":        ("soccer", "eng.1"),
-    "La Liga":               ("soccer", "esp.1"),
-    "Serie A":               ("soccer", "ita.1"),
-    "Bundesliga":            ("soccer", "ger.1"),
-    "Ligue 1":               ("soccer", "fra.1"),
-    "Liga MX":               ("soccer", "mex.1"),
-    "MLS":                   ("soccer", "usa.1"),
-    "Champions League":      ("soccer", "uefa.champions"),
-    "Europa League":         ("soccer", "uefa.europa"),
-    "Conference League":     ("soccer", "uefa.europa.conf"),
-    "Copa Libertadores":     ("soccer", "conmebol.libertadores"),
-    "Copa Sudamericana":     ("soccer", "conmebol.sudamericana"),
-    "CONCACAF Champions":    ("soccer", "concacaf.champions"),
-    "Brasileirão":           ("soccer", "bra.1"),
-    "Eredivisie":            ("soccer", "ned.1"),
-    "Liga Portugal":         ("soccer", "por.1"),
-    "Superliga Argentina":   ("soccer", "arg.1"),
-    "Liga MX Femenil":       ("soccer", "mex.w.1"),
-    # ── SOCCER — Selecciones / Internacionales
-    "Eliminatorias UEFA":    ("soccer", "fifa.worldq.6"),   # UEFA zone = group 6
-    "Eliminatorias CONMEBOL":("soccer", "fifa.worldq.2"),
-    "Eliminatorias CONCACAF":("soccer", "fifa.worldq.5"),
-    "Eliminatorias AFC":     ("soccer", "fifa.worldq.3"),
-    "Nations League UEFA":   ("soccer", "uefa.nations"),
-    "Copa América":          ("soccer", "conmebol.america"),
-    "Eurocopa":              ("soccer", "uefa.euro"),
-    "Gold Cup":              ("soccer", "concacaf.gold"),
-    "Amistosos Internac.":   ("soccer", "fifa.friendly"),
-    "Mundial de Clubes":     ("soccer", "fifa.cwc"),
-    # ── BASKETBALL
-    "NBA":                   ("basketball", "nba"),
-    # ── AMERICAN FOOTBALL
-    "NFL":                   ("football", "nfl"),
-    # ── BASEBALL
-    "MLB":                   ("baseball", "mlb"),
-    # ── HOCKEY
-    "NHL":                   ("hockey", "nhl"),
-    # ── TENNIS
-    "ATP":                   ("tennis", "atp"),
-    "WTA":                   ("tennis", "wta"),
+ESPN_LEAGUES_GROUPED = {
+    "⚽ Fútbol — Clubes": {
+        "Premier League":        ("soccer", "eng.1"),
+        "La Liga":               ("soccer", "esp.1"),
+        "Serie A":               ("soccer", "ita.1"),
+        "Bundesliga":            ("soccer", "ger.1"),
+        "Ligue 1":               ("soccer", "fra.1"),
+        "Liga MX":               ("soccer", "mex.1"),
+        "MLS":                   ("soccer", "usa.1"),
+        "Champions League":      ("soccer", "uefa.champions"),
+        "Europa League":         ("soccer", "uefa.europa"),
+        "Conference League":     ("soccer", "uefa.europa.conf"),
+        "Copa Libertadores":     ("soccer", "conmebol.libertadores"),
+        "Copa Sudamericana":     ("soccer", "conmebol.sudamericana"),
+        "CONCACAF Champions":    ("soccer", "concacaf.champions"),
+        "Brasileirão":           ("soccer", "bra.1"),
+        "Eredivisie":            ("soccer", "ned.1"),
+        "Liga Portugal":         ("soccer", "por.1"),
+        "Superliga Argentina":   ("soccer", "arg.1"),
+        "Liga MX Femenil":       ("soccer", "mex.w.1"),
+    },
+    "🌍 Fútbol — Selecciones": {
+        "Eliminatorias UEFA":    ("soccer", "fifa.worldq.6"),
+        "Eliminatorias CONMEBOL":("soccer", "fifa.worldq.2"),
+        "Eliminatorias CONCACAF":("soccer", "fifa.worldq.5"),
+        "Eliminatorias AFC":     ("soccer", "fifa.worldq.3"),
+        "Nations League UEFA":   ("soccer", "uefa.nations"),
+        "Copa América":          ("soccer", "conmebol.america"),
+        "Eurocopa":              ("soccer", "uefa.euro"),
+        "Gold Cup":              ("soccer", "concacaf.gold"),
+        "Amistosos Internac.":   ("soccer", "fifa.friendly"),
+        "Mundial de Clubes":     ("soccer", "fifa.cwc"),
+    },
+    "🏀 Basketball": {
+        "NBA":                   ("basketball", "nba"),
+    },
+    "🏈 American Football": {
+        "NFL":                   ("football", "nfl"),
+    },
+    "⚾ Baseball": {
+        "MLB":                   ("baseball", "mlb"),
+    },
+    "🏒 Hockey": {
+        "NHL":                   ("hockey", "nhl"),
+    },
+    "🎾 Tenis": {
+        "ATP":                   ("tennis", "atp"),
+        "WTA":                   ("tennis", "wta"),
+    },
 }
+
+# Flat lookup by liga name
+ESPN_LEAGUES = {
+    liga: info
+    for group in ESPN_LEAGUES_GROUPED.values()
+    for liga, info in group.items()
+}
+
 
 MERCADOS = [
     "ML (Ganador)", "Over/Under Goles", "BTTS (Ambos Anotan)",
@@ -1112,10 +1127,13 @@ def render_header(apodo: str, bank: float):
 def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
     st.markdown('<div class="sec-head">Buscar partido</div>', unsafe_allow_html=True)
 
-    # ── Step 1: Sport + League selector
+    # ── Step 1: Sport group → then league
     c1, c2 = st.columns(2)
     with c1:
-        liga_sel = st.selectbox("Liga / Torneo", list(ESPN_LEAGUES.keys()), key="reg_liga")
+        group_names = list(ESPN_LEAGUES_GROUPED.keys())
+        sport_group = st.selectbox("Deporte", group_names, key="reg_sport_group")
+        ligas_in_group = list(ESPN_LEAGUES_GROUPED[sport_group].keys())
+        liga_sel = st.selectbox("Liga / Torneo", ligas_in_group, key="reg_liga")
     with c2:
         # HTML input with autocomplete=off — reads value via query params trick
         st.markdown("""
