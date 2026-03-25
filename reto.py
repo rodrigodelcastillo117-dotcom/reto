@@ -83,6 +83,7 @@ ESPN_LEAGUES_GROUPED = {
     },
     "🌍 Fútbol — Selecciones": {
         "Eliminatorias UEFA":    ("soccer", "fifa.worldq.6"),
+        "Playoffs Eliminat. UEFA":("soccer","uefa.worldq"),
         "Eliminatorias CONMEBOL":("soccer", "fifa.worldq.2"),
         "Eliminatorias CONCACAF":("soccer", "fifa.worldq.5"),
         "Eliminatorias AFC":     ("soccer", "fifa.worldq.3"),
@@ -664,7 +665,38 @@ def espn_search_events(sport: str, league: str, query: str) -> list:
     except Exception:
         pass
 
-    # Sort: live → upcoming (asc) → completed (asc)
+    # ── Fallback: if no results and it's a soccer intl league, try alternate slugs ──
+    if not results and sport == "soccer":
+        FALLBACK_SLUGS = {
+            "fifa.worldq.6":  ["uefa.worldq", "fifa.worldq", "fifa.worldq.europe"],
+            "uefa.worldq":    ["fifa.worldq.6", "fifa.worldq"],
+            "fifa.worldq.2":  ["conmebol.worldq", "fifa.worldq"],
+            "fifa.worldq.5":  ["concacaf.worldq", "fifa.worldq"],
+            "fifa.worldq.3":  ["afc.worldq", "fifa.worldq"],
+            "fifa.friendly":  ["fifa.friendly.int", "soccer.friendly"],
+        }
+        for alt_slug in FALLBACK_SLUGS.get(league, []):
+            try:
+                alt_url = f"{ESPN_BASE}/{sport}/{alt_slug}/scoreboard"
+                for dr in [None, date.today().strftime("%Y%m%d"),
+                           date.today().strftime("%Y%m%d") + "-" + (date.today() + timedelta(days=7)).strftime("%Y%m%d")]:
+                    params = {"limit": 100}
+                    if dr: params["dates"] = dr
+                    r = requests.get(alt_url, params=params, timeout=6)
+                    if r.status_code == 200:
+                        for ev in r.json().get("events", []):
+                            eid = ev.get("id", "")
+                            if eid in seen_ids: continue
+                            parsed = parse_event(ev)
+                            if parsed:
+                                results.append(parsed)
+                                seen_ids.add(eid)
+                if results:
+                    break
+            except Exception:
+                continue
+
+
     def sort_key(ev):
         if ev["is_live"]:       return "0_" + ev["date_raw"]
         if not ev["completed"]: return "1_" + ev["date_raw"]
