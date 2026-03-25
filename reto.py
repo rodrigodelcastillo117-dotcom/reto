@@ -81,7 +81,7 @@ ESPN_LEAGUES = {
     "Superliga Argentina":   ("soccer", "arg.1"),
     "Liga MX Femenil":       ("soccer", "mex.w.1"),
     # ── SOCCER — Selecciones
-    "Eliminatorias UEFA":    ("soccer", "uefa.worldq.eu"),
+    "Eliminatorias UEFA":    ("soccer", "uefa.qualifiers"),
     "Eliminatorias CONMEBOL":("soccer", "conmebol.worldq"),
     "Eliminatorias CONCACAF":("soccer", "concacaf.worldq"),
     "Eliminatorias AFC":     ("soccer", "afc.worldq"),
@@ -1150,7 +1150,35 @@ var _interval = setInterval(function(){
 
     if events:
         is_tennis = (sport == "tennis")
-        st.markdown(f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.6rem;color:var(--text3);margin-bottom:10px">{len(events)} PARTIDOS ENCONTRADOS</div>', unsafe_allow_html=True)
+        sz   = 52
+        brad = "50%" if is_tennis else "8px"
+
+        def mk_logo(url, flag, name, _sz=sz, _brad=brad):
+            src      = url or flag
+            initials = (name[:2] if len(name) >= 2 else name).upper()
+            if src:
+                return (
+                    f'<img src="{src}" style="width:{_sz}px;height:{_sz}px;object-fit:contain;'
+                    f'border-radius:{_brad};background:rgba(255,255,255,.04);'
+                    f'border:1px solid rgba(255,255,255,.1)" '
+                    f'onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
+                    f'<div style="display:none;width:{_sz}px;height:{_sz}px;border-radius:{_brad};'
+                    f'background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);'
+                    f'align-items:center;justify-content:center;font-family:\'Bebas Neue\',sans-serif;'
+                    f'font-size:{_sz//2}px;color:#8888AA">{initials}</div>'
+                )
+            return (
+                f'<div style="width:{_sz}px;height:{_sz}px;border-radius:{_brad};'
+                f'background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);'
+                f'display:flex;align-items:center;justify-content:center;'
+                f'font-family:\'Bebas Neue\',sans-serif;font-size:{_sz//2}px;color:#8888AA">{initials}</div>'
+            )
+
+        st.markdown(
+            f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.6rem;'
+            f'color:var(--text3);margin-bottom:10px">{len(events)} PARTIDOS ENCONTRADOS</div>',
+            unsafe_allow_html=True
+        )
 
         for ev in events[:25]:
             is_live  = "IN" in ev["status"]
@@ -1158,68 +1186,67 @@ var _interval = setInterval(function(){
             is_sel   = selected and selected["id"] == ev["id"]
 
             if is_live:
-                status_html = '<span style="color:#FF3D00;font-family:\'JetBrains Mono\',monospace;font-size:.58rem;animation:blinkLive 1.2s infinite">● LIVE</span>'
+                status_html = '&#9679; LIVE'
+                status_color = "#FF3D00"
+                status_anim  = "animation:blinkLive 1.2s infinite"
             elif is_final:
-                status_html = '<span style="color:#44445A;font-family:\'JetBrains Mono\',monospace;font-size:.58rem">✓ FINAL</span>'
+                status_html  = "&#10003; FINAL"
+                status_color = "#44445A"
+                status_anim  = ""
             else:
-                status_html = f'<span style="color:#00FFD1;font-family:\'JetBrains Mono\',monospace;font-size:.58rem">⏰ {ev["date"]}</span>'
+                status_html  = f"&#9200; {ev['date']}"
+                status_color = "#00FFD1"
+                status_anim  = ""
 
             score_html = ""
             if is_live or is_final:
-                score_html = f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:1.1rem;font-weight:700;color:#F0FF00;margin-bottom:4px">{ev.get("away_score","")} – {ev.get("home_score","")}</div>'
-
-            border = "rgba(240,255,0,.6)" if is_sel else ("rgba(255,61,0,.35)" if is_live else "rgba(255,255,255,.08)")
-            bg     = "rgba(240,255,0,.05)" if is_sel else ("rgba(255,61,0,.04)" if is_live else "rgba(255,255,255,.02)")
-            brad   = "50%" if is_tennis else "8px"
-            sz     = 52
-
-            def mk_logo(url, flag, name):
-                src = url or flag
-                initials = (name[:2] if len(name) >= 2 else name).upper()
-                if src:
-                    return (
-                        f'<img src="{src}" style="width:{sz}px;height:{sz}px;object-fit:contain;'
-                        f'border-radius:{brad};background:rgba(255,255,255,.04);'
-                        f'border:1px solid rgba(255,255,255,.1)" '
-                        f'onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
-                        f'<div style="display:none;width:{sz}px;height:{sz}px;border-radius:{brad};'
-                        f'background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);'
-                        f'align-items:center;justify-content:center;font-family:\'Bebas Neue\',sans-serif;'
-                        f'font-size:{sz//2}px;color:#8888AA">{initials}</div>'
-                    )
-                return (
-                    f'<div style="width:{sz}px;height:{sz}px;border-radius:{brad};'
-                    f'background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);'
-                    f'display:flex;align-items:center;justify-content:center;'
-                    f'font-family:\'Bebas Neue\',sans-serif;font-size:{sz//2}px;color:#8888AA">{initials}</div>'
+                score_html = (
+                    f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:1.1rem;'
+                    f'font-weight:700;color:#F0FF00;margin-bottom:4px">'
+                    f'{ev.get("away_score","")} &ndash; {ev.get("home_score","")}</div>'
                 )
+
+            border = "rgba(240,255,0,.6)"  if is_sel else ("rgba(255,61,0,.35)" if is_live else "rgba(255,255,255,.08)")
+            bg     = "rgba(240,255,0,.05)" if is_sel else ("rgba(255,61,0,.04)"  if is_live else "rgba(255,255,255,.02)")
+            glow   = "0 0 18px rgba(240,255,0,.08)" if is_sel else "0 2px 8px rgba(0,0,0,.3)"
 
             away_logo_html = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), ev["away"])
             home_logo_html = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), ev["home"])
 
-            card_html = f"""
-<div style="background:{bg};border:1px solid {border};border-radius:14px;
-     padding:14px 16px;margin-bottom:8px;
-     box-shadow:{'0 0 18px rgba(240,255,0,.08)' if is_sel else '0 2px 8px rgba(0,0,0,.3)'}">
-  <div style="display:flex;align-items:center;gap:10px">
-    <div style="display:flex;flex-direction:column;align-items:center;gap:5px;width:72px;flex-shrink:0">
-      {away_logo_html}
-      <div style="font-family:'Rajdhani',sans-serif;font-size:.68rem;font-weight:700;color:#EEEEF5;
-           text-align:center;line-height:1.1;width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{ev["away"]}</div>
-    </div>
-    <div style="flex:1;text-align:center;padding:0 4px">
-      {score_html}
-      <div style="font-family:'Bebas Neue',sans-serif;font-size:.8rem;color:#44445A;letter-spacing:3px">VS</div>
-      <div style="margin-top:5px">{status_html}</div>
-      <div style="font-family:'JetBrains Mono',monospace;font-size:.45rem;color:#44445A;margin-top:3px">{liga_sel}</div>
-    </div>
-    <div style="display:flex;flex-direction:column;align-items:center;gap:5px;width:72px;flex-shrink:0">
-      {home_logo_html}
-      <div style="font-family:'Rajdhani',sans-serif;font-size:.68rem;font-weight:700;color:#EEEEF5;
-           text-align:center;line-height:1.1;width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{ev["home"]}</div>
-    </div>
-  </div>
-</div>"""
+            card_html = (
+                f'<div style="background:{bg};border:1px solid {border};border-radius:14px;'
+                f'padding:14px 16px;margin-bottom:8px;box-shadow:{glow}">'
+                f'<div style="display:flex;align-items:center;gap:10px">'
+
+                # Away
+                f'<div style="display:flex;flex-direction:column;align-items:center;gap:5px;width:72px;flex-shrink:0">'
+                f'{away_logo_html}'
+                f'<div style="font-family:\'Rajdhani\',sans-serif;font-size:.68rem;font-weight:700;color:#EEEEF5;'
+                f'text-align:center;line-height:1.1;width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+                f'{ev["away"]}</div>'
+                f'</div>'
+
+                # Center
+                f'<div style="flex:1;text-align:center;padding:0 4px">'
+                f'{score_html}'
+                f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.8rem;color:#44445A;letter-spacing:3px">VS</div>'
+                f'<div style="margin-top:5px;font-family:\'JetBrains Mono\',monospace;font-size:.58rem;'
+                f'color:{status_color};{status_anim}">{status_html}</div>'
+                f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.45rem;color:#44445A;margin-top:3px">'
+                f'{liga_sel}</div>'
+                f'</div>'
+
+                # Home
+                f'<div style="display:flex;flex-direction:column;align-items:center;gap:5px;width:72px;flex-shrink:0">'
+                f'{home_logo_html}'
+                f'<div style="font-family:\'Rajdhani\',sans-serif;font-size:.68rem;font-weight:700;color:#EEEEF5;'
+                f'text-align:center;line-height:1.1;width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+                f'{ev["home"]}</div>'
+                f'</div>'
+
+                f'</div>'
+                f'</div>'
+            )
             st.markdown(card_html, unsafe_allow_html=True)
             if st.button("✔ Seleccionar", key=f"sel_{ev['id']}"):
                 st.session_state["selected_event"] = ev
