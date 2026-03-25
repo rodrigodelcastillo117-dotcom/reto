@@ -113,11 +113,8 @@ ESPN_LEAGUES_GROUPED = {
         "NHL":                   ("hockey", "nhl"),
     },
     "🎾 Tenis": {
-        "ATP Miami Open":        ("tennis", "atp.miami_open"),
-        "WTA Miami Open":        ("tennis", "wta.miami_open"),
-        "ATP Masters 1000":      ("tennis", "atp.masters"),
-        "ATP Tour":              ("tennis", "atp"),
-        "WTA Tour":              ("tennis", "wta"),
+        "ATP (incl. Miami Open)":  ("tennis", "atp"),
+        "WTA (incl. Miami Open)":  ("tennis", "wta"),
     },
 }
 
@@ -1797,14 +1794,9 @@ ALL_TODAY_LEAGUES = [
     ("⚾ Baseball",   "MLB",  "baseball",   "mlb"),
     # Hockey
     ("🏒 Hockey",     "NHL",  "hockey",     "nhl"),
-    # Tennis — try many slugs to catch Miami Open and active tournaments
-    ("🎾 Tenis", "ATP Miami Open",     "tennis", "atp.miami_open"),
-    ("🎾 Tenis", "WTA Miami Open",     "tennis", "wta.miami_open"),
-    ("🎾 Tenis", "ATP Miami",          "tennis", "atp.34"),
-    ("🎾 Tenis", "WTA Miami",          "tennis", "wta.22"),
-    ("🎾 Tenis", "ATP Masters 1000",   "tennis", "atp.masters"),
-    ("🎾 Tenis", "ATP Tour",           "tennis", "atp"),
-    ("🎾 Tenis", "WTA Tour",           "tennis", "wta"),
+    # Tennis — atp and wta cover all active tournaments including Miami Open
+    ("🎾 Tenis", "ATP Tour",  "tennis", "atp"),
+    ("🎾 Tenis", "WTA Tour",  "tennis", "wta"),
 ]
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -1824,8 +1816,15 @@ def load_all_today() -> dict:
             url = f"{ESPN_BASE}/{sport}/{league_slug}/scoreboard"
             events_found = []
 
-            for dt_str in [today, tomorrow]:
-                r = requests.get(url, params={"dates": dt_str, "limit": 100}, timeout=6)
+            # For tennis, use bare scoreboard (no date) — ESPN returns active tournament matches
+            # Then also check tomorrow for scheduled matches
+            date_params = [None, today, tomorrow] if sport == "tennis" else [today, tomorrow]
+
+            for dt_str in date_params:
+                params = {"limit": 200} if sport == "tennis" else {"dates": dt_str, "limit": 100}
+                if dt_str and sport != "tennis":
+                    params["dates"] = dt_str
+                r = requests.get(url, params=params, timeout=6)
                 if r.status_code != 200:
                     continue
                 for ev in r.json().get("events", []):
@@ -1853,13 +1852,30 @@ def load_all_today() -> dict:
                     is_live = (state == "in") and not completed
                     if home_i["name"] == "?" and away_i["name"] == "?":
                         continue
+                    # For tennis, extract tournament name from event name
+                    display_liga = liga_name
+                    if sport == "tennis":
+                        ev_name = ev.get("name", "")
+                        # ESPN tennis event name format: "Player A vs Player B"
+                        # Tournament is in the league/season node
+                        league_node = ev.get("league", {})
+                        if not league_node:
+                            league_node = ev.get("competitions",[{}])[0].get("league",{})
+                        tournament = league_node.get("name","") or league_node.get("abbreviation","")
+                        if tournament and tournament.upper() not in ["ATP","WTA"]:
+                            display_liga = tournament
+                        # Also try season
+                        season = ev.get("season",{}).get("type",{}).get("name","")
+                        if not tournament and season:
+                            display_liga = f"{liga_name.split()[0]} — {season}"
+
                     events_found.append({
                         "id": eid, "home": home_i["name"], "away": away_i["name"],
                         "home_logo": home_i["logo"], "away_logo": away_i["logo"],
                         "home_flag": home_i["flag"], "away_flag": away_i["flag"],
                         "date": d_str, "date_raw": date_raw,
                         "is_live": is_live, "completed": completed,
-                        "sport": sport, "liga": liga_name,
+                        "sport": sport, "liga": display_liga,
                         "status_state": state,
                         "home_score": home_i["score"], "away_score": away_i["score"],
                         "home_odds": 0.0, "away_odds": 0.0, "draw_odds": 0.0,
@@ -1870,7 +1886,15 @@ def load_all_today() -> dict:
                 events_found.sort(key=lambda e: e["date_raw"])
                 if sport_group not in result:
                     result[sport_group] = {}
-                result[sport_group][liga_name] = events_found
+                # Group tennis by tournament name
+                if sport == "tennis":
+                    for ev in events_found:
+                        t_name = ev.get("liga", liga_name)
+                        if t_name not in result[sport_group]:
+                            result[sport_group][t_name] = []
+                        result[sport_group][t_name].append(ev)
+                else:
+                    result[sport_group][liga_name] = events_found
 
         except Exception:
             continue
