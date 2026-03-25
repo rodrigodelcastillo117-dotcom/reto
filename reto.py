@@ -113,8 +113,11 @@ ESPN_LEAGUES_GROUPED = {
         "NHL":                   ("hockey", "nhl"),
     },
     "🎾 Tenis": {
-        "ATP":                   ("tennis", "atp"),
-        "WTA":                   ("tennis", "wta"),
+        "ATP Miami Open":        ("tennis", "atp.miami_open"),
+        "WTA Miami Open":        ("tennis", "wta.miami_open"),
+        "ATP Masters 1000":      ("tennis", "atp.masters"),
+        "ATP Tour":              ("tennis", "atp"),
+        "WTA Tour":              ("tennis", "wta"),
     },
 }
 
@@ -515,35 +518,36 @@ div[data-testid="stRadio"] [data-testid="stWidgetLabel"] {
   border-radius:12px !important;
   margin-bottom:6px !important;
 }
-/* Hide the _arrc icon artifact */
-[data-testid="stExpander"] summary svg,
-details summary svg {
-  color: var(--neon) !important;
-  fill: var(--neon) !important;
-}
+/* Remove the _arrow text artifact completely */
+[data-testid="stExpander"] details summary::before,
+[data-testid="stExpander"] summary::before,
+details[data-testid] summary::before { display:none !important; content:none !important; }
+
 [data-testid="stExpander"] summary,
 details summary {
   background: var(--bg3) !important;
   border-radius:12px !important;
-  padding: 10px 16px !important;
-  list-style: none !important;
+  padding: 12px 16px !important;
 }
-[data-testid="stExpander"] summary p,
-[data-testid="stExpander"] summary span,
-[data-testid="stExpander"] summary div,
-details summary p,
-details summary span {
+/* Target the actual label text element */
+[data-testid="stExpander"] summary > div,
+[data-testid="stExpander"] summary > span,
+[data-testid="stExpander"] summary p {
   color: var(--text) !important;
   font-family: 'Rajdhani', sans-serif !important;
-  font-weight: 600 !important;
+  font-weight: 700 !important;
   font-size: .95rem !important;
   letter-spacing: .5px !important;
 }
-[data-testid="stExpander"] summary:hover {
-  background: var(--bg4) !important;
+/* Arrow icon */
+[data-testid="stExpander"] summary svg {
+  color: var(--neon) !important;
+  fill: var(--neon) !important;
+  min-width: 14px !important;
 }
-[data-testid="stExpander"] summary:hover p,
-[data-testid="stExpander"] summary:hover span {
+[data-testid="stExpander"] summary:hover > div,
+[data-testid="stExpander"] summary:hover > span,
+[data-testid="stExpander"] summary:hover p {
   color: var(--neon) !important;
 }
 [data-testid="stExpander"] > div:last-child {
@@ -554,14 +558,15 @@ details summary span {
 /* Nested expander (liga inside sport group) */
 [data-testid="stExpander"] [data-testid="stExpander"] {
   background: var(--bg4) !important;
-  border: 1px solid rgba(191,95,255,.15) !important;
+  border: 1px solid rgba(191,95,255,.2) !important;
   margin: 4px 0 !important;
 }
 [data-testid="stExpander"] [data-testid="stExpander"] summary {
   background: var(--bg4) !important;
 }
-[data-testid="stExpander"] [data-testid="stExpander"] summary p,
-[data-testid="stExpander"] [data-testid="stExpander"] summary span {
+[data-testid="stExpander"] [data-testid="stExpander"] summary > div,
+[data-testid="stExpander"] [data-testid="stExpander"] summary > span,
+[data-testid="stExpander"] [data-testid="stExpander"] summary p {
   color: #BF5FFF !important;
   font-size: .82rem !important;
 }
@@ -1792,13 +1797,14 @@ ALL_TODAY_LEAGUES = [
     ("⚾ Baseball",   "MLB",  "baseball",   "mlb"),
     # Hockey
     ("🏒 Hockey",     "NHL",  "hockey",     "nhl"),
-    # Tennis — multiple tournaments
-    ("🎾 Tenis", "ATP Miami Open",   "tennis", "atp.miami"),
-    ("🎾 Tenis", "WTA Miami Open",   "tennis", "wta.miami"),
-    ("🎾 Tenis", "ATP Masters",      "tennis", "atp.1000"),
-    ("🎾 Tenis", "WTA Premier",      "tennis", "wta.1000"),
-    ("🎾 Tenis", "ATP Tour",         "tennis", "atp"),
-    ("🎾 Tenis", "WTA Tour",         "tennis", "wta"),
+    # Tennis — try many slugs to catch Miami Open and active tournaments
+    ("🎾 Tenis", "ATP Miami Open",     "tennis", "atp.miami_open"),
+    ("🎾 Tenis", "WTA Miami Open",     "tennis", "wta.miami_open"),
+    ("🎾 Tenis", "ATP Miami",          "tennis", "atp.34"),
+    ("🎾 Tenis", "WTA Miami",          "tennis", "wta.22"),
+    ("🎾 Tenis", "ATP Masters 1000",   "tennis", "atp.masters"),
+    ("🎾 Tenis", "ATP Tour",           "tennis", "atp"),
+    ("🎾 Tenis", "WTA Tour",           "tennis", "wta"),
 ]
 
 @st.cache_data(ttl=1800, show_spinner=False)
