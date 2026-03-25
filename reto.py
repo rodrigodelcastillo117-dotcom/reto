@@ -46,7 +46,7 @@ st.set_page_config(
 #  CONSTANTS
 # ─────────────────────────────────────────────────────────────
 RETO_GOAL  = 13_000_000
-START_BANK = 10_000.0
+START_BANK = 1_500.0
 TAB_USERS  = "usuarios"
 
 RANGOS = [
@@ -285,42 +285,82 @@ div.stButton>button[kind="primary"]:hover{
   box-shadow:0 0 30px rgba(255,184,0,.5),0 0 60px rgba(255,61,0,.3),0 8px 24px rgba(0,0,0,.5)!important;
   transform:translateY(-3px) scale(1.01)!important;color:#000!important;}
 
-/* ── INPUTS ── */
+/* ── INPUTS — máxima especificidad para sobreescribir Streamlit ── */
 div[data-testid="stTextInput"] input,
-div[data-testid="stSelectbox"]>div>div,
-div[data-testid="stNumberInput"] input,
 div[data-testid="stTextInput"] input:focus,
 div[data-testid="stTextInput"] input:active,
 div[data-testid="stTextInput"] input:hover,
-input, input:focus, input:active {
-  background:#1A1A28 !important;
-  border:1px solid rgba(255,255,255,.15)!important;
-  color:#EEEEF5 !important;
-  border-radius:10px!important;
-  font-family:'Rajdhani',sans-serif!important;
-  font-size:1rem!important;
-  -webkit-text-fill-color:#EEEEF5 !important;
-  caret-color:#F0FF00 !important;
+div[data-testid="stTextInput"] input:not([type]),
+div[data-testid="stNumberInput"] input,
+div[data-testid="stNumberInput"] input:focus,
+div[data-baseweb="input"] input,
+div[data-baseweb="base-input"] input,
+.stTextInput input, .stNumberInput input {
+  background-color: #1A1A28 !important;
+  background: #1A1A28 !important;
+  border: 1px solid rgba(255,255,255,.18) !important;
+  color: #EEEEF5 !important;
+  -webkit-text-fill-color: #EEEEF5 !important;
+  border-radius: 10px !important;
+  font-family: 'Rajdhani', sans-serif !important;
+  font-size: 1rem !important;
+  caret-color: #F0FF00 !important;
+}
+div[data-baseweb="input"],
+div[data-baseweb="base-input"] {
+  background-color: #1A1A28 !important;
+  background: #1A1A28 !important;
 }
 /* placeholder */
 div[data-testid="stTextInput"] input::placeholder,
-input::placeholder {
-  color:#44445A !important;
-  -webkit-text-fill-color:#44445A !important;
-  opacity:1 !important;
+div[data-baseweb="input"] input::placeholder,
+.stTextInput input::placeholder {
+  color: #44445A !important;
+  -webkit-text-fill-color: #44445A !important;
+  opacity: 1 !important;
 }
-div[data-testid="stTextArea"] textarea{
-  background:#1A1A28 !important;border:1px solid rgba(255,255,255,.12)!important;
-  color:#EEEEF5 !important;-webkit-text-fill-color:#EEEEF5 !important;
-  border-radius:10px!important;caret-color:#F0FF00!important;}
-div[data-testid="stTextArea"] textarea::placeholder{
-  color:#44445A!important;-webkit-text-fill-color:#44445A!important;}
-label,div[data-testid="stWidgetLabel"]{
-  color:var(--text2)!important;font-family:'Rajdhani',sans-serif!important;font-weight:600!important;}
+/* selectbox */
+div[data-testid="stSelectbox"] > div > div,
+div[data-baseweb="select"] > div {
+  background-color: #1A1A28 !important;
+  background: #1A1A28 !important;
+  border: 1px solid rgba(255,255,255,.15) !important;
+  color: #EEEEF5 !important;
+  border-radius: 10px !important;
+}
+div[data-baseweb="select"] span { color: #EEEEF5 !important; }
+/* textarea */
+div[data-testid="stTextArea"] textarea,
+div[data-baseweb="textarea"] textarea {
+  background-color: #1A1A28 !important;
+  background: #1A1A28 !important;
+  border: 1px solid rgba(255,255,255,.12) !important;
+  color: #EEEEF5 !important;
+  -webkit-text-fill-color: #EEEEF5 !important;
+  border-radius: 10px !important;
+  caret-color: #F0FF00 !important;
+}
+div[data-testid="stTextArea"] textarea::placeholder { color:#44445A!important; -webkit-text-fill-color:#44445A!important; }
+/* date input */
+div[data-testid="stDateInput"] input {
+  background-color: #1A1A28 !important;
+  color: #EEEEF5 !important;
+  -webkit-text-fill-color: #EEEEF5 !important;
+}
+/* labels */
+label, div[data-testid="stWidgetLabel"] p,
+div[data-testid="stWidgetLabel"] {
+  color: #8888AA !important;
+  font-family: 'Rajdhani', sans-serif !important;
+  font-weight: 600 !important;
+}
+/* focus glow */
 div[data-testid="stTextInput"] input:focus,
-div[data-testid="stNumberInput"] input:focus{
-  border-color:rgba(240,255,0,.5)!important;
-  box-shadow:0 0 14px rgba(240,255,0,.12)!important;}
+div[data-testid="stNumberInput"] input:focus {
+  border-color: rgba(240,255,0,.5) !important;
+  box-shadow: 0 0 14px rgba(240,255,0,.12) !important;
+  outline: none !important;
+}
 
 /* ── EXPANDER ── */
 div[data-testid="stExpander"] details{
@@ -415,6 +455,23 @@ div[data-testid="stExpander"] summary{color:var(--text)!important;font-family:'R
   border-left:3px solid var(--green);border-radius:10px;padding:12px 16px;margin-bottom:12px;
   font-size:.82rem;color:#6EFFC0;}
 </style>
+<script>
+(function(){
+  function fix(){
+    document.querySelectorAll('input,textarea').forEach(function(el){
+      el.style.setProperty('background-color','#1A1A28','important');
+      el.style.setProperty('color','#EEEEF5','important');
+      el.style.setProperty('-webkit-text-fill-color','#EEEEF5','important');
+      el.style.setProperty('caret-color','#F0FF00','important');
+    });
+    document.querySelectorAll('[data-baseweb="input"],[data-baseweb="base-input"],[data-baseweb="textarea"]').forEach(function(el){
+      el.style.setProperty('background-color','#1A1A28','important');
+    });
+  }
+  fix();
+  new MutationObserver(fix).observe(document.body,{childList:true,subtree:true});
+})();
+</script>
 """, unsafe_allow_html=True)
 
 
@@ -844,7 +901,7 @@ def render_login():
        background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);border-radius:14px">
     <div style="text-align:center">
       <div style="font-family:'Bebas Neue',sans-serif;font-size:1.8rem;color:#F0FF00;
-           text-shadow:0 0 16px rgba(240,255,0,.5)">$10K</div>
+           text-shadow:0 0 16px rgba(240,255,0,.5)">$1,500</div>
       <div style="font-size:.5rem;color:rgba(255,255,255,.3);font-family:'JetBrains Mono',monospace;letter-spacing:2px">INICIO</div>
     </div>
     <div style="display:flex;align-items:center;color:rgba(255,255,255,.2);font-size:1.4rem;font-family:'Bebas Neue',sans-serif">▶</div>
