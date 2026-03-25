@@ -530,32 +530,36 @@ ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports"
 
 def _extract_competitor_info(comp: dict, sport: str) -> dict:
     """Extract name, logo, flag, score from a competitor dict."""
-    # Team sports
-    team = comp.get("team", {})
+    team    = comp.get("team", {})
     athlete = comp.get("athlete", {})
 
-    if team:
-        name  = team.get("displayName", team.get("name", "?"))
-        # Logo: try team logo first
+    # Tennis always uses athlete — also use athlete if team has no displayName
+    use_athlete = (sport == "tennis") or (not team.get("displayName") and not team.get("name"))
+
+    if not use_athlete and team:
+        name  = team.get("displayName", team.get("name", ""))
         logos = team.get("logos", [])
         logo  = logos[0].get("href", "") if logos else team.get("logo", "")
-        # For national teams ESPN sometimes stores flag as logo
         flag  = ""
         if not logo:
             logo = team.get("flag", {}).get("href", "")
     elif athlete:
-        name  = athlete.get("displayName", "?")
+        name  = athlete.get("displayName", athlete.get("fullName", ""))
         logo  = athlete.get("headshot", {}).get("href", "")
         if not logo:
-            # fallback: ESPN athlete headshot URL pattern
-            aid = athlete.get("id", "")
-            logo = f"https://a.espncdn.com/combiner/i?img=/i/headshots/tennis/players/full/{aid}.png&w=96&h=70&cb=1" if aid else ""
+            aid  = athlete.get("id", "")
+            logo = (f"https://a.espncdn.com/combiner/i?img=/i/headshots/tennis/players/full/{aid}.png&w=96&h=70&cb=1"
+                    if aid else "")
         flag  = athlete.get("flag", {}).get("href", "")
     else:
-        name = "?"; logo = ""; flag = ""
+        name = ""; logo = ""; flag = ""
+
+    # Final fallback — use event name parsing
+    if not name:
+        name = comp.get("displayName", "")
 
     score = comp.get("score", "")
-    return {"name": name, "logo": logo, "flag": flag, "score": score}
+    return {"name": name or "?", "logo": logo, "flag": flag, "score": score}
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -2236,6 +2240,9 @@ def pit_get_daily_games(seed_date: str) -> list:
                     away_c = next((c for c in comps if c.get("homeAway")=="away"), comps[1] if len(comps)>1 else {})
                     home_i = _extract_competitor_info(home_c, sport)
                     away_i = _extract_competitor_info(away_c, sport)
+                    # Skip if both names are unknown
+                    if home_i["name"] == "?" and away_i["name"] == "?":
+                        continue
                     date_raw = ev.get("date","")
                     try:
                         dt     = datetime.fromisoformat(date_raw.replace("Z","+00:00"))
@@ -2791,13 +2798,7 @@ def tab_the_pit(apodo: str, bank: float):
                         unsafe_allow_html=True
                     )
 
-                    # Momio input
-                    pit_momio_val = st.number_input(
-                        "Momio (mín 1.50)", min_value=1.50, max_value=50.0,
-                        value=1.85, step=0.05, key=f"pit_momio_{ev_idx}_{str(ev.get('id',''))[:6]}"
-                    )
-
-                    # Pick buttons
+                    # Pick buttons — no momio needed (THE PIT is survival, not bankroll)
                     away_label = away if away and away != "?" else f"Local_{ev_idx}"
                     home_label = home if home and home != "?" else f"Visita_{ev_idx}"
 
@@ -2824,15 +2825,15 @@ def tab_the_pit(apodo: str, bank: float):
                                     ronda_id, apodo,
                                     f"{away} vs {home}",
                                     liga_name, ev["id"],
-                                    pick_val, pit_momio_val, dia_actual
+                                    pick_val, 1.85, dia_actual
                                 )
                                 pit_load_picks_ronda.clear()
                                 for _k in ["pit_picks","pit_players"]:
                                     st.session_state.pop(_k, None)
                                 pit_save_chat("King Rongo",
-                                    f"🩸 **{apodo}** disparó `{pick_val}` @ {pit_momio_val}x — "
-                                    f"{away} vs {home}. Día {dia_actual}. {n_vivos} siguen vivos.", True)
-                                st.success(f"✅ Pick registrado: {pick_val} @ {pit_momio_val}x")
+                                    f"🩸 **{apodo}** disparó `{pick_val}` — "
+                                    f"{away_label} vs {home_label}. Día {dia_actual}. {n_vivos} siguen vivos.", True)
+                                st.success(f"✅ Pick registrado: {pick_val}")
                                 st.rerun()
 
                     st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
