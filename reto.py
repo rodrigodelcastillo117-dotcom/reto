@@ -288,18 +288,39 @@ div.stButton>button[kind="primary"]:hover{
 /* ── INPUTS ── */
 div[data-testid="stTextInput"] input,
 div[data-testid="stSelectbox"]>div>div,
-div[data-testid="stNumberInput"] input{
-  background:rgba(255,255,255,.04)!important;border:1px solid rgba(255,255,255,.1)!important;
-  color:var(--text)!important;border-radius:10px!important;
-  font-family:'Rajdhani',sans-serif!important;font-size:.95rem!important;}
+div[data-testid="stNumberInput"] input,
+div[data-testid="stTextInput"] input:focus,
+div[data-testid="stTextInput"] input:active,
+div[data-testid="stTextInput"] input:hover,
+input, input:focus, input:active {
+  background:#1A1A28 !important;
+  border:1px solid rgba(255,255,255,.15)!important;
+  color:#EEEEF5 !important;
+  border-radius:10px!important;
+  font-family:'Rajdhani',sans-serif!important;
+  font-size:1rem!important;
+  -webkit-text-fill-color:#EEEEF5 !important;
+  caret-color:#F0FF00 !important;
+}
+/* placeholder */
+div[data-testid="stTextInput"] input::placeholder,
+input::placeholder {
+  color:#44445A !important;
+  -webkit-text-fill-color:#44445A !important;
+  opacity:1 !important;
+}
 div[data-testid="stTextArea"] textarea{
-  background:rgba(255,255,255,.04)!important;border:1px solid rgba(255,255,255,.08)!important;
-  color:var(--text)!important;border-radius:10px!important;}
+  background:#1A1A28 !important;border:1px solid rgba(255,255,255,.12)!important;
+  color:#EEEEF5 !important;-webkit-text-fill-color:#EEEEF5 !important;
+  border-radius:10px!important;caret-color:#F0FF00!important;}
+div[data-testid="stTextArea"] textarea::placeholder{
+  color:#44445A!important;-webkit-text-fill-color:#44445A!important;}
 label,div[data-testid="stWidgetLabel"]{
   color:var(--text2)!important;font-family:'Rajdhani',sans-serif!important;font-weight:600!important;}
 div[data-testid="stTextInput"] input:focus,
 div[data-testid="stNumberInput"] input:focus{
-  border-color:rgba(240,255,0,.4)!important;box-shadow:0 0 12px rgba(240,255,0,.1)!important;}
+  border-color:rgba(240,255,0,.5)!important;
+  box-shadow:0 0 14px rgba(240,255,0,.12)!important;}
 
 /* ── EXPANDER ── */
 div[data-testid="stExpander"] details{
