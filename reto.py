@@ -2318,8 +2318,8 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
             # Check if Over/Under was picked — needs line input first
             ou_key = f"ou_pending_{ev_id[:10]}"
             if clicked_pick and clicked_pick[0] in ("Over","Under"):
-                st.session_state[ou_key] = clicked_pick[0]  # "Over" or "Under"
-                clicked_pick = None  # don't proceed to save yet
+                st.session_state[ou_key] = clicked_pick[0]
+                clicked_pick = None  # wait for line input
 
             # Show line input if Over/Under pending
             if st.session_state.get(ou_key):
@@ -2343,79 +2343,83 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                     if st.button("✖", key=f"ou_cancel_{ev_id[:10]}", use_container_width=True):
                         st.session_state.pop(ou_key, None)
                         st.rerun()
-                if clicked_pick:
-                    pick_val, pick_merc, pick_lbl = clicked_pick
-                    st.session_state["selected_event"] = ev
-                    st.session_state[f"qp_val_{ev_id}"]  = pick_val
-                    st.session_state[f"qp_merc_{ev_id}"] = pick_merc
 
-                ev      = st.session_state.get("selected_event", ev)
-                qv      = st.session_state.get(f"qp_val_{ev_id}", "")
-                qm      = st.session_state.get(f"qp_merc_{ev_id}", "ML")
+            # ── Process regular pick click ──────────────────────────
+            if clicked_pick:
+                pick_val, pick_merc, pick_lbl = clicked_pick
+                st.session_state[f"qp_val_{ev_id}"]  = pick_val
+                st.session_state[f"qp_merc_{ev_id}"] = pick_merc
 
-                if qv:
-                    # Get default momio
-                    def_momio = 1.85
-                    aho = float(ev.get("home_odds",0)); aao = float(ev.get("away_odds",0)); ado = float(ev.get("draw_odds",0))
-                    if aho == 0 and aao == 0:
-                        # Try matching from Odds API cache
-                        try:
-                            for sk in list(ODDS_SPORT_MAP.values())[:6]:
-                                if not sk: continue
-                                cached = odds_fetch_sport(sk)
-                                for cev in cached:
-                                    if (ev["home"].lower()[:5] in cev["home"].lower() or cev["home"].lower()[:5] in ev["home"].lower()):
-                                        aho = cev.get("home_odds",0); aao = cev.get("away_odds",0); ado = cev.get("draw_odds",0); break
-                                if aho > 0: break
-                        except Exception:
-                            pass
-                    if "empate" in qv.lower() and ado > 1:   def_momio = round(ado,2)
-                    elif qv.lower()[:5] in home.lower()[:5] and aho > 1: def_momio = round(aho,2)
-                    elif qv.lower()[:5] in away.lower()[:5] and aao > 1: def_momio = round(aao,2)
-                    elif aao > 1: def_momio = round(aao,2)
+            qv = st.session_state.get(f"qp_val_{ev_id}", "")
+            qm = st.session_state.get(f"qp_merc_{ev_id}", "ML")
 
-                    with st.container():
-                        st.markdown(
-                            f'<div style="background:rgba(240,255,0,.05);border:1px solid rgba(240,255,0,.25);'
-                            f'border-radius:10px;padding:12px 16px;margin:4px 0 8px">'
-                            f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:.6rem;color:#F0FF00">'
-                            f'💾 GUARDAR PICK: {qv}</span></div>',
-                            unsafe_allow_html=True
-                        )
-                        fc1, fc2, fc3 = st.columns([2,2,1])
-                        with fc1:
-                            momio_v = st.number_input("Momio", min_value=1.01, max_value=99.0,
-                                                       value=def_momio, step=0.05,
-                                                       key=f"qmomio_{ev_id[:10]}")
-                        with fc2:
-                            apuesta_v = st.number_input("Apuesta ($MXN)", min_value=1.0,
-                                                         max_value=float(bank), value=100.0, step=50.0,
-                                                         key=f"qapuesta_{ev_id[:10]}")
-                        with fc3:
-                            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-                            if st.button("💾 GUARDAR", key=f"qsave_{ev_id[:10]}", type="primary", use_container_width=True):
-                                row = {
-                                    "fecha":         str(date.today()),
-                                    "deporte":       sport_ev,
-                                    "liga":          ev.get("liga", liga_sel),
-                                    "partido":       f"{away} vs {home}",
-                                    "event_id":      ev_id,
-                                    "mercado":       qm,
-                                    "pick_desc":     qv,
-                                    "momio":         momio_v,
-                                    "apuesta":       apuesta_v,
-                                    "resultado":     "pendiente",
-                                    "ganancia_neta": 0,
-                                    "bankroll_post": bank,
-                                    "notas":         "",
-                                }
-                                if save_pick(apodo, row):
-                                    st.success(f"✅ {qv} @ {momio_v}x — ${apuesta_v:,.0f}")
-                                    for k in ["df_picks","search_events","selected_event","pick_type"]:
-                                        st.session_state.pop(k, None)
-                                    st.session_state.pop(f"qp_val_{ev_id}", None)
-                                    st.session_state.pop(f"qp_merc_{ev_id}", None)
-                                    st.rerun()
+            # ── Save form — show when pick is selected ──────────────
+            if qv:
+                def_momio = 1.85
+                aho = float(ev.get("home_odds",0)); aao = float(ev.get("away_odds",0)); ado = float(ev.get("draw_odds",0))
+                if aho == 0 and aao == 0:
+                    try:
+                        for sk in list(ODDS_SPORT_MAP.values())[:6]:
+                            if not sk: continue
+                            cached = odds_fetch_sport(sk)
+                            for cev in cached:
+                                if (ev["home"].lower()[:5] in cev["home"].lower() or cev["home"].lower()[:5] in ev["home"].lower()):
+                                    aho = cev.get("home_odds",0); aao = cev.get("away_odds",0); ado = cev.get("draw_odds",0); break
+                            if aho > 0: break
+                    except Exception:
+                        pass
+                if "empate" in qv.lower() and ado > 1:            def_momio = round(ado,2)
+                elif qv.lower()[:5] in home.lower()[:5] and aho>1: def_momio = round(aho,2)
+                elif qv.lower()[:5] in away.lower()[:5] and aao>1: def_momio = round(aao,2)
+                elif aao > 1: def_momio = round(aao,2)
+
+                st.markdown(
+                    f'<div style="background:rgba(240,255,0,.06);border:1px solid rgba(240,255,0,.3);'
+                    f'border-radius:10px;padding:10px 16px;margin:4px 0 6px">'
+                    f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:.62rem;color:#F0FF00">'
+                    f'💾 Guardando: <strong>{qv}</strong></span></div>',
+                    unsafe_allow_html=True
+                )
+                fc1, fc2, fc3, fc4 = st.columns([2, 2, 1, 1])
+                with fc1:
+                    momio_v = st.number_input("Momio", min_value=1.01, max_value=99.0,
+                                               value=def_momio, step=0.05,
+                                               key=f"qmomio_{ev_id[:10]}")
+                with fc2:
+                    apuesta_v = st.number_input("Apuesta ($MXN)", min_value=1.0,
+                                                 max_value=float(bank), value=100.0, step=50.0,
+                                                 key=f"qapuesta_{ev_id[:10]}")
+                with fc3:
+                    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                    if st.button("💾 OK", key=f"qsave_{ev_id[:10]}", type="primary", use_container_width=True):
+                        row = {
+                            "fecha":         str(date.today()),
+                            "deporte":       sport_ev,
+                            "liga":          ev.get("liga", liga_sel),
+                            "partido":       f"{away} vs {home}",
+                            "event_id":      ev_id,
+                            "mercado":       qm,
+                            "pick_desc":     qv,
+                            "momio":         momio_v,
+                            "apuesta":       apuesta_v,
+                            "resultado":     "pendiente",
+                            "ganancia_neta": 0,
+                            "bankroll_post": bank,
+                            "notas":         "",
+                        }
+                        if save_pick(apodo, row):
+                            st.success(f"✅ {qv} @ {momio_v}x — ${apuesta_v:,.0f}")
+                            for k in ["df_picks","search_events","selected_event","pick_type"]:
+                                st.session_state.pop(k, None)
+                            st.session_state.pop(f"qp_val_{ev_id}", None)
+                            st.session_state.pop(f"qp_merc_{ev_id}", None)
+                            st.rerun()
+                with fc4:
+                    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                    if st.button("✖", key=f"qcancel_{ev_id[:10]}", use_container_width=True):
+                        st.session_state.pop(f"qp_val_{ev_id}", None)
+                        st.session_state.pop(f"qp_merc_{ev_id}", None)
+                        st.rerun()
 
             st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
 
