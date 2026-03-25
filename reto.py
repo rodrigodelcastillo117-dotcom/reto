@@ -914,15 +914,74 @@ def render_login():
 </div>
 """, unsafe_allow_html=True)
 
+    # Load existing users from Sheet
+    existing_users = []
+    try:
+        users_data = load_users()
+        existing_users = [u["apodo"] for u in users_data if u.get("apodo","").strip()]
+    except Exception:
+        existing_users = []
+
     col = st.columns([1, 2, 1])[1]
     with col:
-        apodo = st.text_input("", placeholder="Tu apodo  (ej: RodrigoMX)", label_visibility="collapsed")
-        if st.button("⚡ ENTRAR AL RETO", type="primary"):
-            if apodo.strip():
-                st.session_state["apodo"] = apodo.strip()
-                st.rerun()
+        if existing_users:
+            # Mode toggle
+            mode = st.radio(
+                "",
+                ["👤 Soy usuario existente", "➕ Soy nuevo"],
+                horizontal=True,
+                label_visibility="collapsed",
+                key="login_mode"
+            )
+
+            if mode == "👤 Soy usuario existente":
+                sel = st.selectbox(
+                    "",
+                    options=existing_users,
+                    label_visibility="collapsed",
+                    key="login_select"
+                )
+                if st.button("⚡ ENTRAR AL RETO", type="primary", key="btn_login_existing"):
+                    st.session_state["apodo"] = sel
+                    st.rerun()
             else:
-                st.error("Escribe tu apodo")
+                # JS to disable autocomplete
+                st.markdown("""
+<script>
+setTimeout(function(){
+  var inp = document.querySelectorAll('input[type="text"], input:not([type])');
+  inp.forEach(function(el){ el.setAttribute('autocomplete','off'); el.setAttribute('autocomplete','new-password'); });
+},300);
+</script>""", unsafe_allow_html=True)
+                nuevo = st.text_input(
+                    "", placeholder="Elige tu apodo",
+                    label_visibility="collapsed", key="login_nuevo"
+                )
+                if st.button("⚡ CREAR Y ENTRAR", type="primary", key="btn_login_new"):
+                    if nuevo.strip():
+                        st.session_state["apodo"] = nuevo.strip()
+                        st.rerun()
+                    else:
+                        st.error("Escribe tu apodo")
+        else:
+            # No users yet — just text input
+            st.markdown("""
+<script>
+setTimeout(function(){
+  var inp = document.querySelectorAll('input');
+  inp.forEach(function(el){ el.setAttribute('autocomplete','new-password'); });
+},300);
+</script>""", unsafe_allow_html=True)
+            apodo = st.text_input(
+                "", placeholder="Elige tu apodo para el Reto",
+                label_visibility="collapsed", key="login_first"
+            )
+            if st.button("⚡ ENTRAR AL RETO", type="primary", key="btn_login_first"):
+                if apodo.strip():
+                    st.session_state["apodo"] = apodo.strip()
+                    st.rerun()
+                else:
+                    st.error("Escribe tu apodo")
 
 
 # ─────────────────────────────────────────────────────────────
