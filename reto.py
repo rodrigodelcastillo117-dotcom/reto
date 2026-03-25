@@ -82,17 +82,18 @@ ESPN_LEAGUES_GROUPED = {
         "Liga MX Femenil":       ("soccer", "mex.w.1"),
     },
     "🌍 Fútbol — Selecciones": {
-        "Eliminatorias UEFA":    ("soccer", "fifa.worldq.6"),
-        "Playoffs Eliminat. UEFA":("soccer","uefa.worldq"),
-        "Eliminatorias CONMEBOL":("soccer", "fifa.worldq.2"),
-        "Eliminatorias CONCACAF":("soccer", "fifa.worldq.5"),
-        "Eliminatorias AFC":     ("soccer", "fifa.worldq.3"),
-        "Nations League UEFA":   ("soccer", "uefa.nations"),
-        "Copa América":          ("soccer", "conmebol.america"),
-        "Eurocopa":              ("soccer", "uefa.euro"),
-        "Gold Cup":              ("soccer", "concacaf.gold"),
-        "Amistosos Internac.":   ("soccer", "fifa.friendly"),
-        "Mundial de Clubes":     ("soccer", "fifa.cwc"),
+        "Eliminatorias UEFA":     ("soccer", "fifa.worldq.6"),
+        "Playoffs Eliminat. UEFA":("soccer", "fifa.worldq.europe"),
+        "Eliminatorias CONMEBOL": ("soccer", "fifa.worldq.2"),
+        "Eliminatorias CONCACAF": ("soccer", "fifa.worldq.5"),
+        "Eliminatorias AFC":      ("soccer", "fifa.worldq.3"),
+        "Nations League UEFA":    ("soccer", "uefa.nations"),
+        "Copa América":           ("soccer", "conmebol.america"),
+        "Eurocopa":               ("soccer", "uefa.euro"),
+        "Gold Cup":               ("soccer", "concacaf.gold"),
+        "Amistosos Internac.":    ("soccer", "fifa.friendly"),
+        "Mundial de Clubes":      ("soccer", "fifa.cwc"),
+        "Fútbol Internacional":   ("soccer", "fifa.worldq"),
     },
     "🏀 Basketball": {
         "NBA":                   ("basketball", "nba"),
@@ -632,15 +633,15 @@ def espn_search_events(sport: str, league: str, query: str) -> list:
         url   = f"{ESPN_BASE}/{sport}/{league}/scoreboard"
         today = date.today()
 
-        # Build individual date requests: 3 days back + today + 7 ahead
+        # Build individual date requests: today + 14 days ahead
         dates_to_try = []
-        for d in range(-3, 8):
+        for d in range(0, 15):
             dates_to_try.append((today + timedelta(days=d)).strftime("%Y%m%d"))
-        # Also try a range for future (some leagues only respond to ranges)
+        # Range request
         dates_to_try.append(
-            today.strftime("%Y%m%d") + "-" + (today + timedelta(days=7)).strftime("%Y%m%d")
+            today.strftime("%Y%m%d") + "-" + (today + timedelta(days=14)).strftime("%Y%m%d")
         )
-        # And the bare scoreboard (no date param) for live/today
+        # Bare scoreboard first (live/today)
         dates_to_try.insert(0, None)
 
         for dr in dates_to_try:
@@ -668,21 +669,27 @@ def espn_search_events(sport: str, league: str, query: str) -> list:
     # ── Fallback: if no results and it's a soccer intl league, try alternate slugs ──
     if not results and sport == "soccer":
         FALLBACK_SLUGS = {
-            "fifa.worldq.6":  ["uefa.worldq", "fifa.worldq", "fifa.worldq.europe"],
-            "uefa.worldq":    ["fifa.worldq.6", "fifa.worldq"],
-            "fifa.worldq.2":  ["conmebol.worldq", "fifa.worldq"],
-            "fifa.worldq.5":  ["concacaf.worldq", "fifa.worldq"],
-            "fifa.worldq.3":  ["afc.worldq", "fifa.worldq"],
-            "fifa.friendly":  ["fifa.friendly.int", "soccer.friendly"],
+            "fifa.worldq.6":      ["fifa.worldq.europe", "uefa.worldq", "fifa.worldq", "fifa.worldq.eu"],
+            "fifa.worldq.europe": ["fifa.worldq.6", "uefa.worldq", "fifa.worldq", "fifa.worldq.eu"],
+            "uefa.worldq":        ["fifa.worldq.6", "fifa.worldq.europe", "fifa.worldq"],
+            "fifa.worldq.2":      ["conmebol.worldq", "fifa.worldq"],
+            "fifa.worldq.5":      ["concacaf.worldq", "fifa.worldq"],
+            "fifa.worldq.3":      ["afc.worldq", "fifa.worldq"],
+            "fifa.worldq":        ["fifa.worldq.6", "fifa.worldq.europe", "fifa.worldq.2",
+                                   "fifa.worldq.3", "fifa.worldq.5"],
+            "fifa.friendly":      ["fifa.friendly.int", "soccer.friendly"],
         }
+        tomorrow    = (date.today() + timedelta(days=1)).strftime("%Y%m%d")
+        two_weeks   = (date.today() + timedelta(days=14)).strftime("%Y%m%d")
+        date_range  = f"{tomorrow}-{two_weeks}"
+
         for alt_slug in FALLBACK_SLUGS.get(league, []):
             try:
                 alt_url = f"{ESPN_BASE}/{sport}/{alt_slug}/scoreboard"
-                for dr in [None, date.today().strftime("%Y%m%d"),
-                           date.today().strftime("%Y%m%d") + "-" + (date.today() + timedelta(days=7)).strftime("%Y%m%d")]:
+                for dr in [None, date.today().strftime("%Y%m%d"), date_range]:
                     params = {"limit": 100}
                     if dr: params["dates"] = dr
-                    r = requests.get(alt_url, params=params, timeout=6)
+                    r = requests.get(alt_url, params=params, timeout=8)
                     if r.status_code == 200:
                         for ev in r.json().get("events", []):
                             eid = ev.get("id", "")
@@ -1534,6 +1541,7 @@ var _interval = setInterval(function(){
                 }
                 if save_pick(apodo, row):
                     st.success(f"✅ Pick guardado: {pick_desc} @ {momio}x — ${apuesta:,.0f}")
+                    st.session_state.pop("df_picks", None)
                     st.session_state.pop("search_events", None)
                     st.session_state.pop("selected_event", None)
                     st.session_state.pop("pick_type", None)
@@ -2059,6 +2067,7 @@ def pit_inscribir(ronda_id: str, apodo: str):
         if existing: return False
         ws.append_row([ronda_id, apodo, "vivo", 0, 0.0, "", "1", ""])
         pit_load_players.clear()
+        for _k in ['pit_players','pit_ronda']: st.session_state.pop(_k,None)
         return True
     except Exception:
         return False
@@ -2072,6 +2081,7 @@ def pit_save_pick(ronda_id: str, apodo: str, partido: str, liga: str,
         ws.append_row([ronda_id, dia, str(date.today()), apodo,
                        partido, liga, event_id, pick_desc, momio, "pendiente", "0"])
         pit_load_picks_ronda.clear()
+        for _k in ["pit_picks"]: st.session_state.pop(_k,None)
         return True
     except Exception:
         return False
@@ -2102,6 +2112,7 @@ def pit_usar_comodin(ronda_id: str, apodo: str):
         if str(r.get("ronda_id","")) == str(ronda_id) and r.get("apodo","").lower() == apodo.lower():
             ws.update_cell(i+2, 7, "0")
             pit_load_players.clear()
+            for _k in ["pit_players","pit_picks","pit_ronda"]: st.session_state.pop(_k,None)
             return
 
 # ─────────────────────────────────────────────────────────────
@@ -2202,8 +2213,22 @@ def tab_the_pit(apodo: str, bank: float):
 </div>
 """, unsafe_allow_html=True)
 
-    # ── Load active ronda
-    ronda = pit_load_ronda_activa()
+    # ── Refresh button (manual)
+    col_ref = st.columns([8,1])[1]
+    with col_ref:
+        if st.button("🔄", key="pit_refresh", help="Actualizar datos del Pit"):
+            for k in ["pit_ronda","pit_players","pit_picks","pit_chat_msgs"]:
+                st.session_state.pop(k, None)
+            pit_load_ronda_activa.clear()
+            pit_load_players.clear()
+            pit_load_picks_ronda.clear()
+            pit_load_chat.clear()
+            st.rerun()
+
+    # ── Load active ronda — use session cache to avoid API call on every button click
+    if "pit_ronda" not in st.session_state:
+        st.session_state["pit_ronda"] = pit_load_ronda_activa()
+    ronda = st.session_state["pit_ronda"]
 
     # ── No active ronda
     if not ronda:
@@ -2221,11 +2246,11 @@ def tab_the_pit(apodo: str, bank: float):
                 rid = pit_crear_ronda()
                 if rid:
                     st.success(f"Ronda #{rid} creada. ¡Que comience el foso!")
-                    st.cache_data.clear()
+                    st.session_state.pop("pit_ronda", None)
                     st.rerun()
         return
 
-    ronda_id    = str(ronda["ronda_id"])
+    ronda_id     = str(ronda["ronda_id"])
     estado_ronda = ronda.get("estado","")
     fecha_inicio = ronda.get("fecha_inicio","")
     fecha_fin    = ronda.get("fecha_fin","")
@@ -2235,12 +2260,19 @@ def tab_the_pit(apodo: str, bank: float):
     except Exception:
         dia_actual = 1
 
-    players      = pit_load_players(ronda_id)
-    vivos        = [p for p in players if p.get("estado") == "vivo"]
-    eliminados   = [p for p in players if p.get("estado") == "eliminado"]
-    total        = len(players)
-    n_vivos      = len(vivos)
-    ronda_picks  = pit_load_picks_ronda(ronda_id)
+    # Cache players and picks in session_state
+    if "pit_players" not in st.session_state:
+        st.session_state["pit_players"] = pit_load_players(ronda_id)
+    if "pit_picks" not in st.session_state:
+        st.session_state["pit_picks"] = pit_load_picks_ronda(ronda_id)
+
+    players     = st.session_state["pit_players"]
+    ronda_picks = st.session_state["pit_picks"]
+
+    vivos      = [p for p in players if p.get("estado") == "vivo"]
+    eliminados = [p for p in players if p.get("estado") == "eliminado"]
+    total      = len(players)
+    n_vivos    = len(vivos)
 
     # My player record
     my_record = next((p for p in players if p.get("apodo","").lower() == apodo.lower()), None)
@@ -2371,142 +2403,102 @@ def tab_the_pit(apodo: str, bank: float):
             st.markdown('<div class="sec-head">⚔ Elige tu pick de hoy</div>', unsafe_allow_html=True)
             st.caption("Cuota mínima 1.50 · No puedes repetir equipo · Tienes hasta 5 min antes del partido")
 
-            # Reuse ESPN search from registrar tab
+            # ── Simple league selector + search
             c1, c2 = st.columns(2)
             with c1:
-                group_names = list(ESPN_LEAGUES_GROUPED.keys())
-                pit_group   = st.selectbox("Deporte", group_names, key="pit_sport_group")
-                ligas_pit   = list(ESPN_LEAGUES_GROUPED[pit_group].keys())
-                pit_liga    = st.selectbox("Liga", ligas_pit, key="pit_liga")
+                pit_group = st.selectbox("Deporte", list(ESPN_LEAGUES_GROUPED.keys()), key="pit_sport_group")
+                pit_liga  = st.selectbox("Liga", list(ESPN_LEAGUES_GROUPED[pit_group].keys()), key="pit_liga")
             with c2:
-                pit_query = st.text_input("Buscar equipo", placeholder="ej: Barcelona, Lakers…", key="pit_query")
+                pit_query = st.text_input("Buscar equipo", placeholder="ej: Barcelona, Italy…", key="pit_query")
 
             pit_sport, pit_league = ESPN_LEAGUES[pit_liga]
 
-            if st.button("🔍 BUSCAR EN EL FOSO", key="pit_search"):
+            if st.button("🔍 BUSCAR", key="pit_search"):
                 with st.spinner("Consultando ESPN…"):
-                    pit_events = espn_search_events(pit_sport, pit_league, pit_query)
-                    st.session_state["pit_events"] = pit_events
-                    st.session_state["pit_selected"] = None
+                    st.session_state["pit_events"] = espn_search_events(pit_sport, pit_league, pit_query)
 
-            pit_events   = st.session_state.get("pit_events", [])
-            pit_selected = st.session_state.get("pit_selected", None)
+            pit_events = st.session_state.get("pit_events", [])
 
             if pit_events:
-                # Same 3-per-row grid
-                sz_p = 36; brad_p = "50%" if pit_sport == "tennis" else "8px"
-                def mk_p(url, flag, name):
-                    src = url or flag; ini = (name[:2]).upper()
-                    if src:
-                        return (f'<img src="{src}" style="width:{sz_p}px;height:{sz_p}px;'
-                                f'object-fit:contain;border-radius:{brad_p};'
-                                f'background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)" '
-                                f'onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
-                                f'<div style="display:none;width:{sz_p}px;height:{sz_p}px;border-radius:{brad_p};'
-                                f'background:rgba(255,255,255,.07);display:flex;align-items:center;'
-                                f'justify-content:center;font-family:\'Bebas Neue\',sans-serif;'
-                                f'font-size:{sz_p//2}px;color:#8888AA">{ini}</div>')
-                    return (f'<div style="width:{sz_p}px;height:{sz_p}px;border-radius:{brad_p};'
-                            f'background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);'
-                            f'display:flex;align-items:center;justify-content:center;'
-                            f'font-family:\'Bebas Neue\',sans-serif;font-size:{sz_p//2}px;color:#8888AA">{ini}</div>')
-
-                for row_s in range(0, min(len(pit_events), 24), 3):
-                    row_evs = pit_events[row_s:row_s+3]
-                    cols    = st.columns(3)
-                    for col, ev in zip(cols, row_evs):
-                        with col:
-                            is_live = ev.get("is_live", False)
-                            is_sel  = pit_selected and pit_selected["id"] == ev["id"]
-                            border  = "rgba(255,45,85,.6)" if is_sel else ("rgba(255,61,0,.4)" if is_live else "rgba(255,255,255,.08)")
-                            bg      = "rgba(255,45,85,.06)" if is_sel else "rgba(255,255,255,.02)"
-                            status  = "● LIVE" if is_live else ev["date"]
-                            sc      = "#FF3D00" if is_live else "#00FFD1"
-                            st.markdown(
-                                f'<div style="background:{bg};border:1px solid {border};border-radius:12px;'
-                                f'padding:10px 6px;text-align:center">'
-                                f'<div style="display:flex;align-items:center;justify-content:center;gap:5px;margin-bottom:6px">'
-                                f'<div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex:1">'
-                                f'{mk_p(ev.get("away_logo",""),ev.get("away_flag",""),ev["away"])}'
-                                f'<div style="font-size:.6rem;font-weight:700;color:#EEEEF5;overflow:hidden;'
-                                f'text-overflow:ellipsis;white-space:nowrap;max-width:70px">{ev["away"]}</div></div>'
-                                f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.7rem;color:#44445A">VS</div>'
-                                f'<div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex:1">'
-                                f'{mk_p(ev.get("home_logo",""),ev.get("home_flag",""),ev["home"])}'
-                                f'<div style="font-size:.6rem;font-weight:700;color:#EEEEF5;overflow:hidden;'
-                                f'text-overflow:ellipsis;white-space:nowrap;max-width:70px">{ev["home"]}</div></div>'
-                                f'</div>'
-                                f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.5rem;color:{sc}">{status}</div>'
-                                f'</div>',
-                                unsafe_allow_html=True
-                            )
-                            lbl = "✔ SELECCIONADO" if is_sel else "Seleccionar"
-                            if st.button(lbl, key=f"pit_sel_{ev['id']}"):
-                                st.session_state["pit_selected"] = ev
-                                st.rerun()
-
-            # Pick form after selecting event
-            pit_selected = st.session_state.get("pit_selected", None)
-            if pit_selected:
                 st.markdown(
-                    f'<div style="background:rgba(255,45,85,.05);border:1px solid rgba(255,45,85,.3);'
-                    f'border-radius:10px;padding:10px 14px;margin:10px 0">'
-                    f'<div style="font-family:\'Rajdhani\',sans-serif;font-weight:700;color:#EEEEF5">'
-                    f'{pit_selected["away"]} vs {pit_selected["home"]}</div>'
-                    f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.52rem;color:#44445A">'
-                    f'{pit_liga} · {pit_selected["date"]}</div></div>',
+                    f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.55rem;'
+                    f'color:var(--text3);margin-bottom:8px">{len(pit_events)} PARTIDOS</div>',
                     unsafe_allow_html=True
                 )
-                c1, c2 = st.columns(2)
-                with c1:
-                    pit_pick_desc = st.text_input(
-                        "Tu pick (ej: Barcelona ML, Over 2.5)",
-                        key="pit_pick_desc",
-                        placeholder="Sé específico — el árbitro es implacable"
-                    )
-                with c2:
-                    pit_momio = st.number_input(
-                        "Momio (mín. 1.50)", min_value=1.50, max_value=50.0,
-                        value=1.80, step=0.05, key="pit_momio"
+                # Each event: show card + 3 pick buttons inline (Away / Draw / Home)
+                is_tennis_pit = (pit_sport == "tennis")
+                for ev in pit_events[:18]:
+                    is_live = ev.get("is_live", False)
+                    s_txt   = "● LIVE" if is_live else ev["date"]
+                    s_col   = "#FF3D00" if is_live else "#00FFD1"
+                    away    = ev["away"]; home = ev["home"]
+                    a_lg    = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 32, "50%" if is_tennis_pit else "6px")
+                    h_lg    = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 32, "50%" if is_tennis_pit else "6px")
+
+                    # Card header
+                    st.markdown(
+                        f'<div style="background:rgba(255,45,85,.04);border:1px solid rgba(255,45,85,.2);'
+                        f'border-radius:12px;padding:10px 14px;margin-bottom:4px">'
+                        f'<div style="display:flex;align-items:center;gap:10px">'
+                        f'<div style="display:flex;align-items:center;gap:6px;flex:1">'
+                        f'{a_lg}<span style="font-size:.78rem;font-weight:700;color:#EEEEF5">{away}</span>'
+                        f'</div>'
+                        f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.7rem;color:#44445A">VS</div>'
+                        f'<div style="display:flex;align-items:center;gap:6px;flex:1;justify-content:flex-end">'
+                        f'<span style="font-size:.78rem;font-weight:700;color:#EEEEF5">{home}</span>{h_lg}'
+                        f'</div>'
+                        f'</div>'
+                        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.5rem;color:{s_col};margin-top:4px">'
+                        f'{s_txt} · {pit_liga}</div></div>',
+                        unsafe_allow_html=True
                     )
 
-                # Warn if team already used
-                if pit_pick_desc and pit_pick_desc.lower().strip() in equipos_usados:
-                    st.warning("⚠️ Ya usaste ese pick esta ronda. El foso no permite repetir.")
-
-                # Comodín activation
-                if comodin_disp:
-                    usar_como = st.checkbox(
-                        "🛡 Activar Comodín de Badrino (te salva si el partido termina 0-0)",
-                        key="pit_comodin"
-                    )
-                else:
-                    usar_como = False
-
-                if st.button("⚔ DISPARAR PICK AL FOSO", type="primary", key="pit_save"):
-                    if not pit_pick_desc:
-                        st.error("Escribe tu pick.")
-                    elif pit_momio < 1.50:
-                        st.error("La cuota mínima es 1.50. Sin cobardía en el foso.")
-                    elif pit_pick_desc.lower().strip() in equipos_usados:
-                        st.error("Ya usaste ese pick esta ronda.")
+                    # Pick buttons — away / draw / home (no draw for tennis)
+                    if is_tennis_pit:
+                        b1, b2 = st.columns(2)
+                        picks_opts = [(b1, f"{away} gana", away), (b2, f"{home} gana", home)]
                     else:
-                        pit_save_pick(
-                            ronda_id, apodo,
-                            f"{pit_selected['away']} vs {pit_selected['home']}",
-                            pit_liga, pit_selected["id"],
-                            pit_pick_desc, pit_momio, dia_actual
-                        )
-                        if usar_como:
-                            pit_usar_comodin(ronda_id, apodo)
-                        pit_load_picks_ronda.clear()
-                        pit_save_chat("King Rongo",
-                            f"🩸 **{apodo}** acaba de apostar `{pit_pick_desc}` @ {pit_momio}x en el Día {dia_actual}. "
-                            f"El foso observa. Quedan {n_vivos} vivos.", True)
-                        st.session_state.pop("pit_events", None)
-                        st.session_state.pop("pit_selected", None)
-                        st.success("✅ Pick registrado. El foso decidirá tu destino.")
-                        st.rerun()
+                        b1, b2, b3 = st.columns(3)
+                        picks_opts = [(b1, f"{away} gana", away),
+                                      (b2, "Empate", "Empate"),
+                                      (b3, f"{home} gana", home)]
+
+                    # Momio input per event
+                    pit_momio_key = f"pit_momio_{ev['id']}"
+                    pit_momio_val = st.number_input(
+                        "Momio (mín 1.50)", min_value=1.50, max_value=50.0,
+                        value=1.85, step=0.05, key=pit_momio_key
+                    )
+
+                    for col, lbl, pick_val in picks_opts:
+                        with col:
+                            already_used = pick_val.lower().strip() in equipos_usados
+                            btn_disabled = already_used
+                            if st.button(
+                                f"{'🚫 ' if already_used else '⚔ '}{lbl}",
+                                key=f"pit_pick_{ev['id']}_{lbl}",
+                                disabled=btn_disabled,
+                                use_container_width=True
+                            ):
+                                if pit_momio_val < 1.50:
+                                    st.error("Momio mínimo 1.50")
+                                else:
+                                    pit_save_pick(
+                                        ronda_id, apodo,
+                                        f"{away} vs {home}",
+                                        pit_liga, ev["id"],
+                                        pick_val, pit_momio_val, dia_actual
+                                    )
+                                    pit_load_picks_ronda.clear()
+                                    for _k in ["pit_picks","pit_players","pit_events"]:
+                                        st.session_state.pop(_k, None)
+                                    pit_save_chat("King Rongo",
+                                        f"🩸 **{apodo}** disparó `{pick_val}` @ {pit_momio_val}x — "
+                                        f"{away} vs {home}. Día {dia_actual}. Quedan {n_vivos} vivos.", True)
+                                    st.success("✅ Pick registrado. El foso decidirá.")
+                                    st.rerun()
+                    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+
 
     # ── Pick del Rey
     with st.expander("👑 PICK DEL REY — Consejo de King Rongo"):
@@ -2625,49 +2617,58 @@ def main():
     apodo = st.session_state["apodo"]
 
     # Load data
-    with st.spinner("⚡ Cargando…"):
-        df = load_picks(apodo)
+    # ── Load picks — cache in session_state to avoid gspread APIError on reruns
+    if "df_picks" not in st.session_state or st.session_state.get("df_apodo") != apodo:
+        with st.spinner("⚡ Cargando…"):
+            try:
+                df = load_picks(apodo)
+                st.session_state["df_picks"] = df
+                st.session_state["df_apodo"] = apodo
+            except Exception:
+                df = pd.DataFrame(columns=PICKS_HEADERS)
+                st.session_state["df_picks"] = df
+    else:
+        df = st.session_state["df_picks"]
 
     # ── AUTO-GRADE on every load ──────────────────────────────
     bank = get_bankroll(df)
     pending_count = (df["resultado"] == "pendiente").sum() if not df.empty else 0
     if pending_count > 0:
-        df, graded, bank = auto_grade_pending(apodo, df, bank)
-        if graded > 0:
-            st.markdown(
-                f'<div class="autobanner">⚡ Auto-calificador: <strong>{graded} pick(s)</strong> resueltos automáticamente desde ESPN.</div>',
-                unsafe_allow_html=True
-            )
+        try:
+            df, graded, bank = auto_grade_pending(apodo, df, bank)
+            st.session_state["df_picks"] = df
+            if graded > 0:
+                st.markdown(
+                    f'<div class="autobanner">⚡ Auto-calificador: <strong>{graded} pick(s)</strong> resueltos automáticamente desde ESPN.</div>',
+                    unsafe_allow_html=True
+                )
+        except Exception:
+            pass
     else:
         bank = get_bankroll(df)
 
     # Manual refresh button
     col_r = st.columns([6,1])[1]
     with col_r:
-        if st.button("🔄", help="Actualizar resultados desde ESPN"):
-            st.cache_data.clear()
-            df = load_picks(apodo)
-            bank = get_bankroll(df)
-            df, graded, bank = auto_grade_pending(apodo, df, bank)
-            if graded > 0:
-                st.success(f"✅ {graded} pick(s) resueltos.")
-            else:
-                st.info("No hay nuevos resultados disponibles.")
+        if st.button("🔄", help="Actualizar resultados desde ESPN", key="main_refresh"):
+            for k in ["df_picks","df_apodo","pit_ronda","pit_players","pit_picks"]:
+                st.session_state.pop(k, None)
             st.rerun()
 
     # Header
     render_header(apodo, bank)
 
     # Tabs
-    t1, t2, t3, t4, t5 = st.tabs([
+    t1, t2, t3, t4, t5, t6 = st.tabs([
         "📝  REGISTRAR", "📋  HISTORIAL", "📊  ANALYTICS",
-        "⚔️  LEADERBOARD", "🩸  THE PIT"
+        "⚔️  LEADERBOARD", "🔮  SIMULADOR", "🩸  THE PIT"
     ])
     with t1: tab_registrar(apodo, df, bank)
     with t2: tab_historial(apodo, df)
     with t3: tab_analytics(df, bank)
     with t4: tab_challenge(apodo, df, bank)
-    with t5: tab_the_pit(apodo, bank)
+    with t5: tab_simulador(df, bank)
+    with t6: tab_the_pit(apodo, bank)
 
 
 if __name__ == "__main__":
