@@ -1093,6 +1093,11 @@ def espn_search_events(sport: str, league: str, query: str) -> list:
         home_info = _extract_competitor_info(home_comp, sport)
         away_info = _extract_competitor_info(away_comp, sport)
 
+        # Skip tennis matches with TBD players
+        if sport == "tennis":
+            if home_info["name"] in ("?","TBD","") or away_info["name"] in ("?","TBD",""):
+                return None
+
         date_raw = ev.get("date", "")
         try:
             dt       = datetime.fromisoformat(date_raw.replace("Z", "+00:00"))
@@ -1862,9 +1867,13 @@ def load_all_today() -> dict:
                     except Exception:
                         d_str = date_raw[:10]
                     is_live = (state == "in") and not completed
-                    # Skip if both names unknown/TBD
+                    # Skip if both names TBD/unknown
                     if home_i["name"] in ("?","TBD","") and away_i["name"] in ("?","TBD",""):
                         continue
+                    # For tennis: also skip if EITHER player is TBD (unconfirmed matchup)
+                    if sport == "tennis":
+                        if home_i["name"] in ("?","TBD","") or away_i["name"] in ("?","TBD",""):
+                            continue
                     # For tennis, extract tournament name from event name
                     display_liga = liga_name
                     if sport == "tennis":
@@ -2149,6 +2158,10 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
         for ev_i, ev in enumerate(ev_list):
             ev_id   = ev["id"]
             away    = ev["away"]; home = ev["home"]
+
+            # Skip TBD tennis
+            if ev.get("sport","") == "tennis" and (away in ("?","TBD","") or home in ("?","TBD","")):
+                continue
             is_live = ev.get("is_live", False)
             is_sel  = selected and selected["id"] == ev_id
             s_txt   = "● LIVE" if is_live else ev["date"]
@@ -2192,13 +2205,22 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
             is_soccer_ev = (sport_ev == "soccer")
 
             if is_tennis_ev:
-                pick_opts = [(away, "ML"), (home, "ML")]
-                btn_labels = [f"🏆 {away}", f"🏆 {home}"]
+                pick_opts  = [(away, "ML"), (home, "ML")]
+                btn_labels = [f"🎾 {away[:20]}", f"🎾 {home[:20]}"]
             elif is_soccer_ev:
-                pick_opts = [(away, "ML"), ("Empate", "1X2"), (home, "ML")]
-                btn_labels = [f"⚽ {away[:18]}", "➖ Empate", f"⚽ {home[:18]}"]
+                pick_opts  = [(away, "ML"), ("Empate", "1X2"), (home, "ML")]
+                btn_labels = [f"⚽ {away[:15]}", "➖ Empate", f"⚽ {home[:15]}"]
+            elif sport_ev == "basketball":
+                pick_opts  = [(away, "ML"), (home, "ML"), ("Over", "O/U"), ("Under", "O/U")]
+                btn_labels = [f"🏀 {away[:13]}", f"🏀 {home[:13]}", "📈 Over", "📉 Under"]
+            elif sport_ev == "baseball":
+                pick_opts  = [(away, "ML"), (home, "ML"), ("Over", "O/U"), ("Under", "O/U")]
+                btn_labels = [f"⚾ {away[:13]}", f"⚾ {home[:13]}", "📈 Over", "📉 Under"]
+            elif sport_ev == "hockey":
+                pick_opts  = [(away, "ML"), (home, "ML"), ("Over 5.5", "O/U"), ("Under 5.5", "O/U")]
+                btn_labels = [f"🏒 {away[:13]}", f"🏒 {home[:13]}", "📈 Over 5.5", "📉 Under 5.5"]
             else:
-                pick_opts = [(away, "ML"), (home, "ML")]
+                pick_opts  = [(away, "ML"), (home, "ML")]
                 btn_labels = [f"🏆 {away[:18]}", f"🏆 {home[:18]}"]
 
             # Quick-pick cols
@@ -2246,12 +2268,12 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                     }
                 elif is_bas2:
                     quick_picks = {
-                        f"🏀 {away[:15]} ML": (away, "ML"),
-                        f"🏀 {home[:15]} ML": (home, "ML"),
-                        f"📈 Over puntos": ("Over puntos", "O/U"),
-                        f"📉 Under puntos": ("Under puntos", "O/U"),
-                        f"🔱 {away[:12]} -3.5": (f"{away} -3.5", "Hándicap"),
-                        f"🔱 {home[:12]} +3.5": (f"{home} +3.5", "Hándicap"),
+                        f"🏀 {away[:15]} ML":      (away, "ML"),
+                        f"🏀 {home[:15]} ML":      (home, "ML"),
+                        f"📈 Over puntos":          ("Over puntos", "O/U"),
+                        f"📉 Under puntos":         ("Under puntos", "O/U"),
+                        f"🔱 {away[:12]} -3.5":    (f"{away} -3.5", "Hándicap"),
+                        f"🔱 {home[:12]} +3.5":    (f"{home} +3.5", "Hándicap"),
                     }
                 elif is_base2:
                     quick_picks = {
@@ -2293,7 +2315,34 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                                 st.rerun()
 
             # ── If quick-pick clicked → show inline save form ──
-            if clicked_pick or (is_sel and st.session_state.get("pick_type")):
+            # Check if Over/Under was picked — needs line input first
+            ou_key = f"ou_pending_{ev_id[:10]}"
+            if clicked_pick and clicked_pick[0] in ("Over","Under"):
+                st.session_state[ou_key] = clicked_pick[0]  # "Over" or "Under"
+                clicked_pick = None  # don't proceed to save yet
+
+            # Show line input if Over/Under pending
+            if st.session_state.get(ou_key):
+                direction = st.session_state[ou_key]
+                lc1, lc2 = st.columns([3,1])
+                with lc1:
+                    line_val = st.number_input(
+                        f"Línea para {direction}",
+                        min_value=0.5, max_value=500.0,
+                        value=220.5 if sport_ev=="basketball" else 8.5 if sport_ev=="baseball" else 5.5,
+                        step=0.5, key=f"ou_line_{ev_id[:10]}"
+                    )
+                with lc2:
+                    st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                    if st.button("✅ OK", key=f"ou_confirm_{ev_id[:10]}", use_container_width=True):
+                        pv = f"{direction} {line_val}"
+                        st.session_state[f"qp_val_{ev_id}"]  = pv
+                        st.session_state[f"qp_merc_{ev_id}"] = "O/U"
+                        st.session_state.pop(ou_key, None)
+                        st.rerun()
+                    if st.button("✖", key=f"ou_cancel_{ev_id[:10]}", use_container_width=True):
+                        st.session_state.pop(ou_key, None)
+                        st.rerun()
                 if clicked_pick:
                     pick_val, pick_merc, pick_lbl = clicked_pick
                     st.session_state["selected_event"] = ev
@@ -3287,6 +3336,9 @@ def pit_get_daily_games(seed_date: str) -> list:
                     # Skip if both names unknown/TBD
                     if home_i["name"] in ("?","TBD","") and away_i["name"] in ("?","TBD",""):
                         continue
+                    # For tennis skip if either is TBD
+                    if sport == "tennis" and (home_i["name"] in ("?","TBD","") or away_i["name"] in ("?","TBD","")):
+                        continue
                     date_raw = ev.get("date","")
                     try:
                         dt     = datetime.fromisoformat(date_raw.replace("Z","+00:00"))
@@ -3810,10 +3862,16 @@ def tab_the_pit(apodo: str, bank: float):
                 for ev_idx, ev in enumerate(daily_games):
                     sport_ev      = ev.get("sport","soccer")
                     is_tennis_pit = (sport_ev == "tennis")
+                    is_soccer_pit = (sport_ev == "soccer")
+                    away          = ev["away"]; home = ev["home"]
+
+                    # Skip TBD tennis
+                    if is_tennis_pit and (away in ("?","TBD","") or home in ("?","TBD","")):
+                        continue
+
                     is_live       = ev.get("is_live", False)
                     s_txt         = "● LIVE" if is_live else ev["date"]
                     s_col         = "#FF3D00" if is_live else "#00FFD1"
-                    away          = ev["away"]; home = ev["home"]
                     sport_label   = ev.get("pit_sport_label","⚽")
                     liga_name     = ev.get("pit_liga_name","")
                     brad_ev       = "50%" if is_tennis_pit else "6px"
@@ -3842,25 +3900,49 @@ def tab_the_pit(apodo: str, bank: float):
                         unsafe_allow_html=True
                     )
 
-                    # Pick buttons — no momio needed (THE PIT is survival, not bankroll)
-                    away_label = away if away and away != "?" else f"Local_{ev_idx}"
-                    home_label = home if home and home != "?" else f"Visita_{ev_idx}"
-
+                    # ── Pick buttons per sport ──
                     if is_tennis_pit:
+                        # Tennis: only winner, no draw
                         cols_pick = st.columns(2)
-                        opts = [(cols_pick[0], f"{away_label} gana", away),
-                                (cols_pick[1], f"{home_label} gana", home)]
-                    else:
+                        opts = [(cols_pick[0], f"🎾 {away} gana", away),
+                                (cols_pick[1], f"🎾 {home} gana", home)]
+                    elif is_soccer_pit:
+                        # Soccer: 1X2
                         cols_pick = st.columns(3)
-                        opts = [(cols_pick[0], f"{away_label} gana", away),
-                                (cols_pick[1], "Empate",              "Empate"),
-                                (cols_pick[2], f"{home_label} gana",  home)]
+                        opts = [(cols_pick[0], f"⚽ {away[:14]} gana", away),
+                                (cols_pick[1], "➖ Empate",            "Empate"),
+                                (cols_pick[2], f"⚽ {home[:14]} gana", home)]
+                    elif sport_ev == "basketball":
+                        # NBA: ML only in THE PIT — O/U lines vary too much
+                        cols_pick = st.columns(2)
+                        opts = [(cols_pick[0], f"🏀 {away[:16]} ML", away),
+                                (cols_pick[1], f"🏀 {home[:16]} ML", home)]
+                    elif sport_ev == "baseball":
+                        # MLB: ML only in THE PIT
+                        cols_pick = st.columns(2)
+                        opts = [(cols_pick[0], f"⚾ {away[:16]} ML", away),
+                                (cols_pick[1], f"⚾ {home[:16]} ML", home)]
+                    elif sport_ev == "hockey":
+                        # NHL: ML + Over 5.5 (standard line)
+                        cols_pick = st.columns(3)
+                        opts = [(cols_pick[0], f"🏒 {away[:12]} ML", away),
+                                (cols_pick[1], "📈 Over 5.5",         "Over 5.5"),
+                                (cols_pick[2], f"🏒 {home[:12]} ML", home)]
+                    elif sport_ev == "football":
+                        # NFL: spread + ML
+                        cols_pick = st.columns(2)
+                        opts = [(cols_pick[0], f"🏈 {away[:16]} ML", away),
+                                (cols_pick[1], f"🏈 {home[:16]} ML", home)]
+                    else:
+                        cols_pick = st.columns(2)
+                        opts = [(cols_pick[0], f"🏆 {away[:16]} gana", away),
+                                (cols_pick[1], f"🏆 {home[:16]} gana", home)]
 
                     for opt_idx, (col, lbl, pick_val) in enumerate(opts):
                         with col:
                             used = pick_val.lower().strip() in equipos_usados
                             if st.button(
-                                f"{'🚫 ' if used else '⚔ '}{lbl}",
+                                f"{'🚫 ' if used else ''}{lbl}",
                                 key=f"pp_{ev_idx}_{opt_idx}",
                                 disabled=used,
                                 use_container_width=True
@@ -3876,11 +3958,12 @@ def tab_the_pit(apodo: str, bank: float):
                                     st.session_state.pop(_k, None)
                                 pit_save_chat("King Rongo",
                                     f"🩸 **{apodo}** disparó `{pick_val}` — "
-                                    f"{away_label} vs {home_label}. Día {dia_actual}. {n_vivos} siguen vivos.", True)
+                                    f"{away} vs {home}. Día {dia_actual}. {n_vivos} siguen vivos.", True)
                                 st.success(f"✅ Pick registrado: {pick_val}")
                                 st.rerun()
 
                     st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+
 
 
     # ── Pick del Rey
