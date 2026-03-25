@@ -80,11 +80,11 @@ ESPN_LEAGUES = {
     "Liga Portugal":         ("soccer", "por.1"),
     "Superliga Argentina":   ("soccer", "arg.1"),
     "Liga MX Femenil":       ("soccer", "mex.w.1"),
-    # ── SOCCER — Selecciones
-    "Eliminatorias UEFA":    ("soccer", "uefa.qualifiers"),
-    "Eliminatorias CONMEBOL":("soccer", "conmebol.worldq"),
-    "Eliminatorias CONCACAF":("soccer", "concacaf.worldq"),
-    "Eliminatorias AFC":     ("soccer", "afc.worldq"),
+    # ── SOCCER — Selecciones / Internacionales
+    "Eliminatorias UEFA":    ("soccer", "fifa.worldq.6"),   # UEFA zone = group 6
+    "Eliminatorias CONMEBOL":("soccer", "fifa.worldq.2"),
+    "Eliminatorias CONCACAF":("soccer", "fifa.worldq.5"),
+    "Eliminatorias AFC":     ("soccer", "fifa.worldq.3"),
     "Nations League UEFA":   ("soccer", "uefa.nations"),
     "Copa América":          ("soccer", "conmebol.america"),
     "Eurocopa":              ("soccer", "uefa.euro"),
@@ -542,10 +542,11 @@ def _extract_competitor_info(comp: dict, sport: str) -> dict:
 @st.cache_data(ttl=120, show_spinner=False)
 def espn_search_events(sport: str, league: str, query: str) -> list:
     """
-    Search upcoming + recent events for a sport/league.
-    Returns list of dicts including logo URLs for both competitors.
+    Fetch events: 3 days back + 7 days ahead.
+    Uses status.type.state ('pre'|'in'|'post') for accurate live detection.
     """
-    results = []
+    results  = []
+    seen_ids = set()
 
     def parse_event(ev: dict) -> dict | None:
         name  = ev.get("name", "")
@@ -556,79 +557,101 @@ def espn_search_events(sport: str, league: str, query: str) -> list:
         comps = comp0.get("competitors", [])
 
         if q_low:
-            all_names = name.lower() + " " + short.lower()
+            all_text = (name + " " + short).lower()
             for c in comps:
-                all_names += " " + c.get("team", {}).get("displayName", "").lower()
-                all_names += " " + c.get("athlete", {}).get("displayName", "").lower()
-            if q_low not in all_names:
+                all_text += " " + c.get("team", {}).get("displayName", "").lower()
+                all_text += " " + c.get("athlete", {}).get("displayName", "").lower()
+            if q_low not in all_text:
                 return None
 
         status_type  = ev.get("status", {}).get("type", {})
+        # 'state' is the reliable field: "pre" | "in" | "post"
+        state        = status_type.get("state", "pre")
         status_name  = status_type.get("name", "STATUS_SCHEDULED")
         status_short = status_type.get("shortDetail", "")
-        completed    = status_type.get("completed", False)
+        completed    = (state == "post") or status_type.get("completed", False)
+        is_live      = (state == "in") and not completed
 
         home_comp = next((c for c in comps if c.get("homeAway") == "home"), comps[0] if comps else {})
         away_comp = next((c for c in comps if c.get("homeAway") == "away"), comps[1] if len(comps) > 1 else {})
-
         home_info = _extract_competitor_info(home_comp, sport)
         away_info = _extract_competitor_info(away_comp, sport)
 
         date_raw = ev.get("date", "")
         try:
-            dt = datetime.fromisoformat(date_raw.replace("Z", "+00:00"))
-            # Convert UTC to Mexico City time (UTC-6)
-            dt_mx = dt - timedelta(hours=6)
+            dt       = datetime.fromisoformat(date_raw.replace("Z", "+00:00"))
+            dt_mx    = dt - timedelta(hours=6)   # UTC → Mexico City
             date_str = dt_mx.strftime("%d %b %H:%M")
         except Exception:
             date_str = date_raw[:10]
 
         return {
-            "id":          ev.get("id", ""),
-            "name":        name,
-            "short":       short,
-            "home":        home_info["name"],
-            "away":        away_info["name"],
-            "home_logo":   home_info["logo"],
-            "away_logo":   away_info["logo"],
-            "home_flag":   home_info["flag"],
-            "away_flag":   away_info["flag"],
-            "home_score":  home_info["score"],
-            "away_score":  away_info["score"],
-            "date":        date_str,
-            "date_raw":    date_raw,
-            "status":      status_name,
+            "id":            ev.get("id", ""),
+            "name":          name,
+            "short":         short,
+            "home":          home_info["name"],
+            "away":          away_info["name"],
+            "home_logo":     home_info["logo"],
+            "away_logo":     away_info["logo"],
+            "home_flag":     home_info["flag"],
+            "away_flag":     away_info["flag"],
+            "home_score":    home_info["score"],
+            "away_score":    away_info["score"],
+            "date":          date_str,
+            "date_raw":      date_raw,
+            "status":        status_name,
+            "status_state":  state,
             "status_detail": status_short,
-            "completed":   completed,
-            "sport":       sport,
+            "completed":     completed,
+            "is_live":       is_live,
+            "sport":         sport,
         }
 
     try:
-        # Current scoreboard
-        url = f"{ESPN_BASE}/{sport}/{league}/scoreboard"
-        r = requests.get(url, params={"limit": 100}, timeout=8)
-        if r.status_code == 200:
-            for ev in r.json().get("events", []):
-                parsed = parse_event(ev)
-                if parsed:
-                    results.append(parsed)
+        url   = f"{ESPN_BASE}/{sport}/{league}/scoreboard"
+        today = date.today()
 
-        # If few results, also pull next 7 days
-        if len(results) < 5:
-            tomorrow = (date.today() + timedelta(days=1)).strftime("%Y%m%d")
-            week_out = (date.today() + timedelta(days=7)).strftime("%Y%m%d")
-            r2 = requests.get(url, params={"dates": f"{tomorrow}-{week_out}", "limit": 50}, timeout=8)
-            if r2.status_code == 200:
-                for ev in r2.json().get("events", []):
+        # Build individual date requests: 3 days back + today + 7 ahead
+        dates_to_try = []
+        for d in range(-3, 8):
+            dates_to_try.append((today + timedelta(days=d)).strftime("%Y%m%d"))
+        # Also try a range for future (some leagues only respond to ranges)
+        dates_to_try.append(
+            today.strftime("%Y%m%d") + "-" + (today + timedelta(days=7)).strftime("%Y%m%d")
+        )
+        # And the bare scoreboard (no date param) for live/today
+        dates_to_try.insert(0, None)
+
+        for dr in dates_to_try:
+            try:
+                params = {"limit": 100}
+                if dr:
+                    params["dates"] = dr
+                r = requests.get(url, params=params, timeout=6)
+                if r.status_code != 200:
+                    continue
+                for ev in r.json().get("events", []):
+                    eid = ev.get("id", "")
+                    if eid in seen_ids:
+                        continue
                     parsed = parse_event(ev)
-                    if parsed and parsed["id"] not in {x["id"] for x in results}:
+                    if parsed:
                         results.append(parsed)
+                        seen_ids.add(eid)
+            except Exception:
+                continue
 
     except Exception:
         pass
 
-    return results
+    # Sort: live → upcoming (asc) → completed (asc)
+    def sort_key(ev):
+        if ev["is_live"]:       return "0_" + ev["date_raw"]
+        if not ev["completed"]: return "1_" + ev["date_raw"]
+        return "2_" + ev["date_raw"]
 
+    results.sort(key=sort_key)
+    return results
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -1181,8 +1204,8 @@ var _interval = setInterval(function(){
         )
 
         for ev in events[:25]:
-            is_live  = "IN" in ev["status"]
-            is_final = ev["completed"]
+            is_live  = ev.get("is_live", False)
+            is_final = ev.get("completed", False)
             is_sel   = selected and selected["id"] == ev["id"]
 
             if is_live:
