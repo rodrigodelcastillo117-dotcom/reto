@@ -82,6 +82,7 @@ ESPN_LEAGUES_GROUPED = {
         "Liga MX Femenil":       ("soccer", "mex.w.1"),
     },
     "🌍 Fútbol — Selecciones": {
+        "🔍 Buscar por equipo":    ("soccer", "__team_search__"),
         "Eliminatorias UEFA":      ("soccer", "fifa.worldq.6"),
         "Playoffs Eliminat. UEFA": ("soccer", "fifa.worldq.europe"),
         "Elim. UEFA (alt)":        ("soccer", "uefa.qualifiers"),
@@ -561,6 +562,92 @@ def _extract_competitor_info(comp: dict, sport: str) -> dict:
 
     score = comp.get("score", "")
     return {"name": name or "?", "logo": logo, "flag": flag, "score": score}
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def espn_search_by_team(sport: str, query: str) -> list:
+    """
+    Search ESPN by team name across all soccer leagues.
+    Finds the team ID then gets their upcoming schedule.
+    Works for national teams not covered by standard scoreboards.
+    """
+    results  = []
+    seen_ids = set()
+    q_low    = query.strip().lower()
+    if not q_low:
+        return []
+
+    try:
+        # Step 1: Find team ID by searching teams endpoint
+        team_url = f"{ESPN_BASE}/{sport}/teams"
+        r = requests.get(team_url, params={"limit": 1000}, timeout=8)
+        if r.status_code != 200:
+            return []
+
+        teams_data = r.json().get("sports",[{}])[0].get("leagues",[{}])[0].get("teams",[])
+        if not teams_data:
+            # Try direct teams list
+            teams_data = r.json().get("teams", [])
+
+        matched_ids = []
+        for t in teams_data:
+            team = t.get("team", t)
+            name = (team.get("displayName","") + " " +
+                    team.get("name","") + " " +
+                    team.get("abbreviation","")).lower()
+            if q_low in name or any(w in name for w in q_low.split() if len(w) > 2):
+                matched_ids.append(team.get("id",""))
+
+        # Step 2: Get schedule for each matched team
+        today     = date.today()
+        tomorrow  = (today + timedelta(days=1)).strftime("%Y%m%d")
+        two_weeks = (today + timedelta(days=14)).strftime("%Y%m%d")
+
+        for tid in matched_ids[:3]:
+            if not tid:
+                continue
+            sched_url = f"{ESPN_BASE}/{sport}/teams/{tid}/schedule"
+            r2 = requests.get(sched_url, params={"dates": f"{tomorrow}-{two_weeks}"}, timeout=8)
+            if r2.status_code != 200:
+                continue
+            for ev in r2.json().get("events", []):
+                eid = ev.get("id","")
+                if eid in seen_ids:
+                    continue
+                st_type   = ev.get("competitions",[{}])[0].get("status",{}).get("type",{})
+                completed = st_type.get("completed", False) or st_type.get("state","pre") == "post"
+                if completed:
+                    continue
+                comp0 = ev.get("competitions",[{}])[0]
+                comps = comp0.get("competitors",[])
+                home_c = next((c for c in comps if c.get("homeAway")=="home"), comps[0] if comps else {})
+                away_c = next((c for c in comps if c.get("homeAway")=="away"), comps[1] if len(comps)>1 else {})
+                home_i = _extract_competitor_info(home_c, sport)
+                away_i = _extract_competitor_info(away_c, sport)
+                date_raw = ev.get("date","")
+                try:
+                    dt     = datetime.fromisoformat(date_raw.replace("Z","+00:00"))
+                    dt_mx  = dt - timedelta(hours=6)
+                    d_str  = dt_mx.strftime("%d %b %H:%M")
+                except Exception:
+                    d_str = date_raw[:10]
+                results.append({
+                    "id": eid, "name": ev.get("name",""),
+                    "short": ev.get("shortName",""),
+                    "home": home_i["name"], "away": away_i["name"],
+                    "home_logo": home_i["logo"], "away_logo": away_i["logo"],
+                    "home_flag": home_i["flag"], "away_flag": away_i["flag"],
+                    "home_score": "", "away_score": "",
+                    "date": d_str, "date_raw": date_raw,
+                    "status": "STATUS_SCHEDULED", "status_state": "pre",
+                    "status_detail": "", "completed": False, "is_live": False,
+                    "sport": sport,
+                })
+                seen_ids.add(eid)
+    except Exception:
+        pass
+
+    return results
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -1365,7 +1452,14 @@ var _interval = setInterval(function(){
 
     if st.button("🔍 BUSCAR PARTIDOS", key="btn_search"):
         with st.spinner("Consultando ESPN…"):
-            events = espn_search_events(sport, league, query)
+            if league == "__team_search__":
+                if query.strip():
+                    events = espn_search_by_team(sport, query)
+                else:
+                    st.warning("Escribe el nombre del equipo para buscar.")
+                    events = []
+            else:
+                events = espn_search_events(sport, league, query)
             st.session_state["search_events"] = events
             st.session_state["selected_event"] = None
 
