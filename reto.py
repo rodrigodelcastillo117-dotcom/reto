@@ -513,39 +513,60 @@ div[data-testid="stRadio"] [data-testid="stWidgetLabel"] {
   background:var(--bg3) !important;
   border:1px solid rgba(255,255,255,.08) !important;
   border-radius:12px !important;
+  margin-bottom:6px !important;
+}
+/* Hide the _arrc icon artifact */
+[data-testid="stExpander"] summary svg,
+details summary svg {
+  color: var(--neon) !important;
+  fill: var(--neon) !important;
 }
 [data-testid="stExpander"] summary,
+details summary {
+  background: var(--bg3) !important;
+  border-radius:12px !important;
+  padding: 10px 16px !important;
+  list-style: none !important;
+}
 [data-testid="stExpander"] summary p,
 [data-testid="stExpander"] summary span,
 [data-testid="stExpander"] summary div,
-details summary,
-details summary * {
+details summary p,
+details summary span {
   color: var(--text) !important;
-  background: var(--bg3) !important;
   font-family: 'Rajdhani', sans-serif !important;
   font-weight: 600 !important;
-  font-size: .9rem !important;
+  font-size: .95rem !important;
+  letter-spacing: .5px !important;
 }
-[data-testid="stExpander"] summary:hover,
-details summary:hover {
+[data-testid="stExpander"] summary:hover {
   background: var(--bg4) !important;
+}
+[data-testid="stExpander"] summary:hover p,
+[data-testid="stExpander"] summary:hover span {
   color: var(--neon) !important;
 }
 [data-testid="stExpander"] > div:last-child {
   background: var(--bg2) !important;
-  border-top: 1px solid rgba(255,255,255,.06) !important;
+  border-top: 1px solid rgba(255,255,255,.05) !important;
+  padding: 12px 8px !important;
 }
-/* Nested expander (liga inside sport) */
+/* Nested expander (liga inside sport group) */
 [data-testid="stExpander"] [data-testid="stExpander"] {
   background: var(--bg4) !important;
-  border: 1px solid rgba(255,255,255,.05) !important;
+  border: 1px solid rgba(191,95,255,.15) !important;
   margin: 4px 0 !important;
 }
-[data-testid="stExpander"] [data-testid="stExpander"] summary,
-[data-testid="stExpander"] [data-testid="stExpander"] summary * {
-  color: #BF5FFF !important;
+[data-testid="stExpander"] [data-testid="stExpander"] summary {
   background: var(--bg4) !important;
-  font-size: .78rem !important;
+}
+[data-testid="stExpander"] [data-testid="stExpander"] summary p,
+[data-testid="stExpander"] [data-testid="stExpander"] summary span {
+  color: #BF5FFF !important;
+  font-size: .82rem !important;
+}
+[data-testid="stExpander"] [data-testid="stExpander"] > div:last-child {
+  background: var(--bg3) !important;
 }
 </style>
 <script>
@@ -1757,20 +1778,27 @@ ALL_TODAY_LEAGUES = [
     ("⚽ Fútbol — Clubes", "Eredivisie",           "soccer", "ned.1"),
     ("⚽ Fútbol — Clubes", "Liga Portugal",        "soccer", "por.1"),
     ("⚽ Fútbol — Clubes", "Superliga Argentina",  "soccer", "arg.1"),
-    # Soccer selecciones
-    ("🌍 Fútbol — Selecciones", "Playoffs UEFA WC2026",      "soccer", "fifa.worldq.uefa"),
-    ("🌍 Fútbol — Selecciones", "Eliminatorias UEFA",        "soccer", "fifa.worldq.6"),
-    ("🌍 Fútbol — Selecciones", "Eliminatorias CONMEBOL",    "soccer", "fifa.worldq.2"),
-    ("🌍 Fútbol — Selecciones", "Eliminatorias CONCACAF",    "soccer", "fifa.worldq.5"),
-    ("🌍 Fútbol — Selecciones", "Nations League UEFA",       "soccer", "uefa.nations"),
-    ("🌍 Fútbol — Selecciones", "Amistosos Internac.",       "soccer", "fifa.friendly"),
-    ("🌍 Fútbol — Selecciones", "Fútbol Internacional",      "soccer", "fifa.worldq"),
-    # Other sports
+    # Soccer selecciones — try multiple slugs for UEFA playoffs
+    ("🌍 Fútbol — Selecciones", "Playoffs UEFA WC2026",   "soccer", "fifa.worldq.uefa"),
+    ("🌍 Fútbol — Selecciones", "Eliminatorias UEFA",     "soccer", "fifa.worldq.6"),
+    ("🌍 Fútbol — Selecciones", "Eliminatorias CONMEBOL", "soccer", "fifa.worldq.2"),
+    ("🌍 Fútbol — Selecciones", "Eliminatorias CONCACAF", "soccer", "fifa.worldq.5"),
+    ("🌍 Fútbol — Selecciones", "Nations League UEFA",    "soccer", "uefa.nations"),
+    ("🌍 Fútbol — Selecciones", "Amistosos Internac.",    "soccer", "fifa.friendly"),
+    ("🌍 Fútbol — Selecciones", "Fútbol Internacional",   "soccer", "fifa.worldq"),
+    # Basketball
     ("🏀 Basketball", "NBA",  "basketball", "nba"),
+    # Baseball
     ("⚾ Baseball",   "MLB",  "baseball",   "mlb"),
+    # Hockey
     ("🏒 Hockey",     "NHL",  "hockey",     "nhl"),
-    ("🎾 Tenis",      "ATP",  "tennis",     "atp"),
-    ("🎾 Tenis",      "WTA",  "tennis",     "wta"),
+    # Tennis — multiple tournaments
+    ("🎾 Tenis", "ATP Miami Open",   "tennis", "atp.miami"),
+    ("🎾 Tenis", "WTA Miami Open",   "tennis", "wta.miami"),
+    ("🎾 Tenis", "ATP Masters",      "tennis", "atp.1000"),
+    ("🎾 Tenis", "WTA Premier",      "tennis", "wta.1000"),
+    ("🎾 Tenis", "ATP Tour",         "tennis", "atp"),
+    ("🎾 Tenis", "WTA Tour",         "tennis", "wta"),
 ]
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -1913,8 +1941,8 @@ def render_all_today(apodo: str):
 
     for sport_group, ligas in data.items():
         total_in_group = sum(len(evs) for evs in ligas.values())
-        # Sport group as expander — open by default
-        with st.expander(f"{sport_group}  ·  {total_in_group} partidos", expanded=True):
+        label = f"{sport_group}  ·  {total_in_group} partidos"
+        with st.expander(label, expanded=True):
             for liga_name, events in ligas.items():
                 # League as nested expander — collapsed by default if many
                 with st.expander(f"▸ {liga_name}  ·  {len(events)} partidos", expanded=len(events) <= 6):
