@@ -1234,11 +1234,16 @@ def render_login():
 
     # Load existing users from Sheet
     existing_users = []
-    try:
-        users_data = load_users()
-        existing_users = [u["apodo"] for u in users_data if u.get("apodo","").strip()]
-    except Exception:
-        existing_users = []
+    # Load users — cache in session_state to survive gspread hiccups
+    if "login_users" not in st.session_state:
+        try:
+            users_data = load_users()
+            st.session_state["login_users"] = [
+                u["apodo"] for u in users_data if u.get("apodo","").strip()
+            ]
+        except Exception:
+            st.session_state["login_users"] = []
+    existing_users = st.session_state.get("login_users", [])
 
     col = st.columns([1, 2, 1])[1]
     with col:
@@ -1261,6 +1266,7 @@ def render_login():
                 )
                 if st.button("⚡ ENTRAR AL RETO", type="primary", key="btn_login_existing"):
                     st.session_state["apodo"] = sel
+                    st.session_state.pop("login_users", None)
                     st.rerun()
             else:
                 # JS to disable autocomplete
@@ -1278,6 +1284,7 @@ setTimeout(function(){
                 if st.button("⚡ CREAR Y ENTRAR", type="primary", key="btn_login_new"):
                     if nuevo.strip():
                         st.session_state["apodo"] = nuevo.strip()
+                        st.session_state.pop("login_users", None)
                         st.rerun()
                     else:
                         st.error("Escribe tu apodo")
@@ -1297,6 +1304,7 @@ setTimeout(function(){
             if st.button("⚡ ENTRAR AL RETO", type="primary", key="btn_login_first"):
                 if apodo.strip():
                     st.session_state["apodo"] = apodo.strip()
+                    st.session_state.pop("login_users", None)
                     st.rerun()
                 else:
                     st.error("Escribe tu apodo")
