@@ -509,119 +509,126 @@ div[data-testid="stRadio"] [data-testid="stWidgetLabel"] {
 # ─────────────────────────────────────────────────────────────
 ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports"
 
+def _extract_competitor_info(comp: dict, sport: str) -> dict:
+    """Extract name, logo, flag, score from a competitor dict."""
+    # Team sports
+    team = comp.get("team", {})
+    athlete = comp.get("athlete", {})
+
+    if team:
+        name  = team.get("displayName", team.get("name", "?"))
+        # Logo: try team logo first
+        logos = team.get("logos", [])
+        logo  = logos[0].get("href", "") if logos else team.get("logo", "")
+        # For national teams ESPN sometimes stores flag as logo
+        flag  = ""
+        if not logo:
+            logo = team.get("flag", {}).get("href", "")
+    elif athlete:
+        name  = athlete.get("displayName", "?")
+        logo  = athlete.get("headshot", {}).get("href", "")
+        if not logo:
+            # fallback: ESPN athlete headshot URL pattern
+            aid = athlete.get("id", "")
+            logo = f"https://a.espncdn.com/combiner/i?img=/i/headshots/tennis/players/full/{aid}.png&w=96&h=70&cb=1" if aid else ""
+        flag  = athlete.get("flag", {}).get("href", "")
+    else:
+        name = "?"; logo = ""; flag = ""
+
+    score = comp.get("score", "")
+    return {"name": name, "logo": logo, "flag": flag, "score": score}
+
+
 @st.cache_data(ttl=120, show_spinner=False)
 def espn_search_events(sport: str, league: str, query: str) -> list:
     """
     Search upcoming + recent events for a sport/league.
-    For tennis, query is used to filter by player name.
-    Returns list of dicts with id, name, date, status, competitors.
+    Returns list of dicts including logo URLs for both competitors.
     """
     results = []
-    try:
-        if sport == "tennis":
-            # Tennis: hit scoreboard for ATP/WTA
-            url = f"{ESPN_BASE}/{sport}/{league}/scoreboard"
-            params = {"limit": 100}
-        else:
-            url = f"{ESPN_BASE}/{sport}/{league}/scoreboard"
-            params = {"limit": 100}
 
-        r = requests.get(url, params=params, timeout=8)
-        if r.status_code != 200:
-            return []
-        data = r.json()
-        events = data.get("events", [])
-
+    def parse_event(ev: dict) -> dict | None:
+        name  = ev.get("name", "")
+        short = ev.get("shortName", name)
         q_low = query.strip().lower()
-        for ev in events:
-            name = ev.get("name", "")
-            short = ev.get("shortName", name)
-            if q_low and q_low not in name.lower() and q_low not in short.lower():
-                # also check competitor names
-                comps = ev.get("competitions", [{}])[0].get("competitors", [])
-                comp_names = " ".join(c.get("team", {}).get("displayName", "") for c in comps).lower()
-                if q_low not in comp_names:
-                    continue
 
-            comp0 = ev.get("competitions", [{}])[0]
-            status_type = ev.get("status", {}).get("type", {})
-            status_name = status_type.get("name", "STATUS_SCHEDULED")
-            status_short = status_type.get("shortDetail", "")
-            completed = status_type.get("completed", False)
+        comp0 = ev.get("competitions", [{}])[0]
+        comps = comp0.get("competitors", [])
 
-            # competitors
-            comps = comp0.get("competitors", [])
-            home = next((c for c in comps if c.get("homeAway") == "home"), comps[0] if comps else {})
-            away = next((c for c in comps if c.get("homeAway") == "away"), comps[1] if len(comps) > 1 else {})
-            home_name  = home.get("team", {}).get("displayName", home.get("athlete", {}).get("displayName", "?"))
-            away_name  = away.get("team", {}).get("displayName", away.get("athlete", {}).get("displayName", "?"))
-            home_score = home.get("score", "")
-            away_score = away.get("score", "")
+        if q_low:
+            all_names = name.lower() + " " + short.lower()
+            for c in comps:
+                all_names += " " + c.get("team", {}).get("displayName", "").lower()
+                all_names += " " + c.get("athlete", {}).get("displayName", "").lower()
+            if q_low not in all_names:
+                return None
 
-            # date
-            date_raw = ev.get("date", "")
-            try:
-                dt = datetime.fromisoformat(date_raw.replace("Z", "+00:00"))
-                date_str = dt.strftime("%d %b %H:%M")
-            except Exception:
-                date_str = date_raw[:10]
+        status_type  = ev.get("status", {}).get("type", {})
+        status_name  = status_type.get("name", "STATUS_SCHEDULED")
+        status_short = status_type.get("shortDetail", "")
+        completed    = status_type.get("completed", False)
 
-            results.append({
-                "id":         ev.get("id", ""),
-                "name":       name,
-                "short":      short,
-                "home":       home_name,
-                "away":       away_name,
-                "home_score": home_score,
-                "away_score": away_score,
-                "date":       date_str,
-                "date_raw":   date_raw,
-                "status":     status_name,
-                "status_detail": status_short,
-                "completed":  completed,
-            })
+        home_comp = next((c for c in comps if c.get("homeAway") == "home"), comps[0] if comps else {})
+        away_comp = next((c for c in comps if c.get("homeAway") == "away"), comps[1] if len(comps) > 1 else {})
 
-        # Also pull next page (schedule) if few results
+        home_info = _extract_competitor_info(home_comp, sport)
+        away_info = _extract_competitor_info(away_comp, sport)
+
+        date_raw = ev.get("date", "")
+        try:
+            dt = datetime.fromisoformat(date_raw.replace("Z", "+00:00"))
+            # Convert UTC to Mexico City time (UTC-6)
+            dt_mx = dt - timedelta(hours=6)
+            date_str = dt_mx.strftime("%d %b %H:%M")
+        except Exception:
+            date_str = date_raw[:10]
+
+        return {
+            "id":          ev.get("id", ""),
+            "name":        name,
+            "short":       short,
+            "home":        home_info["name"],
+            "away":        away_info["name"],
+            "home_logo":   home_info["logo"],
+            "away_logo":   away_info["logo"],
+            "home_flag":   home_info["flag"],
+            "away_flag":   away_info["flag"],
+            "home_score":  home_info["score"],
+            "away_score":  away_info["score"],
+            "date":        date_str,
+            "date_raw":    date_raw,
+            "status":      status_name,
+            "status_detail": status_short,
+            "completed":   completed,
+            "sport":       sport,
+        }
+
+    try:
+        # Current scoreboard
+        url = f"{ESPN_BASE}/{sport}/{league}/scoreboard"
+        r = requests.get(url, params={"limit": 100}, timeout=8)
+        if r.status_code == 200:
+            for ev in r.json().get("events", []):
+                parsed = parse_event(ev)
+                if parsed:
+                    results.append(parsed)
+
+        # If few results, also pull next 7 days
         if len(results) < 5:
-            url2 = f"{ESPN_BASE}/{sport}/{league}/scoreboard"
-            tomorrow = (date.today() + timedelta(days=1)).isoformat()
-            week_out = (date.today() + timedelta(days=7)).isoformat()
-            r2 = requests.get(url2, params={"dates": f"{tomorrow.replace('-','')}-{week_out.replace('-','')}", "limit": 50}, timeout=8)
+            tomorrow = (date.today() + timedelta(days=1)).strftime("%Y%m%d")
+            week_out = (date.today() + timedelta(days=7)).strftime("%Y%m%d")
+            r2 = requests.get(url, params={"dates": f"{tomorrow}-{week_out}", "limit": 50}, timeout=8)
             if r2.status_code == 200:
                 for ev in r2.json().get("events", []):
-                    name = ev.get("name", "")
-                    short = ev.get("shortName", name)
-                    if q_low and q_low not in name.lower() and q_low not in short.lower():
-                        comps = ev.get("competitions", [{}])[0].get("competitors", [])
-                        comp_names = " ".join(c.get("team", {}).get("displayName", "") for c in comps).lower()
-                        if q_low not in comp_names:
-                            continue
-                    comp0 = ev.get("competitions", [{}])[0]
-                    status_type = ev.get("status", {}).get("type", {})
-                    comps = comp0.get("competitors", [])
-                    home = next((c for c in comps if c.get("homeAway") == "home"), comps[0] if comps else {})
-                    away = next((c for c in comps if c.get("homeAway") == "away"), comps[1] if len(comps) > 1 else {})
-                    home_name = home.get("team", {}).get("displayName", home.get("athlete", {}).get("displayName", "?"))
-                    away_name = away.get("team", {}).get("displayName", away.get("athlete", {}).get("displayName", "?"))
-                    date_raw = ev.get("date", "")
-                    try:
-                        dt = datetime.fromisoformat(date_raw.replace("Z", "+00:00"))
-                        date_str = dt.strftime("%d %b %H:%M")
-                    except Exception:
-                        date_str = date_raw[:10]
-                    results.append({
-                        "id": ev.get("id", ""), "name": name, "short": short,
-                        "home": home_name, "away": away_name,
-                        "home_score": "", "away_score": "",
-                        "date": date_str, "date_raw": date_raw,
-                        "status": status_type.get("name","STATUS_SCHEDULED"),
-                        "status_detail": status_type.get("shortDetail",""),
-                        "completed": status_type.get("completed", False),
-                    })
+                    parsed = parse_event(ev)
+                    if parsed and parsed["id"] not in {x["id"] for x in results}:
+                        results.append(parsed)
 
     except Exception:
         pass
+
     return results
+
 
 
 @st.cache_data(ttl=60, show_spinner=False)
@@ -1142,32 +1149,82 @@ var _interval = setInterval(function(){
     selected = st.session_state.get("selected_event", None)
 
     if events:
-        st.markdown(f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.6rem;color:var(--text3);margin-bottom:8px">{len(events)} PARTIDOS ENCONTRADOS</div>', unsafe_allow_html=True)
-        for ev in events[:20]:
-            status_cls = "status-live" if "IN" in ev["status"] else ("status-final" if ev["completed"] else "status-pre")
-            status_lbl = "● LIVE" if "IN" in ev["status"] else ("✓ FINAL" if ev["completed"] else "⏰ " + ev["date"])
-            score_str  = f"{ev['away_score']} – {ev['home_score']}" if ev["completed"] or "IN" in ev["status"] else ""
-            is_sel     = selected and selected["id"] == ev["id"]
+        is_tennis = (sport == "tennis")
+        st.markdown(f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.6rem;color:var(--text3);margin-bottom:10px">{len(events)} PARTIDOS ENCONTRADOS</div>', unsafe_allow_html=True)
+
+        for ev in events[:25]:
+            is_live  = "IN" in ev["status"]
+            is_final = ev["completed"]
+            is_sel   = selected and selected["id"] == ev["id"]
+
+            if is_live:
+                status_html = '<span style="color:#FF3D00;font-family:\'JetBrains Mono\',monospace;font-size:.58rem;animation:blinkLive 1.2s infinite">● LIVE</span>'
+            elif is_final:
+                status_html = '<span style="color:#44445A;font-family:\'JetBrains Mono\',monospace;font-size:.58rem">✓ FINAL</span>'
+            else:
+                status_html = f'<span style="color:#00FFD1;font-family:\'JetBrains Mono\',monospace;font-size:.58rem">⏰ {ev["date"]}</span>'
+
+            score_html = ""
+            if is_live or is_final:
+                score_html = f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:1.1rem;font-weight:700;color:#F0FF00;margin-bottom:4px">{ev.get("away_score","")} – {ev.get("home_score","")}</div>'
+
+            border = "rgba(240,255,0,.6)" if is_sel else ("rgba(255,61,0,.35)" if is_live else "rgba(255,255,255,.08)")
+            bg     = "rgba(240,255,0,.05)" if is_sel else ("rgba(255,61,0,.04)" if is_live else "rgba(255,255,255,.02)")
+            brad   = "50%" if is_tennis else "8px"
+            sz     = 52
+
+            def mk_logo(url, flag, name):
+                src = url or flag
+                initials = (name[:2] if len(name) >= 2 else name).upper()
+                if src:
+                    return (
+                        f'<img src="{src}" style="width:{sz}px;height:{sz}px;object-fit:contain;'
+                        f'border-radius:{brad};background:rgba(255,255,255,.04);'
+                        f'border:1px solid rgba(255,255,255,.1)" '
+                        f'onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
+                        f'<div style="display:none;width:{sz}px;height:{sz}px;border-radius:{brad};'
+                        f'background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);'
+                        f'align-items:center;justify-content:center;font-family:\'Bebas Neue\',sans-serif;'
+                        f'font-size:{sz//2}px;color:#8888AA">{initials}</div>'
+                    )
+                return (
+                    f'<div style="width:{sz}px;height:{sz}px;border-radius:{brad};'
+                    f'background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);'
+                    f'display:flex;align-items:center;justify-content:center;'
+                    f'font-family:\'Bebas Neue\',sans-serif;font-size:{sz//2}px;color:#8888AA">{initials}</div>'
+                )
+
+            away_logo_html = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), ev["away"])
+            home_logo_html = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), ev["home"])
 
             card_html = f"""
-<div class="game-card {'selected' if is_sel else ''}" id="gc_{ev['id']}">
-  <div style="display:flex;justify-content:space-between;align-items:center">
-    <div style="font-family:'Rajdhani',sans-serif;font-size:.88rem;font-weight:700;color:var(--text)">
-      {ev['away']} <span style="color:var(--text3)">vs</span> {ev['home']}
+<div style="background:{bg};border:1px solid {border};border-radius:14px;
+     padding:14px 16px;margin-bottom:8px;
+     box-shadow:{'0 0 18px rgba(240,255,0,.08)' if is_sel else '0 2px 8px rgba(0,0,0,.3)'}">
+  <div style="display:flex;align-items:center;gap:10px">
+    <div style="display:flex;flex-direction:column;align-items:center;gap:5px;width:72px;flex-shrink:0">
+      {away_logo_html}
+      <div style="font-family:'Rajdhani',sans-serif;font-size:.68rem;font-weight:700;color:#EEEEF5;
+           text-align:center;line-height:1.1;width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{ev["away"]}</div>
     </div>
-    <div style="display:flex;align-items:center;gap:10px">
-      {"<span style='font-family:\"JetBrains Mono\",monospace;font-size:.85rem;font-weight:700;color:var(--neon)'>" + score_str + "</span>" if score_str else ""}
-      <span class="{status_cls}">{status_lbl}</span>
+    <div style="flex:1;text-align:center;padding:0 4px">
+      {score_html}
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:.8rem;color:#44445A;letter-spacing:3px">VS</div>
+      <div style="margin-top:5px">{status_html}</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.45rem;color:#44445A;margin-top:3px">{liga_sel}</div>
     </div>
-  </div>
-  <div style="font-family:'JetBrains Mono',monospace;font-size:.55rem;color:var(--text3);margin-top:3px">
-    {liga_sel}  ·  ID: {ev['id']}
+    <div style="display:flex;flex-direction:column;align-items:center;gap:5px;width:72px;flex-shrink:0">
+      {home_logo_html}
+      <div style="font-family:'Rajdhani',sans-serif;font-size:.68rem;font-weight:700;color:#EEEEF5;
+           text-align:center;line-height:1.1;width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{ev["home"]}</div>
+    </div>
   </div>
 </div>"""
             st.markdown(card_html, unsafe_allow_html=True)
-            if st.button(f"✔ Seleccionar", key=f"sel_{ev['id']}"):
+            if st.button("✔ Seleccionar", key=f"sel_{ev['id']}"):
                 st.session_state["selected_event"] = ev
                 st.rerun()
+
 
     # ── Step 2: Pick form (only if event selected)
     selected = st.session_state.get("selected_event", None)
