@@ -2753,73 +2753,66 @@ def tab_historial(apodo: str, df: pd.DataFrame):
         fd      = str(row.get("fecha",""))[:10]
         deporte = str(row.get("deporte","soccer")).lower()
         sp_ico  = SPORT_ICON.get(deporte,"🎯")
-        partido = str(row.get("partido",""))
-        liga    = str(row.get("liga",""))
+        partido = str(row.get("partido","")) or "Partido desconocido"
+        liga    = str(row.get("liga","")) or ""
         pick_d  = str(row.get("pick_desc",""))
-        mercado = str(row.get("mercado",""))
+        if pick_d in ("","nan","None"): pick_d = "—"
+        mercado = str(row.get("mercado","")) or ""
+        if mercado in ("nan","None"): mercado = ""
         notas   = str(row.get("notas",""))
         if notas in ("nan","None",""): notas = ""
 
+        gc  = "#00FF88" if gan>0 else "#FF2D55" if gan<0 else "#FFB800"
         pot = ""
         if res == "pendiente" and apuesta > 0 and momio > 1:
             pot_val = momio * apuesta - apuesta
-            pot = f"+${pot_val:,.0f} potencial"
+            pot = f"+${pot_val:,.0f} pot."
 
         col_card, col_del = st.columns([11, 1])
         with col_card:
-            with st.container():
-                # Top row: sport icon + partido + result badge + amount
-                r1c1, r1c2, r1c3 = st.columns([1, 8, 3])
-                with r1c1:
-                    st.markdown(
-                        f'<div style="font-size:1.8rem;text-align:center;padding-top:4px">{sp_ico}</div>',
-                        unsafe_allow_html=True
-                    )
-                with r1c2:
-                    st.markdown(
-                        f'<div style="font-weight:700;font-size:.9rem;color:#EEEEF5;margin-bottom:2px">{partido}</div>'
-                        f'<div style="font-size:.65rem;color:#8888AA">{sp_ico} {deporte.upper()} · {liga} · {mercado}</div>',
-                        unsafe_allow_html=True
-                    )
-                with r1c3:
-                    gc = "#00FF88" if gan>0 else "#FF2D55" if gan<0 else "#FFB800"
-                    gs = f"+${gan:,.2f}" if gan>0 else f"-${abs(gan):,.2f}" if gan<0 else pot or "—"
-                    st.markdown(
-                        f'<div style="text-align:right">'
-                        f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:1.3rem;color:{gc};line-height:1">{gs}</div>'
-                        f'<div style="font-size:.58rem;color:#8888AA">@{momio}x · ${apuesta:,.0f}</div>'
-                        f'</div>',
-                        unsafe_allow_html=True
-                    )
+            # Row 1: icon + partido + amount
+            r1, r2, r3 = st.columns([1, 7, 3])
+            with r1:
+                st.markdown(f'<div style="font-size:2rem;padding-top:2px;text-align:center">{sp_ico}</div>',
+                             unsafe_allow_html=True)
+            with r2:
+                st.markdown(
+                    f'<div style="font-size:.95rem;font-weight:700;color:#EEEEF5">{partido}</div>'
+                    f'<div style="font-size:.62rem;color:#8888AA;margin-top:1px">{liga}'
+                    f'{"  ·  " + mercado if mercado else ""}</div>',
+                    unsafe_allow_html=True)
+            with r3:
+                gs = f"+${gan:,.2f}" if gan>0 else f"-${abs(gan):,.2f}" if gan<0 else pot or "⏳"
+                st.markdown(
+                    f'<div style="text-align:right">'
+                    f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:1.4rem;'
+                    f'color:{gc};line-height:1">{gs}</div>'
+                    f'<div style="font-size:.58rem;color:#8888AA">'
+                    f'{"@" + str(momio) + "x  ·  " if momio > 0 else ""}${apuesta:,.0f}</div>'
+                    f'</div>', unsafe_allow_html=True)
 
-                # Pick row
-                p1, p2 = st.columns([8, 4])
-                with p1:
-                    st.markdown(
-                        f'<div style="background:rgba(0,255,209,.07);border-left:3px solid var(--neon2);'
-                        f'border-radius:0 6px 6px 0;padding:5px 10px;margin:4px 0">'
-                        f'<span style="font-size:.7rem;color:#8888AA">PICK → </span>'
-                        f'<span style="font-size:.82rem;font-weight:700;color:var(--neon2)">{pick_d}</span>'
-                        f'</div>',
-                        unsafe_allow_html=True
-                    )
-                with p2:
-                    st.markdown(
-                        f'<div style="text-align:right;padding-top:6px">'
-                        f'<span style="font-size:.65rem;font-weight:700;color:{clr};'
-                        f'font-family:\'JetBrains Mono\',monospace">{ico} {res.upper()}</span>'
-                        f'<span style="font-size:.58rem;color:#8888AA;margin-left:8px">{fd}</span>'
-                        f'</div>',
-                        unsafe_allow_html=True
-                    )
+            # Row 2: pick + result + date
+            r4, r5 = st.columns([6, 4])
+            with r4:
+                st.markdown(
+                    f'<div style="background:rgba(0,255,209,.07);border-left:3px solid var(--neon2);'
+                    f'padding:4px 10px;border-radius:0 6px 6px 0;margin-top:6px">'
+                    f'<span style="font-size:.65rem;color:#8888AA">🎯 PICK  </span>'
+                    f'<span style="font-size:.82rem;font-weight:700;color:var(--neon2)">{pick_d}</span>'
+                    f'</div>', unsafe_allow_html=True)
+            with r5:
+                st.markdown(
+                    f'<div style="text-align:right;padding-top:10px">'
+                    f'<span style="font-size:.7rem;font-weight:700;color:{clr}">{ico} {res.upper()}</span>'
+                    f'  <span style="font-size:.58rem;color:#8888AA">{fd}</span>'
+                    f'</div>', unsafe_allow_html=True)
 
-                if notas:
-                    st.caption(f"📝 {notas}")
-
-                st.divider()
+            if notas:
+                st.caption(f"📝 {notas}")
+            st.divider()
 
         with col_del:
-            st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+            st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
             if st.button("🗑", key=f"del_{idx}", help="Eliminar"):
                 if delete_pick(apodo, idx):
                     st.session_state.pop("df_picks", None)
