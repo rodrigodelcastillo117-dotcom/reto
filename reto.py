@@ -2223,14 +2223,21 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                 pick_opts  = [(away, "ML"), (home, "ML")]
                 btn_labels = [f"🏆 {away[:18]}", f"🏆 {home[:18]}"]
 
-            # Quick-pick cols
+            # Quick-pick cols — save pick directly to session_state on click
             n_opts  = len(btn_labels)
-            q_cols  = st.columns(n_opts + 1)  # +1 for custom pick
-            clicked_pick = None
+            q_cols  = st.columns(n_opts + 1)
             for bi, (col, lbl, (pick_val, pick_merc)) in enumerate(zip(q_cols[:n_opts], btn_labels, pick_opts)):
                 with col:
                     if st.button(lbl, key=f"qp_{ev_id[:10]}_{bi}", use_container_width=True):
-                        clicked_pick = (pick_val, pick_merc, lbl)
+                        if pick_val in ("Over", "Under"):
+                            # Need line input — save direction to ou_key
+                            st.session_state[f"ou_pending_{ev_id[:10]}"] = pick_val
+                            st.session_state.pop(f"qp_val_{ev_id}", None)
+                        else:
+                            st.session_state[f"qp_val_{ev_id}"]  = pick_val
+                            st.session_state[f"qp_merc_{ev_id}"] = pick_merc
+                            st.session_state.pop(f"ou_pending_{ev_id[:10]}", None)
+                        st.rerun()
 
             with q_cols[-1]:
                 expand_key = f"expand_other_{ev_id[:10]}"
@@ -2317,11 +2324,6 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
             # ── If quick-pick clicked → show inline save form ──
             # Check if Over/Under was picked — needs line input first
             ou_key = f"ou_pending_{ev_id[:10]}"
-            if clicked_pick and clicked_pick[0] in ("Over","Under"):
-                st.session_state[ou_key] = clicked_pick[0]
-                clicked_pick = None  # wait for line input
-
-            # Show line input if Over/Under pending
             if st.session_state.get(ou_key):
                 direction = st.session_state[ou_key]
                 lc1, lc2 = st.columns([3,1])
@@ -2335,20 +2337,13 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                 with lc2:
                     st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
                     if st.button("✅ OK", key=f"ou_confirm_{ev_id[:10]}", use_container_width=True):
-                        pv = f"{direction} {line_val}"
-                        st.session_state[f"qp_val_{ev_id}"]  = pv
+                        st.session_state[f"qp_val_{ev_id}"]  = f"{direction} {line_val}"
                         st.session_state[f"qp_merc_{ev_id}"] = "O/U"
                         st.session_state.pop(ou_key, None)
                         st.rerun()
                     if st.button("✖", key=f"ou_cancel_{ev_id[:10]}", use_container_width=True):
                         st.session_state.pop(ou_key, None)
                         st.rerun()
-
-            # ── Process regular pick click ──────────────────────────
-            if clicked_pick:
-                pick_val, pick_merc, pick_lbl = clicked_pick
-                st.session_state[f"qp_val_{ev_id}"]  = pick_val
-                st.session_state[f"qp_merc_{ev_id}"] = pick_merc
 
             qv = st.session_state.get(f"qp_val_{ev_id}", "")
             qm = st.session_state.get(f"qp_merc_{ev_id}", "ML")
