@@ -1275,70 +1275,168 @@ var _interval = setInterval(function(){
                         st.rerun()
 
 
-    # ── Step 2: Pick form (only if event selected)
+    # ── Step 2: Visual pick builder (only if event selected)
     selected = st.session_state.get("selected_event", None)
     if selected:
-        st.markdown(f"""
-<div style="background:linear-gradient(135deg,rgba(240,255,0,.08),rgba(255,184,0,.04));
-     border:1px solid rgba(240,255,0,.3);border-radius:12px;padding:14px 18px;margin:14px 0">
-  <div style="font-family:'Bebas Neue',sans-serif;font-size:.7rem;letter-spacing:3px;color:var(--neon);margin-bottom:6px">PARTIDO SELECCIONADO</div>
-  <div style="font-family:'Rajdhani',sans-serif;font-size:1.1rem;font-weight:700;color:var(--text)">
-    {selected['away']} vs {selected['home']}
-  </div>
-  <div style="font-family:'JetBrains Mono',monospace;font-size:.58rem;color:var(--text3)">
-    {liga_sel}  ·  {selected['date']}  ·  ESPN ID: {selected['id']}
-  </div>
-</div>
-""", unsafe_allow_html=True)
+        away = selected["away"]
+        home = selected["home"]
+        sport_sel = selected.get("sport", sport)
+        is_tennis_pick = (sport_sel == "tennis")
+        is_soccer_pick = (sport_sel == "soccer")
 
-        st.markdown('<div class="sec-head">Detalles del pick</div>', unsafe_allow_html=True)
+        # Selected event banner
+        away_lg_sm = mk_logo(selected.get("away_logo",""), selected.get("away_flag",""), away)
+        home_lg_sm = mk_logo(selected.get("home_logo",""), selected.get("home_flag",""), home)
+        st.markdown(
+            f'<div style="background:linear-gradient(135deg,rgba(240,255,0,.07),rgba(255,184,0,.04));'
+            f'border:1px solid rgba(240,255,0,.35);border-radius:12px;padding:12px 18px;margin:14px 0;'
+            f'display:flex;align-items:center;gap:14px">'
+            f'<div style="display:flex;align-items:center;gap:8px;flex:1">'
+            f'{away_lg_sm}'
+            f'<div style="font-family:\'Rajdhani\',sans-serif;font-size:.9rem;font-weight:700;color:#EEEEF5">{away}</div>'
+            f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.75rem;color:#44445A;margin:0 4px">VS</div>'
+            f'<div style="font-family:\'Rajdhani\',sans-serif;font-size:.9rem;font-weight:700;color:#EEEEF5">{home}</div>'
+            f'{home_lg_sm}'
+            f'</div>'
+            f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.52rem;color:#44445A;text-align:right">'
+            f'{liga_sel}<br>{selected["date"]}</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
 
-        with st.form("form_pick", clear_on_submit=True):
+        st.markdown('<div class="sec-head">¿Cuál es tu pick?</div>', unsafe_allow_html=True)
+
+        # ── STEP A: Pick type buttons
+        pick_type = st.session_state.get("pick_type", None)
+
+        # Define pick categories based on sport
+        if is_tennis_pick:
+            pick_categories = {
+                "🎾 Ganador del match": "ML",
+                "📊 Hándicap de games": "Hándicap",
+                "🔢 Total de games O/U": "Over/Under Goles",
+            }
+        elif is_soccer_pick:
+            pick_categories = {
+                f"🏆 {away} gana": "ML",
+                "🤝 Empate": "ML",
+                f"🏆 {home} gana": "ML",
+                "⚽ Over/Under goles": "Over/Under Goles",
+                "🎯 BTTS (ambos anotan)": "BTTS (Ambos Anotan)",
+                "📐 Hándicap asiático": "Hándicap Asiático",
+                "🔲 Doble oportunidad": "Doble Oportunidad",
+            }
+        else:
+            # NBA / NFL / NHL / MLB
+            pick_categories = {
+                f"🏆 {away} ML": "ML",
+                f"🏆 {home} ML": "ML",
+                f"📊 {away} hándicap": "Hándicap Asiático",
+                f"📊 {home} hándicap": "Hándicap Asiático",
+                "📈 Over puntos": "Over/Under Goles",
+                "📉 Under puntos": "Over/Under Goles",
+            }
+
+        # Render pick type buttons in a grid
+        cat_keys = list(pick_categories.keys())
+        n_cols   = 3 if len(cat_keys) >= 3 else len(cat_keys)
+        btn_rows = [cat_keys[i:i+n_cols] for i in range(0, len(cat_keys), n_cols)]
+
+        for btn_row in btn_rows:
+            cols = st.columns(len(btn_row))
+            for col, cat in zip(cols, btn_row):
+                with col:
+                    is_active = (pick_type == cat)
+                    active_style = (
+                        "background:linear-gradient(135deg,rgba(240,255,0,.15),rgba(255,184,0,.1))!important;"
+                        "border-color:rgba(240,255,0,.6)!important;color:#F0FF00!important;"
+                        "box-shadow:0 0 14px rgba(240,255,0,.2)!important;"
+                    ) if is_active else ""
+                    st.markdown(
+                        f'<style>div[data-testid="stButton"] button[title="{cat}"]'
+                        f'{{ {active_style} }}</style>',
+                        unsafe_allow_html=True
+                    )
+                    if st.button(cat, key=f"ptype_{cat}", help=cat):
+                        st.session_state["pick_type"]   = cat
+                        st.session_state["pick_desc_v"] = cat
+                        st.rerun()
+
+        # ── STEP B: Details after pick type chosen
+        if pick_type:
+            st.markdown(
+                f'<div style="background:rgba(240,255,0,.05);border:1px solid rgba(240,255,0,.2);'
+                f'border-radius:10px;padding:10px 14px;margin:10px 0;'
+                f'font-family:\'Rajdhani\',sans-serif;font-size:.85rem;color:#F0FF00">'
+                f'Pick seleccionado: <strong>{pick_type}</strong></div>',
+                unsafe_allow_html=True
+            )
+
+            mercado = pick_categories[pick_type]
+
+            # Extra input for lines (Over/Under value, handicap value)
+            pick_extra = ""
+            if "Over" in pick_type or "Under" in pick_type or "O/U" in pick_type or "total" in pick_type.lower():
+                line = st.number_input("Línea (ej: 2.5 goles, 220.5 puntos)", min_value=0.5, max_value=300.0, value=2.5, step=0.5, key="pick_line")
+                direction = "Over" if ("Over" in pick_type or "over" in pick_type.lower()) else "Under"
+                pick_extra = f" {direction} {line}"
+            elif "hándicap" in pick_type.lower() or "Hándicap" in pick_type:
+                hcap = st.number_input("Valor hándicap (ej: -1.5, +2.5)", min_value=-10.0, max_value=10.0, value=-1.5, step=0.5, key="pick_hcap")
+                pick_extra = f" {hcap:+.1f}"
+
+            pick_desc = pick_type + pick_extra
+
             c1, c2 = st.columns(2)
             with c1:
-                mercado  = st.selectbox("Mercado", MERCADOS)
-                momio    = st.number_input("Momio (decimal)", min_value=1.01, max_value=99.0, value=1.85, step=0.01)
+                momio = st.number_input("Momio (decimal)", min_value=1.01, max_value=99.0, value=1.85, step=0.01, key="pick_momio")
             with c2:
                 kelly_amt = round(bank * kelly(momio), 2)
-                apuesta  = st.number_input(
-                    f"Apuesta ($MXN)  —  Kelly: ${kelly_amt:,.2f}",
+                apuesta   = st.number_input(
+                    f"Apuesta  —  Kelly: ${kelly_amt:,.2f}",
                     min_value=1.0, max_value=float(bank),
-                    value=min(kelly_amt, bank) if kelly_amt > 0 else 100.0,
-                    step=50.0
+                    value=min(kelly_amt, bank) if kelly_amt > 1 else 50.0,
+                    step=50.0, key="pick_apuesta"
                 )
-                fecha_p  = st.date_input("Fecha del partido", value=date.today())
 
-            pick_desc = st.text_input(
-                "Descripción del pick",
-                placeholder="ej: Over 2.5 · Real Madrid ML · Lakers -5.5 · BTTS Sí"
+            notas = st.text_area("Análisis / notas (opcional)", placeholder="¿Por qué este pick?", height=60, key="pick_notas")
+
+            # Kelly visual indicator
+            pct_bank = apuesta / bank * 100 if bank > 0 else 0
+            bar_c = "#00FF88" if pct_bank <= 3 else "#FFB800" if pct_bank <= 5 else "#FF2D55"
+            st.markdown(
+                f'<div style="display:flex;align-items:center;gap:10px;margin:6px 0 12px">'
+                f'<div style="flex:1;background:rgba(255,255,255,.05);border-radius:99px;height:6px;overflow:hidden">'
+                f'<div style="width:{min(100,pct_bank*10):.0f}%;height:100%;background:{bar_c};border-radius:99px"></div>'
+                f'</div>'
+                f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.6rem;color:{bar_c};white-space:nowrap">'
+                f'{pct_bank:.1f}% del bankroll</div>'
+                f'</div>',
+                unsafe_allow_html=True
             )
-            notas = st.text_area("Análisis / notas", placeholder="¿Por qué este pick?", height=70)
-            submitted = st.form_submit_button("💾 GUARDAR PICK", type="primary")
 
-        if submitted:
-            if not pick_desc:
-                st.error("Escribe la descripción del pick.")
-            else:
+            if st.button("💾 GUARDAR PICK", type="primary", key="btn_save_pick"):
                 row = {
-                    "fecha":        str(fecha_p),
-                    "deporte":      sport,
-                    "liga":         liga_sel,
-                    "partido":      f"{selected['away']} vs {selected['home']}",
-                    "event_id":     selected["id"],
-                    "mercado":      mercado,
-                    "pick_desc":    pick_desc,
-                    "momio":        momio,
-                    "apuesta":      apuesta,
-                    "resultado":    "pendiente",
-                    "ganancia_neta":0,
-                    "bankroll_post":bank,
-                    "notas":        notas,
+                    "fecha":         str(date.today()),
+                    "deporte":       sport_sel,
+                    "liga":          liga_sel,
+                    "partido":       f"{away} vs {home}",
+                    "event_id":      selected["id"],
+                    "mercado":       mercado,
+                    "pick_desc":     pick_desc,
+                    "momio":         momio,
+                    "apuesta":       apuesta,
+                    "resultado":     "pendiente",
+                    "ganancia_neta": 0,
+                    "bankroll_post": bank,
+                    "notas":         notas,
                 }
                 if save_pick(apodo, row):
-                    st.success("✅ Pick guardado en Google Sheets")
+                    st.success(f"✅ Pick guardado: {pick_desc} @ {momio}x — ${apuesta:,.0f}")
                     st.session_state.pop("search_events", None)
                     st.session_state.pop("selected_event", None)
+                    st.session_state.pop("pick_type", None)
                     st.rerun()
+
 
     # ── Pending picks — resolve manually
     pending = df[df["resultado"] == "pendiente"].copy()
