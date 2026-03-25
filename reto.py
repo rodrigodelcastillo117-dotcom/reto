@@ -2390,29 +2390,42 @@ def pit_auto_grade(apodo: str, ronda_id: str, my_record: dict) -> tuple[int, int
             dias_vivo = int(my_record.get("dias_vivo", 0))
             roi_acum  = float(my_record.get("roi_acum", 0))
 
+            # Get current player count for chat messages
+            try:
+                all_players = pit_load_players(ronda_id)
+                n_vivos_cur = sum(1 for p in all_players if p.get("estado") == "vivo")
+            except Exception:
+                n_vivos_cur = 0
+
             if perdidos > 0:
-                # Eliminated — check comodin
                 comodin = str(my_record.get("comodin_disponible","0")) == "1"
                 if comodin:
-                    # Comodin saves only on 0-0 draw scenarios — here mark comodin used
                     pit_usar_comodin(ronda_id, apodo)
                     pit_save_chat("King Rongo",
-                        f"🛡 **{apodo}** activó su Comodín de Badrino y sobrevivió la eliminación. ¡Suerte no dura forever.", True)
+                        f"🛡 **{apodo}** activó su Comodín de Badrino y sobrevivió. ¡La suerte no dura forever.", True)
                 else:
+                    # Get last pick description for asesino
+                    try:
+                        ws_p = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
+                        all_p = _safe_get_records(ws_p)
+                        my_p  = [r for r in all_p
+                                 if str(r.get("ronda_id",""))==str(ronda_id)
+                                 and r.get("apodo","").lower()==apodo.lower()]
+                        asesino = my_p[-1].get("pick_desc","?") if my_p else "?"
+                    except Exception:
+                        asesino = "?"
                     pit_update_player(
                         ronda_id, apodo, "eliminado",
-                        dias_vivo, roi_acum,
-                        str(ronda_picks[-1].get("pick_desc","?") if ronda_picks else "?"),
+                        dias_vivo, roi_acum, asesino,
                         my_record.get("equipos_usados","")
                     )
                     pit_load_players.clear()
                     for _k in ["pit_players","pit_picks"]:
                         st.session_state.pop(_k, None)
                     pit_save_chat("King Rongo",
-                        f"💀 **{apodo.upper()}** ha sido ELIMINADO del foso. El Pick los traicionó. "
-                        f"Quedan {n_vivos-1} gladiadores.", True)
+                        f"💀 **{apodo.upper()}** ELIMINADO. `{asesino}` los traicionó. "
+                        f"Quedan {max(0,n_vivos_cur-1)} gladiadores.", True)
             else:
-                # Survived — update days
                 pit_update_player(
                     ronda_id, apodo, "vivo",
                     dias_vivo + 1, roi_acum,
@@ -2422,8 +2435,8 @@ def pit_auto_grade(apodo: str, ronda_id: str, my_record: dict) -> tuple[int, int
                 for _k in ["pit_players","pit_picks"]:
                     st.session_state.pop(_k, None)
                 pit_save_chat("King Rongo",
-                    f"✅ **{apodo}** sobrevivió el Día {dias_vivo+1}. Sigue en pie. "
-                    f"{n_vivos} gladiadores aún respiran.", True)
+                    f"✅ **{apodo}** sobrevivió el Día {dias_vivo+1}. "
+                    f"{n_vivos_cur} gladiadores aún respiran.", True)
 
         return ganados, perdidos
 
