@@ -1176,7 +1176,7 @@ var _interval = setInterval(function(){
 
     if events:
         is_tennis = (sport == "tennis")
-        sz   = 52
+        sz   = 40
         brad = "50%" if is_tennis else "8px"
 
         def mk_logo(url, flag, name, _sz=sz, _brad=brad):
@@ -1186,7 +1186,7 @@ var _interval = setInterval(function(){
                 return (
                     f'<img src="{src}" style="width:{_sz}px;height:{_sz}px;object-fit:contain;'
                     f'border-radius:{_brad};background:rgba(255,255,255,.04);'
-                    f'border:1px solid rgba(255,255,255,.1)" '
+                    f'border:1px solid rgba(255,255,255,.08)" '
                     f'onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
                     f'<div style="display:none;width:{_sz}px;height:{_sz}px;border-radius:{_brad};'
                     f'background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);'
@@ -1200,83 +1200,79 @@ var _interval = setInterval(function(){
                 f'font-family:\'Bebas Neue\',sans-serif;font-size:{_sz//2}px;color:#8888AA">{initials}</div>'
             )
 
+        ev_list = events[:30]
         st.markdown(
-            f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.6rem;'
-            f'color:var(--text3);margin-bottom:10px">{len(events)} PARTIDOS ENCONTRADOS</div>',
+            f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.58rem;'
+            f'color:var(--text3);margin-bottom:10px">{len(ev_list)} PARTIDOS ENCONTRADOS</div>',
             unsafe_allow_html=True
         )
 
-        for ev in events[:25]:
-            is_live  = ev.get("is_live", False)
-            is_final = ev.get("completed", False)
-            is_sel   = selected and selected["id"] == ev["id"]
+        # Render 3 per row using st.columns
+        for row_start in range(0, len(ev_list), 3):
+            row_evs = ev_list[row_start:row_start + 3]
+            cols    = st.columns(3)
 
-            if is_live:
-                status_html = '&#9679; LIVE'
-                status_color = "#FF3D00"
-                status_anim  = "animation:blinkLive 1.2s infinite"
-            elif is_final:
-                status_html  = "&#10003; FINAL"
-                status_color = "#44445A"
-                status_anim  = ""
-            else:
-                status_html  = f"&#9200; {ev['date']}"
-                status_color = "#00FFD1"
-                status_anim  = ""
+            for col, ev in zip(cols, row_evs):
+                with col:
+                    is_live  = ev.get("is_live", False)
+                    is_sel   = selected and selected["id"] == ev["id"]
 
-            score_html = ""
-            if is_live or is_final:
-                score_html = (
-                    f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:1.1rem;'
-                    f'font-weight:700;color:#F0FF00;margin-bottom:4px">'
-                    f'{ev.get("away_score","")} &ndash; {ev.get("home_score","")}</div>'
-                )
+                    if is_live:
+                        status_txt   = "● LIVE"
+                        status_color = "#FF3D00"
+                        status_style = "animation:blinkLive 1.2s infinite"
+                    else:
+                        status_txt   = ev["date"]
+                        status_color = "#00FFD1"
+                        status_style = ""
 
-            border = "rgba(240,255,0,.6)"  if is_sel else ("rgba(255,61,0,.35)" if is_live else "rgba(255,255,255,.08)")
-            bg     = "rgba(240,255,0,.05)" if is_sel else ("rgba(255,61,0,.04)"  if is_live else "rgba(255,255,255,.02)")
-            glow   = "0 0 18px rgba(240,255,0,.08)" if is_sel else "0 2px 8px rgba(0,0,0,.3)"
+                    border = "rgba(240,255,0,.6)"  if is_sel else ("rgba(255,61,0,.4)" if is_live else "rgba(255,255,255,.09)")
+                    bg     = "rgba(240,255,0,.05)" if is_sel else ("rgba(255,61,0,.04)" if is_live else "rgba(255,255,255,.025)")
+                    glow   = "0 0 16px rgba(240,255,0,.1)" if is_sel else "0 2px 8px rgba(0,0,0,.35)"
 
-            away_logo_html = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), ev["away"])
-            home_logo_html = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), ev["home"])
+                    away_lg = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), ev["away"])
+                    home_lg = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), ev["home"])
 
-            card_html = (
-                f'<div style="background:{bg};border:1px solid {border};border-radius:14px;'
-                f'padding:14px 16px;margin-bottom:8px;box-shadow:{glow}">'
-                f'<div style="display:flex;align-items:center;gap:10px">'
+                    card = (
+                        f'<div style="background:{bg};border:1px solid {border};border-radius:12px;'
+                        f'padding:12px 8px;box-shadow:{glow};text-align:center">'
 
-                # Away
-                f'<div style="display:flex;flex-direction:column;align-items:center;gap:5px;width:72px;flex-shrink:0">'
-                f'{away_logo_html}'
-                f'<div style="font-family:\'Rajdhani\',sans-serif;font-size:.68rem;font-weight:700;color:#EEEEF5;'
-                f'text-align:center;line-height:1.1;width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
-                f'{ev["away"]}</div>'
-                f'</div>'
+                        # Away + VS + Home row
+                        f'<div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-bottom:8px">'
 
-                # Center
-                f'<div style="flex:1;text-align:center;padding:0 4px">'
-                f'{score_html}'
-                f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.8rem;color:#44445A;letter-spacing:3px">VS</div>'
-                f'<div style="margin-top:5px;font-family:\'JetBrains Mono\',monospace;font-size:.58rem;'
-                f'color:{status_color};{status_anim}">{status_html}</div>'
-                f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.45rem;color:#44445A;margin-top:3px">'
-                f'{liga_sel}</div>'
-                f'</div>'
+                        # Away
+                        f'<div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex:1">'
+                        f'{away_lg}'
+                        f'<div style="font-family:\'Rajdhani\',sans-serif;font-size:.62rem;font-weight:700;'
+                        f'color:#EEEEF5;line-height:1.1;overflow:hidden;text-overflow:ellipsis;'
+                        f'white-space:nowrap;max-width:80px">{ev["away"]}</div>'
+                        f'</div>'
 
-                # Home
-                f'<div style="display:flex;flex-direction:column;align-items:center;gap:5px;width:72px;flex-shrink:0">'
-                f'{home_logo_html}'
-                f'<div style="font-family:\'Rajdhani\',sans-serif;font-size:.68rem;font-weight:700;color:#EEEEF5;'
-                f'text-align:center;line-height:1.1;width:72px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
-                f'{ev["home"]}</div>'
-                f'</div>'
+                        # VS
+                        f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.75rem;'
+                        f'color:#44445A;letter-spacing:2px;flex-shrink:0">VS</div>'
 
-                f'</div>'
-                f'</div>'
-            )
-            st.markdown(card_html, unsafe_allow_html=True)
-            if st.button("✔ Seleccionar", key=f"sel_{ev['id']}"):
-                st.session_state["selected_event"] = ev
-                st.rerun()
+                        # Home
+                        f'<div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex:1">'
+                        f'{home_lg}'
+                        f'<div style="font-family:\'Rajdhani\',sans-serif;font-size:.62rem;font-weight:700;'
+                        f'color:#EEEEF5;line-height:1.1;overflow:hidden;text-overflow:ellipsis;'
+                        f'white-space:nowrap;max-width:80px">{ev["home"]}</div>'
+                        f'</div>'
+
+                        f'</div>'
+
+                        # Status / time
+                        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.52rem;'
+                        f'color:{status_color};{status_style};margin-bottom:2px">{status_txt}</div>'
+
+                        f'</div>'
+                    )
+                    st.markdown(card, unsafe_allow_html=True)
+                    label = "⚡ SELECCIONADO" if is_sel else "✔ Seleccionar"
+                    if st.button(label, key=f"sel_{ev['id']}", type="primary" if is_sel else "secondary"):
+                        st.session_state["selected_event"] = ev
+                        st.rerun()
 
 
     # ── Step 2: Pick form (only if event selected)
