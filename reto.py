@@ -1373,9 +1373,12 @@ def ensure_tab(ss, name: str, headers: list):
     try:
         ws = ss.worksheet(name)
         try:
-            first_row = ws.row_values(1)
-            if not first_row:
-                ws.append_row(headers)
+            current = ws.row_values(1)
+            if not current:
+                ws.update("A1", [headers])
+            elif current != headers:
+                # Header mismatch (old format) — update to correct headers
+                ws.update("A1", [headers])
         except Exception:
             pass
         return ws
@@ -1384,7 +1387,6 @@ def ensure_tab(ss, name: str, headers: list):
         ws.append_row(headers)
         return ws
     except Exception as e:
-        # APIError (token expired mid-session) — try reconnect once
         try:
             get_client.clear()
             ss2 = get_ss()
