@@ -878,20 +878,36 @@ def load_picks(apodo: str) -> pd.DataFrame:
 def save_pick(apodo: str, row: dict) -> bool:
     ss = get_ss()
     if not ss: return False
-    ws = ensure_tab(ss, f"picks_{apodo.lower()}", PICKS_HEADERS)
-    ws.append_row([str(row.get(h, "")) for h in PICKS_HEADERS])
-    return True
+    try:
+        ws = ensure_tab(ss, f"picks_{apodo.lower()}", PICKS_HEADERS)
+        ws.append_row([str(row.get(h, "")) for h in PICKS_HEADERS])
+        return True
+    except Exception:
+        return False
+
+def delete_pick(apodo: str, df_idx: int):
+    """Delete a pick row from the sheet (df_idx = 0-based DataFrame index)."""
+    ss = get_ss()
+    if not ss: return False
+    try:
+        ws = ensure_tab(ss, f"picks_{apodo.lower()}", PICKS_HEADERS)
+        ws.delete_rows(df_idx + 2)  # +2: header row + 0-based index
+        return True
+    except Exception:
+        return False
 
 def update_pick_row(apodo: str, df_idx: int, resultado: str, ganancia: float, bank_post: float):
     ss = get_ss()
     if not ss: return False
-    ws = ensure_tab(ss, f"picks_{apodo.lower()}", PICKS_HEADERS)
-    sheet_row = df_idx + 2  # header=1, data starts at 2
-    # cols: resultado=10, ganancia_neta=11, bankroll_post=12
-    ws.update_cell(sheet_row, 10, resultado)
-    ws.update_cell(sheet_row, 11, round(ganancia, 2))
-    ws.update_cell(sheet_row, 12, round(bank_post, 2))
-    return True
+    try:
+        ws = ensure_tab(ss, f"picks_{apodo.lower()}", PICKS_HEADERS)
+        sheet_row = df_idx + 2
+        ws.update_cell(sheet_row, 10, resultado)
+        ws.update_cell(sheet_row, 11, round(ganancia, 2))
+        ws.update_cell(sheet_row, 12, round(bank_post, 2))
+        return True
+    except Exception:
+        return False
 
 def load_users() -> list:
     ss = get_ss()
@@ -911,14 +927,25 @@ def load_users() -> list:
 def upsert_user(apodo: str, bankroll: float, wins: int, losses: int):
     ss = get_ss()
     if not ss: return
-    ws = ensure_tab(ss, TAB_USERS, ["apodo","bankroll","wins","losses","created"])
     try:
+        ws = ensure_tab(ss, TAB_USERS, ["apodo","bankroll","wins","losses","created"])
         records = _safe_get_records(ws)
-        for i, r in enumerate(records):
-            if r.get("apodo","").lower() == apodo.lower():
-                ws.update(f"A{i+2}:E{i+2}", [[apodo, round(bankroll,2), wins, losses, r.get("created","")]])
-                return
-        ws.append_row([apodo, round(bankroll,2), wins, losses, str(date.today())])
+        found = [(i, r) for i, r in enumerate(records)
+                 if r.get("apodo","").lower() == apodo.lower()]
+        # Remove duplicates if any (keep first)
+        if len(found) > 1:
+            for dup_i, _ in reversed(found[1:]):
+                try: ws.delete_rows(dup_i + 2)
+                except Exception: pass
+            records = _safe_get_records(ws)
+            found = [(i, r) for i, r in enumerate(records)
+                     if r.get("apodo","").lower() == apodo.lower()]
+        if found:
+            i, r = found[0]
+            ws.update(f"A{i+2}:E{i+2}",
+                      [[apodo, round(bankroll,2), wins, losses, r.get("created","")]])
+        else:
+            ws.append_row([apodo, round(bankroll,2), wins, losses, str(date.today())])
     except Exception:
         pass
 
@@ -1566,7 +1593,7 @@ var _interval = setInterval(function(){
 # ─────────────────────────────────────────────────────────────
 #  TAB 2 — HISTORIAL
 # ─────────────────────────────────────────────────────────────
-def tab_historial(df: pd.DataFrame):
+def tab_historial(apodo: str, df: pd.DataFrame):
     if df.empty:
         st.info("Sin picks registrados aún.")
         return
@@ -1590,7 +1617,7 @@ def tab_historial(df: pd.DataFrame):
     res_c = {"ganado":"#00FF88","perdido":"#FF2D55","nulo":"#8888AA","pendiente":"#FFB800"}
     res_i = {"ganado":"✅","perdido":"❌","nulo":"➖","pendiente":"⏳"}
 
-    for _, row in filt.iterrows():
+    for idx, row in filt.iterrows():
         res  = row.get("resultado","pendiente")
         clr  = res_c.get(res,"#888")
         ico  = res_i.get(res,"·")
@@ -1598,7 +1625,10 @@ def tab_historial(df: pd.DataFrame):
         gs   = f'+${gan:,.2f}' if gan>0 else f'${gan:,.2f}' if gan<0 else "—"
         gc   = "#00FF88" if gan>0 else "#FF2D55" if gan<0 else "#8888AA"
         fd   = str(row.get("fecha",""))[:10]
-        st.markdown(f"""
+
+        col_card, col_del = st.columns([10, 1])
+        with col_card:
+            st.markdown(f"""
 <div class="pick-card">
   <div class="pick-badge {res[0] if res in ('ganado','perdido') else 'n'}">{ico}</div>
   <div style="flex:1;min-width:0">
@@ -1616,6 +1646,11 @@ def tab_historial(df: pd.DataFrame):
     <div style="font-size:.6rem;color:{clr};font-weight:700;font-family:'JetBrains Mono',monospace">{res.upper()}</div>
   </div>
 </div>""", unsafe_allow_html=True)
+        with col_del:
+            if st.button("🗑", key=f"del_{idx}", help="Eliminar pick"):
+                if delete_pick(apodo, idx):
+                    st.rerun()
+
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1963,93 +1998,122 @@ def _safe_get_records(ws) -> list:
         except Exception:
             return []
 
+@st.cache_data(ttl=30, show_spinner=False)
 def pit_load_ronda_activa() -> dict | None:
     ss = get_ss()
     if not ss: return None
-    ws = ensure_tab(ss, "pit_rondas", PIT_RONDAS_HEADERS)
-    rows = _safe_get_records(ws)
-    for r in reversed(rows):
-        if r.get("estado") in ("activa", "inscripcion"):
-            return r
+    try:
+        ws = ensure_tab(ss, "pit_rondas", PIT_RONDAS_HEADERS)
+        rows = _safe_get_records(ws)
+        for r in reversed(rows):
+            if r.get("estado") in ("activa", "inscripcion"):
+                return r
+    except Exception:
+        pass
     return None
 
 @st.cache_data(ttl=30, show_spinner=False)
 def pit_load_players(ronda_id: str) -> list:
     ss = get_ss()
     if not ss: return []
-    ws = ensure_tab(ss, "pit_jugadores", PIT_PLAYERS_HEADERS)
-    return [r for r in _safe_get_records(ws) if str(r.get("ronda_id","")) == str(ronda_id)]
+    try:
+        ws = ensure_tab(ss, "pit_jugadores", PIT_PLAYERS_HEADERS)
+        return [r for r in _safe_get_records(ws) if str(r.get("ronda_id","")) == str(ronda_id)]
+    except Exception:
+        return []
 
 @st.cache_data(ttl=30, show_spinner=False)
 def pit_load_picks_ronda(ronda_id: str) -> list:
     ss = get_ss()
     if not ss: return []
-    ws = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
-    return [r for r in _safe_get_records(ws) if str(r.get("ronda_id","")) == str(ronda_id)]
+    try:
+        ws = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
+        return [r for r in _safe_get_records(ws) if str(r.get("ronda_id","")) == str(ronda_id)]
+    except Exception:
+        return []
 
 @st.cache_data(ttl=20, show_spinner=False)
 def pit_load_chat(limit: int = 20) -> list:
     ss = get_ss()
     if not ss: return []
-    ws = ensure_tab(ss, "pit_chat", PIT_CHAT_HEADERS)
-    rows = _safe_get_records(ws)
-    return rows[-limit:]
+    try:
+        ws = ensure_tab(ss, "pit_chat", PIT_CHAT_HEADERS)
+        rows = _safe_get_records(ws)
+        return rows[-limit:]
+    except Exception:
+        return []
 
 def pit_save_chat(apodo: str, mensaje: str, es_bot: bool = False):
     ss = get_ss()
     if not ss: return
-    ws = ensure_tab(ss, "pit_chat", PIT_CHAT_HEADERS)
-    ws.append_row([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), apodo, mensaje, "1" if es_bot else "0"])
-    pit_load_chat.clear()
+    try:
+        ws = ensure_tab(ss, "pit_chat", PIT_CHAT_HEADERS)
+        ws.append_row([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), apodo, mensaje, "1" if es_bot else "0"])
+        pit_load_chat.clear()
+    except Exception:
+        pass
 
 def pit_crear_ronda():
     """Create a new weekly ronda starting today."""
     ss = get_ss()
     if not ss: return None
-    ws  = ensure_tab(ss, "pit_rondas", PIT_RONDAS_HEADERS)
-    rows = _safe_get_records(ws)
-    rid  = str(len(rows) + 1).zfill(3)
-    hoy  = date.today()
-    fin  = hoy + timedelta(days=6)
-    ws.append_row([rid, str(hoy), str(fin), "inscripcion", ""])
-    pit_load_ronda_activa.clear()
-    return rid
+    try:
+        ws   = ensure_tab(ss, "pit_rondas", PIT_RONDAS_HEADERS)
+        rows = _safe_get_records(ws)
+        rid  = str(len(rows) + 1).zfill(3)
+        hoy  = date.today()
+        fin  = hoy + timedelta(days=6)
+        ws.append_row([rid, str(hoy), str(fin), "inscripcion", ""])
+        pit_load_ronda_activa.clear()
+        return rid
+    except Exception as e:
+        st.error(f"Error creando ronda: {e}")
+        return None
 
 def pit_inscribir(ronda_id: str, apodo: str):
     ss = get_ss()
     if not ss: return False
-    ws = ensure_tab(ss, "pit_jugadores", PIT_PLAYERS_HEADERS)
-    existing = [r for r in _safe_get_records(ws)
-                if str(r.get("ronda_id","")) == str(ronda_id)
-                and r.get("apodo","").lower() == apodo.lower()]
-    if existing: return False
-    ws.append_row([ronda_id, apodo, "vivo", 0, 0.0, "", "1", ""])
-    pit_load_players.clear()
-    return True
+    try:
+        ws = ensure_tab(ss, "pit_jugadores", PIT_PLAYERS_HEADERS)
+        existing = [r for r in _safe_get_records(ws)
+                    if str(r.get("ronda_id","")) == str(ronda_id)
+                    and r.get("apodo","").lower() == apodo.lower()]
+        if existing: return False
+        ws.append_row([ronda_id, apodo, "vivo", 0, 0.0, "", "1", ""])
+        pit_load_players.clear()
+        return True
+    except Exception:
+        return False
 
 def pit_save_pick(ronda_id: str, apodo: str, partido: str, liga: str,
                   event_id: str, pick_desc: str, momio: float, dia: int):
     ss = get_ss()
     if not ss: return False
-    ws = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
-    ws.append_row([ronda_id, dia, str(date.today()), apodo,
-                   partido, liga, event_id, pick_desc, momio, "pendiente", "0"])
-    pit_load_picks_ronda.clear()
-    return True
+    try:
+        ws = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
+        ws.append_row([ronda_id, dia, str(date.today()), apodo,
+                       partido, liga, event_id, pick_desc, momio, "pendiente", "0"])
+        pit_load_picks_ronda.clear()
+        return True
+    except Exception:
+        return False
 
 def pit_update_player(ronda_id: str, apodo: str, estado: str,
                        dias: int, roi: float, asesino: str, equipos_str: str):
     ss = get_ss()
     if not ss: return
-    ws = ensure_tab(ss, "pit_jugadores", PIT_PLAYERS_HEADERS)
-    rows = _safe_get_records(ws)
-    for i, r in enumerate(rows):
-        if str(r.get("ronda_id","")) == str(ronda_id) and r.get("apodo","").lower() == apodo.lower():
-            comodin = r.get("comodin_disponible","1")
-            ws.update(f"A{i+2}:H{i+2}",
-                      [[ronda_id, apodo, estado, dias, round(roi,4), asesino, comodin, equipos_str]])
-            pit_load_players.clear()
-            return
+    try:
+        ws = ensure_tab(ss, "pit_jugadores", PIT_PLAYERS_HEADERS)
+        rows = _safe_get_records(ws)
+        for i, r in enumerate(rows):
+            if str(r.get("ronda_id","")) == str(ronda_id) and r.get("apodo","").lower() == apodo.lower():
+                comodin = r.get("comodin_disponible","1")
+                ws.update(f"A{i+2}:H{i+2}",
+                          [[ronda_id, apodo, estado, dias, round(roi,4), asesino, comodin, equipos_str]])
+                pit_load_players.clear()
+                return
+    except Exception:
+        pass
 
 def pit_usar_comodin(ronda_id: str, apodo: str):
     ss = get_ss()
@@ -2622,7 +2686,7 @@ def main():
         "⚔️  LEADERBOARD", "🩸  THE PIT"
     ])
     with t1: tab_registrar(apodo, df, bank)
-    with t2: tab_historial(df)
+    with t2: tab_historial(apodo, df)
     with t3: tab_analytics(df, bank)
     with t4: tab_challenge(apodo, df, bank)
     with t5: tab_the_pit(apodo, bank)
