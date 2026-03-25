@@ -368,8 +368,22 @@ div[data-testid="stExpander"] details{
   border:1px solid rgba(255,255,255,.08)!important;border-radius:12px!important;}
 div[data-testid="stExpander"] summary{color:var(--text)!important;font-family:'Rajdhani',sans-serif!important;font-weight:600!important;}
 
-/* ── SCROLLBAR ── */
-::-webkit-scrollbar{width:3px;height:3px;}
+/* ── RADIO BUTTONS ── */
+div[data-testid="stRadio"] label,
+div[data-testid="stRadio"] label p,
+div[data-testid="stRadio"] span {
+  color: #EEEEF5 !important;
+  font-family: 'Rajdhani', sans-serif !important;
+  font-weight: 600 !important;
+  font-size: 0.95rem !important;
+}
+div[data-testid="stRadio"] label:has(input:checked) span,
+div[data-testid="stRadio"] label:has(input:checked) p {
+  color: #F0FF00 !important;
+}
+div[data-testid="stRadio"] [data-testid="stWidgetLabel"] {
+  display: none !important;
+}
 ::-webkit-scrollbar-track{background:transparent;}
 ::-webkit-scrollbar-thumb{background:linear-gradient(180deg,var(--neon),var(--neon2));border-radius:99px;}
 
