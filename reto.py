@@ -2798,22 +2798,25 @@ def tab_the_pit(apodo: str, bank: float):
                     )
 
                     # Pick buttons
+                    away_label = away if away and away != "?" else f"Local_{ev_idx}"
+                    home_label = home if home and home != "?" else f"Visita_{ev_idx}"
+
                     if is_tennis_pit:
                         cols_pick = st.columns(2)
-                        opts = [(cols_pick[0], f"{away} gana", away),
-                                (cols_pick[1], f"{home} gana", home)]
+                        opts = [(cols_pick[0], f"{away_label} gana", away),
+                                (cols_pick[1], f"{home_label} gana", home)]
                     else:
                         cols_pick = st.columns(3)
-                        opts = [(cols_pick[0], f"{away} gana", away),
-                                (cols_pick[1], "Empate",       "Empate"),
-                                (cols_pick[2], f"{home} gana", home)]
+                        opts = [(cols_pick[0], f"{away_label} gana", away),
+                                (cols_pick[1], "Empate",              "Empate"),
+                                (cols_pick[2], f"{home_label} gana",  home)]
 
-                    for col, lbl, pick_val in opts:
+                    for opt_idx, (col, lbl, pick_val) in enumerate(opts):
                         with col:
                             used = pick_val.lower().strip() in equipos_usados
                             if st.button(
                                 f"{'🚫 ' if used else '⚔ '}{lbl}",
-                                key=f"pp_{ev_idx}_{str(ev.get('id',''))[:6]}_{lbl[:3]}",
+                                key=f"pp_{ev_idx}_{opt_idx}",
                                 disabled=used,
                                 use_container_width=True
                             ):
