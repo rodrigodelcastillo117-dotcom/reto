@@ -565,12 +565,15 @@ def espn_search_events(sport: str, league: str, query: str) -> list:
                 return None
 
         status_type  = ev.get("status", {}).get("type", {})
-        # 'state' is the reliable field: "pre" | "in" | "post"
         state        = status_type.get("state", "pre")
         status_name  = status_type.get("name", "STATUS_SCHEDULED")
         status_short = status_type.get("shortDetail", "")
         completed    = (state == "post") or status_type.get("completed", False)
         is_live      = (state == "in") and not completed
+
+        # ── Skip completed (past) games — only show live or upcoming ──
+        if completed and not is_live:
+            return None
 
         home_comp = next((c for c in comps if c.get("homeAway") == "home"), comps[0] if comps else {})
         away_comp = next((c for c in comps if c.get("homeAway") == "away"), comps[1] if len(comps) > 1 else {})
