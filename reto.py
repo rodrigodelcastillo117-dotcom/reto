@@ -2681,6 +2681,46 @@ def tab_historial(apodo: str, df: pd.DataFrame):
         st.info("Sin picks registrados aún.")
         return
 
+    SPORT_ICON = {
+        "soccer":"⚽","football":"🏈","basketball":"🏀",
+        "baseball":"⚾","hockey":"🏒","tennis":"🎾","golf":"⛳","mma":"🥊",
+    }
+    res_c = {"ganado":"#00FF88","perdido":"#FF2D55","nulo":"#8888AA","pendiente":"#FFB800"}
+    res_i = {"ganado":"✅","perdido":"❌","nulo":"➖","pendiente":"⏳"}
+
+    # ── Liga performance analysis (auto) ──────────────────────
+    resolved = df[df["resultado"].isin(["ganado","perdido","nulo"])].copy()
+    if not resolved.empty:
+        st.markdown('<div class="sec-head">📊 Tu rendimiento por liga</div>', unsafe_allow_html=True)
+        liga_stats = []
+        for liga, grp in resolved.groupby("liga"):
+            total = len(grp)
+            wins  = (grp["resultado"]=="ganado").sum()
+            roi   = grp["ganancia_neta"].sum() / grp["apuesta"].sum() * 100 if grp["apuesta"].sum() > 0 else 0
+            liga_stats.append({"liga": liga, "total": total, "wins": int(wins), "roi": roi})
+        liga_stats.sort(key=lambda x: (-x["wins"]/x["total"] if x["total"] else 0, -x["total"]))
+
+        cols = st.columns(min(len(liga_stats), 4))
+        for i, ls in enumerate(liga_stats[:8]):
+            wr   = ls["wins"]/ls["total"]*100 if ls["total"] else 0
+            roi  = ls["roi"]
+            clr  = "#00FF88" if wr >= 55 else "#FFB800" if wr >= 40 else "#FF2D55"
+            with cols[i % min(len(liga_stats),4)]:
+                st.markdown(
+                    f'<div style="background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.08);'
+                    f'border-top:3px solid {clr};border-radius:10px;padding:10px 12px;margin-bottom:8px;text-align:center">'
+                    f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.55rem;color:var(--text3);'
+                    f'margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{ls["liga"][:20]}</div>'
+                    f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:1.6rem;color:{clr};line-height:1">'
+                    f'{ls["wins"]}/{ls["total"]}</div>'
+                    f'<div style="font-size:.6rem;color:{clr};font-weight:700">{wr:.0f}% WR</div>'
+                    f'<div style="font-size:.55rem;color:var(--text3);margin-top:2px">'
+                    f'ROI {roi:+.1f}%</div></div>',
+                    unsafe_allow_html=True
+                )
+        st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+
+    # ── Filters ──────────────────────────────────────────────
     c1, c2, c3 = st.columns(3)
     with c1:
         f_res  = st.selectbox("Resultado", ["Todos","ganado","perdido","nulo","pendiente"])
@@ -2697,89 +2737,90 @@ def tab_historial(apodo: str, df: pd.DataFrame):
     if f_merc != "Todos": filt = filt[filt["mercado"] == f_merc]
     filt = filt.sort_values("fecha", ascending=False)
 
-    # Sport icons
-    SPORT_ICON = {
-        "soccer":"⚽","football":"🏈","basketball":"🏀",
-        "baseball":"⚾","hockey":"🏒","tennis":"🎾",
-        "golf":"⛳","mma":"🥊","racing":"🏎️",
-    }
-    res_c = {"ganado":"#00FF88","perdido":"#FF2D55","nulo":"#8888AA","pendiente":"#FFB800"}
-    res_i = {"ganado":"✅","perdido":"❌","nulo":"➖","pendiente":"⏳"}
-    res_bg = {"ganado":"rgba(0,255,136,.08)","perdido":"rgba(255,45,85,.08)",
-               "nulo":"rgba(136,136,170,.05)","pendiente":"rgba(255,184,0,.06)"}
+    st.markdown(
+        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.55rem;color:var(--text3);'
+        f'margin:8px 0">{len(filt)} picks</div>', unsafe_allow_html=True
+    )
 
+    # ── Pick cards ────────────────────────────────────────────
     for idx, row in filt.iterrows():
-        res      = str(row.get("resultado","pendiente"))
-        clr      = res_c.get(res,"#888")
-        ico      = res_i.get(res,"·")
-        bg       = res_bg.get(res,"rgba(255,255,255,.02)")
-        gan      = float(row.get("ganancia_neta",0))
-        apuesta  = float(row.get("apuesta",0))
-        momio    = row.get("momio","")
-        gs       = f'+${gan:,.2f}' if gan>0 else f'-${abs(gan):,.2f}' if gan<0 else "⏳ pendiente"
-        gc       = "#00FF88" if gan>0 else "#FF2D55" if gan<0 else "#FFB800"
-        fd       = str(row.get("fecha",""))[:10]
-        deporte  = str(row.get("deporte","soccer")).lower()
-        sp_ico   = SPORT_ICON.get(deporte, "🎯")
-        partido  = str(row.get("partido",""))
-        liga     = str(row.get("liga",""))
-        pick_d   = str(row.get("pick_desc",""))
-        mercado  = str(row.get("mercado",""))
-        notas    = str(row.get("notas",""))
+        res     = str(row.get("resultado","pendiente"))
+        clr     = res_c.get(res,"#888")
+        ico     = res_i.get(res,"·")
+        gan     = float(row.get("ganancia_neta",0) or 0)
+        apuesta = float(row.get("apuesta",0) or 0)
+        momio   = float(row.get("momio",0) or 0)
+        fd      = str(row.get("fecha",""))[:10]
+        deporte = str(row.get("deporte","soccer")).lower()
+        sp_ico  = SPORT_ICON.get(deporte,"🎯")
+        partido = str(row.get("partido",""))
+        liga    = str(row.get("liga",""))
+        pick_d  = str(row.get("pick_desc",""))
+        mercado = str(row.get("mercado",""))
+        notas   = str(row.get("notas",""))
+        if notas in ("nan","None",""): notas = ""
 
-        # Ganancia potencial si pendiente
         pot = ""
-        if res == "pendiente" and apuesta > 0 and momio:
-            try:
-                pot_val = float(momio) * apuesta - apuesta
-                pot = f"Potencial: +${pot_val:,.0f}"
-            except Exception:
-                pass
+        if res == "pendiente" and apuesta > 0 and momio > 1:
+            pot_val = momio * apuesta - apuesta
+            pot = f"+${pot_val:,.0f} potencial"
 
         col_card, col_del = st.columns([11, 1])
         with col_card:
-            st.markdown(f"""
-<div style="background:{bg};border:1px solid rgba(255,255,255,.08);border-left:3px solid {clr};
-     border-radius:12px;padding:12px 16px;margin-bottom:6px;display:flex;gap:12px;align-items:center">
-  <!-- Sport icon + result -->
-  <div style="text-align:center;flex-shrink:0;min-width:44px">
-    <div style="font-size:1.6rem">{sp_ico}</div>
-    <div style="font-size:.65rem;font-weight:700;color:{clr};font-family:'JetBrains Mono',monospace;
-         letter-spacing:1px">{ico}</div>
-  </div>
-  <!-- Main info -->
-  <div style="flex:1;min-width:0">
-    <div style="font-size:.9rem;font-weight:700;color:var(--text);
-         white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:2px">
-      {partido}
-    </div>
-    <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:3px">
-      <span style="background:rgba(191,95,255,.15);color:#BF5FFF;padding:1px 7px;
-            border-radius:99px;font-size:.58rem;font-family:'JetBrains Mono',monospace">{sp_ico} {deporte.upper()}</span>
-      <span style="color:var(--text3);font-size:.6rem">{liga}</span>
-      <span style="color:var(--text3);font-size:.6rem">·</span>
-      <span style="color:var(--text3);font-size:.6rem">{mercado}</span>
-    </div>
-    <div style="font-size:.85rem;font-weight:700;color:var(--neon2);margin-bottom:2px">
-      🎯 {pick_d}
-    </div>
-    <div style="font-size:.58rem;color:var(--text3)">{fd}
-      {"· <span style='color:#FFB800'>" + pot + "</span>" if pot else ""}
-      {"· <i style='color:var(--text3)'>" + notas[:60] + "</i>" if notas and notas != "nan" else ""}
-    </div>
-  </div>
-  <!-- Right: amounts -->
-  <div style="text-align:right;flex-shrink:0;min-width:90px">
-    <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:{gc};line-height:1">{gs}</div>
-    <div style="font-size:.62rem;color:var(--text3);margin-top:2px">
-      @{momio}x &nbsp;·&nbsp; ${apuesta:,.0f}
-    </div>
-    <div style="font-size:.6rem;color:{clr};font-weight:700;
-         font-family:'JetBrains Mono',monospace;margin-top:3px">{res.upper()}</div>
-  </div>
-</div>""", unsafe_allow_html=True)
+            with st.container():
+                # Top row: sport icon + partido + result badge + amount
+                r1c1, r1c2, r1c3 = st.columns([1, 8, 3])
+                with r1c1:
+                    st.markdown(
+                        f'<div style="font-size:1.8rem;text-align:center;padding-top:4px">{sp_ico}</div>',
+                        unsafe_allow_html=True
+                    )
+                with r1c2:
+                    st.markdown(
+                        f'<div style="font-weight:700;font-size:.9rem;color:#EEEEF5;margin-bottom:2px">{partido}</div>'
+                        f'<div style="font-size:.65rem;color:#8888AA">{sp_ico} {deporte.upper()} · {liga} · {mercado}</div>',
+                        unsafe_allow_html=True
+                    )
+                with r1c3:
+                    gc = "#00FF88" if gan>0 else "#FF2D55" if gan<0 else "#FFB800"
+                    gs = f"+${gan:,.2f}" if gan>0 else f"-${abs(gan):,.2f}" if gan<0 else pot or "—"
+                    st.markdown(
+                        f'<div style="text-align:right">'
+                        f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:1.3rem;color:{gc};line-height:1">{gs}</div>'
+                        f'<div style="font-size:.58rem;color:#8888AA">@{momio}x · ${apuesta:,.0f}</div>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+
+                # Pick row
+                p1, p2 = st.columns([8, 4])
+                with p1:
+                    st.markdown(
+                        f'<div style="background:rgba(0,255,209,.07);border-left:3px solid var(--neon2);'
+                        f'border-radius:0 6px 6px 0;padding:5px 10px;margin:4px 0">'
+                        f'<span style="font-size:.7rem;color:#8888AA">PICK → </span>'
+                        f'<span style="font-size:.82rem;font-weight:700;color:var(--neon2)">{pick_d}</span>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+                with p2:
+                    st.markdown(
+                        f'<div style="text-align:right;padding-top:6px">'
+                        f'<span style="font-size:.65rem;font-weight:700;color:{clr};'
+                        f'font-family:\'JetBrains Mono\',monospace">{ico} {res.upper()}</span>'
+                        f'<span style="font-size:.58rem;color:#8888AA;margin-left:8px">{fd}</span>'
+                        f'</div>',
+                        unsafe_allow_html=True
+                    )
+
+                if notas:
+                    st.caption(f"📝 {notas}")
+
+                st.divider()
+
         with col_del:
-            if st.button("🗑", key=f"del_{idx}", help="Eliminar pick"):
+            st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+            if st.button("🗑", key=f"del_{idx}", help="Eliminar"):
                 if delete_pick(apodo, idx):
                     st.session_state.pop("df_picks", None)
                     st.rerun()
