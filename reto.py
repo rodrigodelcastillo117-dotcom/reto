@@ -2191,7 +2191,8 @@ def pit_pick_del_rey(ronda_picks: list) -> str:
 PIT_DAILY_SPORTS = [
     ("⚽ Fútbol",      "soccer",     ["eng.1","esp.1","ita.1","ger.1","fra.1","mex.1","usa.1",
                                        "uefa.champions","conmebol.libertadores","fifa.friendly",
-                                       "fifa.worldq.6","fifa.worldq.europe","concacaf.worldq"]),
+                                       "fifa.worldq.6","fifa.worldq.europe","concacaf.worldq",
+                                       "fifa.worldq","uefa.worldq","fifa.worldq.5","fifa.worldq.2"]),
     ("🏀 Basketball",  "basketball", ["nba"]),
     ("🏈 NFL",         "football",   ["nfl"]),
     ("⚾ Baseball",    "baseball",   ["mlb"]),
@@ -2260,6 +2261,46 @@ def pit_get_daily_games(seed_date: str) -> list:
                     break
             except Exception:
                 continue
+        if not found:
+                # Try same league but with tomorrow's date explicitly
+                try:
+                    tomorrow_str = (date.today() + timedelta(days=1)).strftime("%Y%m%d")
+                    for league in leagues:
+                        url2 = f"{ESPN_BASE}/{sport}/{league}/scoreboard"
+                        r2 = requests.get(url2, params={"dates": tomorrow_str, "limit":50}, timeout=6)
+                        if r2.status_code == 200:
+                            evts2 = r2.json().get("events",[])
+                            upcoming2 = []
+                            for ev in evts2:
+                                st2 = ev.get("status",{}).get("type",{})
+                                if (st2.get("state","pre") == "post") or st2.get("completed",False):
+                                    continue
+                                comps = ev.get("competitions",[{}])[0].get("competitors",[])
+                                hc = next((c for c in comps if c.get("homeAway")=="home"), comps[0] if comps else {})
+                                ac = next((c for c in comps if c.get("homeAway")=="away"), comps[1] if len(comps)>1 else {})
+                                hi = _extract_competitor_info(hc, sport)
+                                ai = _extract_competitor_info(ac, sport)
+                                date_raw = ev.get("date","")
+                                try:
+                                    dt = datetime.fromisoformat(date_raw.replace("Z","+00:00"))
+                                    d_str = (dt - timedelta(hours=6)).strftime("%d %b %H:%M")
+                                except Exception:
+                                    d_str = date_raw[:10]
+                                upcoming2.append({
+                                    "id": ev.get("id",""), "home": hi["name"], "away": ai["name"],
+                                    "home_logo": hi["logo"], "away_logo": ai["logo"],
+                                    "home_flag": hi["flag"], "away_flag": ai["flag"],
+                                    "date": d_str, "date_raw": date_raw,
+                                    "is_live": False, "sport": sport,
+                                    "pit_sport_label": sport_label,
+                                    "pit_liga_name": league.replace("."," ").upper(),
+                                })
+                            if upcoming2:
+                                candidates.append(_rnd.choice(upcoming2))
+                                found = True
+                                break
+                except Exception:
+                    pass
         if found and len(candidates) >= 4:
             break
 
@@ -2445,7 +2486,10 @@ def pit_auto_grade(apodo: str, ronda_id: str, my_record: dict) -> tuple[int, int
         return 0, 0
 
 
-
+# ─────────────────────────────────────────────────────────────
+#  THE PIT — Main tab
+# ─────────────────────────────────────────────────────────────
+def tab_the_pit(apodo: str, bank: float):
 
     # ── Header
     st.markdown("""
