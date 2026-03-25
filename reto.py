@@ -297,8 +297,10 @@ div[data-testid="stTabs"] [data-baseweb="tab-border"]{display:none!important;}
 
 /* ── BUTTONS ── */
 div.stButton>button{
-  background:linear-gradient(145deg,rgba(255,255,255,.05),rgba(255,255,255,.01))!important;
-  border:1px solid rgba(255,255,255,.1)!important;color:var(--text)!important;
+  background:linear-gradient(145deg,rgba(255,255,255,.06),rgba(255,255,255,.02))!important;
+  border:1px solid rgba(255,255,255,.15)!important;
+  color:#EEEEF5 !important;
+  -webkit-text-fill-color:#EEEEF5 !important;
   border-radius:10px!important;font-family:'Rajdhani',sans-serif!important;
   font-weight:700!important;font-size:.9rem!important;letter-spacing:1px!important;
   transition:all .2s!important;width:100%!important;
@@ -794,19 +796,48 @@ def get_ss():
 
 def ensure_tab(ss, name: str, headers: list):
     try:
-        return ss.worksheet(name)
+        ws = ss.worksheet(name)
+        # Verify header row exists, add if missing
+        try:
+            first_row = ws.row_values(1)
+            if not first_row:
+                ws.append_row(headers)
+        except Exception:
+            pass
+        return ws
     except gspread.WorksheetNotFound:
-        ws = ss.add_worksheet(title=name, rows=2000, cols=len(headers))
+        ws = ss.add_worksheet(title=name, rows=2000, cols=max(len(headers), 20))
         ws.append_row(headers)
         return ws
 
 def load_picks(apodo: str) -> pd.DataFrame:
     ss = get_ss()
     if not ss: return pd.DataFrame(columns=PICKS_HEADERS)
-    ws   = ensure_tab(ss, f"picks_{apodo.lower()}", PICKS_HEADERS)
-    data = ws.get_all_records()
+    ws = ensure_tab(ss, f"picks_{apodo.lower()}", PICKS_HEADERS)
+    try:
+        data = ws.get_all_records(expected_headers=PICKS_HEADERS)
+    except Exception:
+        try:
+            # Fallback: read raw and build DataFrame manually
+            all_vals = ws.get_all_values()
+            if len(all_vals) < 2:
+                return pd.DataFrame(columns=PICKS_HEADERS)
+            raw_headers = all_vals[0]
+            rows = all_vals[1:]
+            df_raw = pd.DataFrame(rows, columns=raw_headers)
+            # Add missing columns
+            for col in PICKS_HEADERS:
+                if col not in df_raw.columns:
+                    df_raw[col] = ""
+            data = df_raw[PICKS_HEADERS].to_dict("records")
+        except Exception:
+            return pd.DataFrame(columns=PICKS_HEADERS)
     if not data: return pd.DataFrame(columns=PICKS_HEADERS)
     df = pd.DataFrame(data)
+    # Ensure all expected columns exist
+    for col in PICKS_HEADERS:
+        if col not in df.columns:
+            df[col] = ""
     df["fecha"] = pd.to_datetime(df["fecha"], errors="coerce")
     for col in ["momio","apuesta","ganancia_neta","bankroll_post"]:
         df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
@@ -834,18 +865,30 @@ def load_users() -> list:
     ss = get_ss()
     if not ss: return []
     ws = ensure_tab(ss, TAB_USERS, ["apodo","bankroll","wins","losses","created"])
-    return ws.get_all_records()
+    try:
+        return ws.get_all_records()
+    except Exception:
+        try:
+            all_vals = ws.get_all_values()
+            if len(all_vals) < 2: return []
+            headers = all_vals[0]
+            return [dict(zip(headers, row)) for row in all_vals[1:] if any(row)]
+        except Exception:
+            return []
 
 def upsert_user(apodo: str, bankroll: float, wins: int, losses: int):
     ss = get_ss()
     if not ss: return
     ws = ensure_tab(ss, TAB_USERS, ["apodo","bankroll","wins","losses","created"])
-    records = ws.get_all_records()
-    for i, r in enumerate(records):
-        if r.get("apodo","").lower() == apodo.lower():
-            ws.update(f"A{i+2}:E{i+2}", [[apodo, round(bankroll,2), wins, losses, r.get("created","")]])
-            return
-    ws.append_row([apodo, round(bankroll,2), wins, losses, str(date.today())])
+    try:
+        records = _safe_get_records(ws)
+        for i, r in enumerate(records):
+            if r.get("apodo","").lower() == apodo.lower():
+                ws.update(f"A{i+2}:E{i+2}", [[apodo, round(bankroll,2), wins, losses, r.get("created","")]])
+                return
+        ws.append_row([apodo, round(bankroll,2), wins, losses, str(date.today())])
+    except Exception:
+        pass
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1365,17 +1408,23 @@ var _interval = setInterval(function(){
             for col, cat in zip(cols, btn_row):
                 with col:
                     is_active = (pick_type == cat)
-                    active_style = (
+                    # Force dark text on inactive, neon on active
+                    btn_style = (
                         "background:linear-gradient(135deg,rgba(240,255,0,.15),rgba(255,184,0,.1))!important;"
                         "border-color:rgba(240,255,0,.6)!important;color:#F0FF00!important;"
                         "box-shadow:0 0 14px rgba(240,255,0,.2)!important;"
-                    ) if is_active else ""
+                    ) if is_active else (
+                        "color:#EEEEF5!important;background:rgba(255,255,255,.06)!important;"
+                        "border-color:rgba(255,255,255,.15)!important;"
+                    )
                     st.markdown(
-                        f'<style>div[data-testid="stButton"] button[title="{cat}"]'
-                        f'{{ {active_style} }}</style>',
+                        f'<style>'
+                        f'div[data-testid="stButton"]:has(button[kind="secondary"][title="{cat}"]) button,'
+                        f'div[data-testid="stButton"]:has(button[data-testid="{cat}"]) button'
+                        f'{{ {btn_style} }}</style>',
                         unsafe_allow_html=True
                     )
-                    if st.button(cat, key=f"ptype_{cat}", help=cat):
+                    if st.button(cat, key=f"ptype_{cat}"):
                         st.session_state["pick_type"]   = cat
                         st.session_state["pick_desc_v"] = cat
                         st.rerun()
@@ -1408,17 +1457,15 @@ var _interval = setInterval(function(){
             with c1:
                 momio = st.number_input("Momio (decimal)", min_value=1.01, max_value=99.0, value=1.85, step=0.01, key="pick_momio")
             with c2:
-                kelly_amt = round(bank * kelly(momio), 2)
-                apuesta   = st.number_input(
-                    f"Apuesta  —  Kelly: ${kelly_amt:,.2f}",
+                apuesta = st.number_input(
+                    "¿Cuánto apostaste? ($MXN)",
                     min_value=1.0, max_value=float(bank),
-                    value=min(kelly_amt, bank) if kelly_amt > 1 else 50.0,
-                    step=50.0, key="pick_apuesta"
+                    value=50.0, step=50.0, key="pick_apuesta"
                 )
 
             notas = st.text_area("Análisis / notas (opcional)", placeholder="¿Por qué este pick?", height=60, key="pick_notas")
 
-            # Kelly visual indicator
+            # % del bankroll indicator
             pct_bank = apuesta / bank * 100 if bank > 0 else 0
             bar_c = "#00FF88" if pct_bank <= 3 else "#FFB800" if pct_bank <= 5 else "#FF2D55"
             st.markdown(
@@ -1855,6 +1902,634 @@ def tab_simulador(df: pd.DataFrame, bank: float):
             )
 
 
+
+# ─────────────────────────────────────────────────────────────
+#  THE PIT — Google Sheets helpers
+# ─────────────────────────────────────────────────────────────
+PIT_RONDAS_HEADERS  = ["ronda_id","fecha_inicio","fecha_fin","estado","ganador"]
+PIT_PICKS_HEADERS   = ["ronda_id","dia","fecha","apodo","partido","liga",
+                        "event_id","pick_desc","momio","resultado","comodin_usado"]
+PIT_CHAT_HEADERS    = ["ts","apodo","mensaje","es_bot"]
+PIT_PLAYERS_HEADERS = ["ronda_id","apodo","estado","dias_vivo","roi_acum",
+                        "pick_asesino","comodin_disponible","equipos_usados"]
+
+def pit_get_ws(tab: str, headers: list):
+    ss = get_ss()
+    if not ss: return None
+    return ensure_tab(ss, tab, headers)
+
+def _safe_get_records(ws) -> list:
+    """Get all records safely, falling back to raw values on error."""
+    try:
+        return ws.get_all_records()
+    except Exception:
+        try:
+            all_vals = ws.get_all_values()
+            if len(all_vals) < 2: return []
+            headers = all_vals[0]
+            return [dict(zip(headers, row)) for row in all_vals[1:] if any(row)]
+        except Exception:
+            return []
+
+def pit_load_ronda_activa() -> dict | None:
+    ss = get_ss()
+    if not ss: return None
+    ws = ensure_tab(ss, "pit_rondas", PIT_RONDAS_HEADERS)
+    rows = _safe_get_records(ws)
+    for r in reversed(rows):
+        if r.get("estado") in ("activa", "inscripcion"):
+            return r
+    return None
+
+@st.cache_data(ttl=30, show_spinner=False)
+def pit_load_players(ronda_id: str) -> list:
+    ss = get_ss()
+    if not ss: return []
+    ws = ensure_tab(ss, "pit_jugadores", PIT_PLAYERS_HEADERS)
+    return [r for r in _safe_get_records(ws) if str(r.get("ronda_id","")) == str(ronda_id)]
+
+@st.cache_data(ttl=30, show_spinner=False)
+def pit_load_picks_ronda(ronda_id: str) -> list:
+    ss = get_ss()
+    if not ss: return []
+    ws = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
+    return [r for r in _safe_get_records(ws) if str(r.get("ronda_id","")) == str(ronda_id)]
+
+@st.cache_data(ttl=20, show_spinner=False)
+def pit_load_chat(limit: int = 20) -> list:
+    ss = get_ss()
+    if not ss: return []
+    ws = ensure_tab(ss, "pit_chat", PIT_CHAT_HEADERS)
+    rows = _safe_get_records(ws)
+    return rows[-limit:]
+
+def pit_save_chat(apodo: str, mensaje: str, es_bot: bool = False):
+    ss = get_ss()
+    if not ss: return
+    ws = ensure_tab(ss, "pit_chat", PIT_CHAT_HEADERS)
+    ws.append_row([datetime.now().strftime("%Y-%m-%d %H:%M:%S"), apodo, mensaje, "1" if es_bot else "0"])
+    pit_load_chat.clear()
+
+def pit_crear_ronda():
+    """Create a new weekly ronda starting today."""
+    ss = get_ss()
+    if not ss: return None
+    ws  = ensure_tab(ss, "pit_rondas", PIT_RONDAS_HEADERS)
+    rows = _safe_get_records(ws)
+    rid  = str(len(rows) + 1).zfill(3)
+    hoy  = date.today()
+    fin  = hoy + timedelta(days=6)
+    ws.append_row([rid, str(hoy), str(fin), "inscripcion", ""])
+    pit_load_ronda_activa.clear()
+    return rid
+
+def pit_inscribir(ronda_id: str, apodo: str):
+    ss = get_ss()
+    if not ss: return False
+    ws = ensure_tab(ss, "pit_jugadores", PIT_PLAYERS_HEADERS)
+    existing = [r for r in _safe_get_records(ws)
+                if str(r.get("ronda_id","")) == str(ronda_id)
+                and r.get("apodo","").lower() == apodo.lower()]
+    if existing: return False
+    ws.append_row([ronda_id, apodo, "vivo", 0, 0.0, "", "1", ""])
+    pit_load_players.clear()
+    return True
+
+def pit_save_pick(ronda_id: str, apodo: str, partido: str, liga: str,
+                  event_id: str, pick_desc: str, momio: float, dia: int):
+    ss = get_ss()
+    if not ss: return False
+    ws = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
+    ws.append_row([ronda_id, dia, str(date.today()), apodo,
+                   partido, liga, event_id, pick_desc, momio, "pendiente", "0"])
+    pit_load_picks_ronda.clear()
+    return True
+
+def pit_update_player(ronda_id: str, apodo: str, estado: str,
+                       dias: int, roi: float, asesino: str, equipos_str: str):
+    ss = get_ss()
+    if not ss: return
+    ws = ensure_tab(ss, "pit_jugadores", PIT_PLAYERS_HEADERS)
+    rows = _safe_get_records(ws)
+    for i, r in enumerate(rows):
+        if str(r.get("ronda_id","")) == str(ronda_id) and r.get("apodo","").lower() == apodo.lower():
+            comodin = r.get("comodin_disponible","1")
+            ws.update(f"A{i+2}:H{i+2}",
+                      [[ronda_id, apodo, estado, dias, round(roi,4), asesino, comodin, equipos_str]])
+            pit_load_players.clear()
+            return
+
+def pit_usar_comodin(ronda_id: str, apodo: str):
+    ss = get_ss()
+    if not ss: return
+    ws = ensure_tab(ss, "pit_jugadores", PIT_PLAYERS_HEADERS)
+    rows = _safe_get_records(ws)
+    for i, r in enumerate(rows):
+        if str(r.get("ronda_id","")) == str(ronda_id) and r.get("apodo","").lower() == apodo.lower():
+            ws.update_cell(i+2, 7, "0")
+            pit_load_players.clear()
+            return
+
+# ─────────────────────────────────────────────────────────────
+#  THE PIT — King Rongo AI taunts
+# ─────────────────────────────────────────────────────────────
+RONGO_TAUNTS_ELIM = [
+    "👑 King Rongo dice: '{apodo}' confió en '{pick}' y el foso se lo tragó. Quedan {vivos} vivos.",
+    "💀 ELIMINADO: '{apodo}' apostó por '{pick}'. Un clásico error de principiante. {vivos} siguen en pie.",
+    "🩸 El foso exige otro sacrificio. '{apodo}' apostó '{pick}' y el árbitro fue su verdugo. {vivos} sobreviven.",
+    "⚰️ '{apodo}' creyó en '{pick}'. The Pit no perdona la fe ciega. Quedan {vivos} luchadores.",
+    "🔥 King Rongo anuncia: '{apodo}' ha caído. Su arma fue '{pick}'. {vivos} aún respiran en el foso.",
+]
+RONGO_TAUNTS_WIN = [
+    "👑 '{apodo}' sobrevivió el Día {dia} con '{pick}'. El foso respeta a los valientes.",
+    "⚡ '{apodo}' sigue vivo. '{pick}' fue su salvación hoy. Día {dia} completado.",
+    "🩸 El foso no pudo con '{apodo}' hoy. '{pick}' los mantuvo con vida. Día {dia}.",
+]
+
+def rongo_taunt_elim(apodo: str, pick: str, vivos: int) -> str:
+    import random
+    t = random.choice(RONGO_TAUNTS_ELIM)
+    return t.format(apodo=apodo, pick=pick, vivos=vivos)
+
+def rongo_taunt_win(apodo: str, pick: str, dia: int) -> str:
+    import random
+    t = random.choice(RONGO_TAUNTS_WIN)
+    return t.format(apodo=apodo, pick=pick, dia=dia)
+
+# ─────────────────────────────────────────────────────────────
+#  THE PIT — Pick del Rey (best pick algorithm)
+# ─────────────────────────────────────────────────────────────
+def pit_pick_del_rey(ronda_picks: list) -> str:
+    """
+    Simple algorithm: find the pick with the best momio >= 1.50
+    that hasn't been used much this round, and that has momio 1.50-2.50 range
+    (sweet spot: high enough odds, not a coinflip).
+    Returns a suggestion string.
+    """
+    if not ronda_picks:
+        return "No hay suficiente data esta ronda para calcular el Pick del Rey."
+    ganados = [p for p in ronda_picks if p.get("resultado") == "ganado"]
+    if not ganados:
+        return "King Rongo aún no tiene data suficiente esta ronda. Vuelve después del Día 2."
+    # Group by pick_desc, calculate win rate
+    from collections import defaultdict
+    stats = defaultdict(lambda: {"g":0,"t":0,"momio_sum":0})
+    for p in ronda_picks:
+        k = p.get("pick_desc","")
+        stats[k]["t"] += 1
+        stats[k]["momio_sum"] += float(p.get("momio", 1.5))
+        if p.get("resultado") == "ganado":
+            stats[k]["g"] += 1
+    best = None; best_score = -1
+    for pick, s in stats.items():
+        if s["t"] < 2: continue
+        wr    = s["g"] / s["t"]
+        avg_m = s["momio_sum"] / s["t"]
+        if avg_m < 1.50: continue
+        score = wr * avg_m  # reward high win rate AND good odds
+        if score > best_score:
+            best_score = score
+            best = (pick, wr, avg_m, s["t"])
+    if not best:
+        return "King Rongo necesita más data (mín. 2 picks por tipo). Vuelve mañana."
+    pick, wr, avg_m, cnt = best
+    return (f"👑 **Pick del Rey:** `{pick}`  \n"
+            f"Win rate histórico esta ronda: **{wr*100:.0f}%** en {cnt} picks  \n"
+            f"Momio promedio: **{avg_m:.2f}**  \n"
+            f"*Usa este conocimiento con sabiduría. The Pit no garantiza nada.*")
+
+
+# ─────────────────────────────────────────────────────────────
+#  THE PIT — Main tab
+# ─────────────────────────────────────────────────────────────
+def tab_the_pit(apodo: str, bank: float):
+
+    # ── Header
+    st.markdown("""
+<div style="position:relative;text-align:center;padding:28px 20px 20px;overflow:hidden;
+     background:linear-gradient(180deg,rgba(255,45,85,.08) 0%,transparent 100%);
+     border:1px solid rgba(255,45,85,.2);border-radius:16px;margin-bottom:18px">
+  <div style="position:absolute;inset:0;pointer-events:none;
+       background-image:linear-gradient(rgba(255,45,85,.04) 1px,transparent 1px),
+       linear-gradient(90deg,rgba(255,45,85,.04) 1px,transparent 1px);
+       background-size:24px 24px"></div>
+  <div style="font-family:'JetBrains Mono',monospace;font-size:.55rem;letter-spacing:6px;
+       color:rgba(255,45,85,.6);text-transform:uppercase;margin-bottom:8px">⚔ ARENA DE MUERTE ⚔</div>
+  <div style="font-family:'Bebas Neue',sans-serif;font-size:4rem;line-height:.9;
+       background:linear-gradient(135deg,#FF2D55,#FF6B00,#FFB800);
+       -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+       filter:drop-shadow(0 0 20px rgba(255,45,85,.5));letter-spacing:4px">
+    THE PIT
+  </div>
+  <div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;color:rgba(255,255,255,.25);
+       letter-spacing:4px;margin-top:8px">
+    MIL ENTRAN · SOLO UNO SALE CON LOS BOLSILLOS LLENOS
+  </div>
+</div>
+""", unsafe_allow_html=True)
+
+    # ── Load active ronda
+    ronda = pit_load_ronda_activa()
+
+    # ── No active ronda
+    if not ronda:
+        st.markdown("""
+<div style="text-align:center;padding:30px;background:rgba(255,45,85,.05);
+     border:1px solid rgba(255,45,85,.2);border-radius:14px">
+  <div style="font-family:'Bebas Neue',sans-serif;font-size:1.8rem;color:#FF2D55;margin-bottom:8px">
+    NO HAY RONDA ACTIVA
+  </div>
+  <div style="font-size:.8rem;color:#8888AA">El siguiente torneo aún no ha comenzado.</div>
+</div>""", unsafe_allow_html=True)
+        c = st.columns([2,1,2])[1]
+        with c:
+            if st.button("⚔ CREAR NUEVA RONDA", type="primary"):
+                rid = pit_crear_ronda()
+                if rid:
+                    st.success(f"Ronda #{rid} creada. ¡Que comience el foso!")
+                    st.cache_data.clear()
+                    st.rerun()
+        return
+
+    ronda_id    = str(ronda["ronda_id"])
+    estado_ronda = ronda.get("estado","")
+    fecha_inicio = ronda.get("fecha_inicio","")
+    fecha_fin    = ronda.get("fecha_fin","")
+    hoy          = date.today()
+    try:
+        dia_actual = (hoy - date.fromisoformat(str(fecha_inicio))).days + 1
+    except Exception:
+        dia_actual = 1
+
+    players      = pit_load_players(ronda_id)
+    vivos        = [p for p in players if p.get("estado") == "vivo"]
+    eliminados   = [p for p in players if p.get("estado") == "eliminado"]
+    total        = len(players)
+    n_vivos      = len(vivos)
+    ronda_picks  = pit_load_picks_ronda(ronda_id)
+
+    # My player record
+    my_record = next((p for p in players if p.get("apodo","").lower() == apodo.lower()), None)
+    yo_vivo   = my_record and my_record.get("estado") == "vivo"
+    yo_elim   = my_record and my_record.get("estado") == "eliminado"
+
+    # ── Live counter
+    pct_vivos = n_vivos / total * 100 if total else 0
+    st.markdown(f"""
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
+  <div class="kpi-box" style="border-color:rgba(255,45,85,.3)">
+    <div class="kpi-val" style="color:#FF2D55">{total}</div>
+    <div class="kpi-lbl">Entraron</div>
+  </div>
+  <div class="kpi-box" style="border-color:rgba(0,255,136,.3)">
+    <div class="kpi-val" style="color:#00FF88">{n_vivos}</div>
+    <div class="kpi-lbl">Siguen Vivos</div>
+  </div>
+  <div class="kpi-box" style="border-color:rgba(255,184,0,.3)">
+    <div class="kpi-val" style="color:#FFB800">Día {dia_actual}</div>
+    <div class="kpi-lbl">{fecha_inicio} → {fecha_fin}</div>
+  </div>
+</div>
+<div style="background:rgba(255,255,255,.04);border-radius:99px;height:8px;overflow:hidden;margin-bottom:16px">
+  <div style="width:{100-pct_vivos:.1f}%;height:100%;
+       background:linear-gradient(90deg,#FF2D55,#FF6B00);border-radius:99px;
+       box-shadow:0 0 12px rgba(255,45,85,.5)"></div>
+</div>
+<div style="font-family:'JetBrains Mono',monospace;font-size:.55rem;color:#8888AA;
+     text-align:center;margin-bottom:16px">
+  {total-n_vivos} ELIMINADOS · {pct_vivos:.0f}% AÚN RESPIRAN
+</div>
+""", unsafe_allow_html=True)
+
+    # ── Inscripcion / Join
+    if estado_ronda == "inscripcion" and not my_record:
+        st.markdown("""
+<div style="background:linear-gradient(135deg,rgba(255,45,85,.1),rgba(255,107,0,.06));
+     border:1px solid rgba(255,45,85,.35);border-radius:14px;padding:20px;text-align:center;margin-bottom:16px">
+  <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:#FF2D55;letter-spacing:3px">
+    ¿TIENES LO QUE SE NECESITA?
+  </div>
+  <div style="font-size:.78rem;color:#8888AA;margin:8px 0 16px">
+    Un pick al día · Cuota mínima 1.50 · Sin repetir equipo · Muerte súbita
+  </div>
+</div>""", unsafe_allow_html=True)
+        c = st.columns([2,1,2])[1]
+        with c:
+            if st.button("⚔ ENTRAR AL FOSO", type="primary"):
+                pit_inscribir(ronda_id, apodo)
+                pit_load_players.clear()
+                pit_save_chat("King Rongo",
+                    f"⚔ Un nuevo gladiador entra al foso: **{apodo}**. El Pit tiene {n_vivos+1} víctimas potenciales.", True)
+                st.rerun()
+        return
+
+    # ── Already eliminated
+    if yo_elim:
+        asesino = my_record.get("pick_asesino","?")
+        st.markdown(f"""
+<div style="background:rgba(255,45,85,.08);border:1px solid rgba(255,45,85,.4);
+     border-radius:14px;padding:24px;text-align:center;margin-bottom:16px">
+  <div style="font-family:'Bebas Neue',sans-serif;font-size:3rem;color:#FF2D55;
+       letter-spacing:6px;animation:wastedFade 0s forwards;opacity:1">ELIMINADO</div>
+  <div style="font-size:.8rem;color:#8888AA;margin-top:8px">
+    Tu pick <strong style="color:#FF2D55">{asesino}</strong> te costó el torneo.
+  </div>
+  <div style="font-size:.7rem;color:#44445A;margin-top:6px">
+    Sobreviviste <strong style="color:#FFB800">{my_record.get('dias_vivo',0)}</strong> día(s) esta ronda.
+    La próxima ronda empieza el próximo lunes.
+  </div>
+</div>""", unsafe_allow_html=True)
+
+    # ── Pick del día (if alive)
+    if yo_vivo:
+        # Check if already picked today
+        today_pick = next(
+            (p for p in ronda_picks
+             if p.get("apodo","").lower() == apodo.lower()
+             and str(p.get("fecha","")) == str(hoy)),
+            None
+        )
+        # Equipos ya usados
+        mis_picks_ronda  = [p for p in ronda_picks if p.get("apodo","").lower() == apodo.lower()]
+        equipos_usados   = set()
+        for pp in mis_picks_ronda:
+            desc = pp.get("pick_desc","")
+            # extract team name (first word group before spaces/symbols)
+            equipos_usados.add(desc.lower().strip())
+
+        comodin_disp = str(my_record.get("comodin_disponible","1")) == "1"
+
+        st.markdown(f"""
+<div style="background:linear-gradient(135deg,rgba(0,255,136,.07),rgba(0,180,255,.04));
+     border:1px solid rgba(0,255,136,.3);border-radius:12px;padding:14px 18px;margin-bottom:14px">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <div>
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:.7rem;letter-spacing:3px;
+           color:#00FF88;margin-bottom:2px">🟢 SIGUES VIVO — DÍA {dia_actual}</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;color:#8888AA">
+        Días sobrevividos: {my_record.get('dias_vivo',0)} · ROI: {float(my_record.get('roi_acum',0)):.2f}%
+      </div>
+    </div>
+    <div style="text-align:right">
+      {"<span style='font-family:\"JetBrains Mono\",monospace;font-size:.6rem;color:#FFB800'>🛡 COMODÍN DISPONIBLE</span>" if comodin_disp else "<span style='font-family:\"JetBrains Mono\",monospace;font-size:.6rem;color:#44445A'>🛡 Comodín usado</span>"}
+    </div>
+  </div>
+</div>""", unsafe_allow_html=True)
+
+        if today_pick:
+            res = today_pick.get("resultado","pendiente")
+            res_c = {"ganado":"#00FF88","perdido":"#FF2D55","pendiente":"#FFB800"}.get(res,"#888")
+            st.markdown(f"""
+<div style="background:rgba(255,184,0,.06);border:1px solid rgba(255,184,0,.3);
+     border-radius:12px;padding:14px 18px;margin-bottom:14px">
+  <div style="font-family:'Bebas Neue',sans-serif;font-size:.65rem;letter-spacing:3px;
+       color:#FFB800;margin-bottom:6px">PICK DE HOY REGISTRADO</div>
+  <div style="font-family:'Rajdhani',sans-serif;font-size:1rem;font-weight:700;color:#EEEEF5">
+    {today_pick.get('partido','')}
+  </div>
+  <div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;color:#8888AA">
+    {today_pick.get('pick_desc','')} @ {today_pick.get('momio','')}x
+  </div>
+  <div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:700;
+       color:{res_c};margin-top:4px">{res.upper()}</div>
+</div>""", unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="sec-head">⚔ Elige tu pick de hoy</div>', unsafe_allow_html=True)
+            st.caption("Cuota mínima 1.50 · No puedes repetir equipo · Tienes hasta 5 min antes del partido")
+
+            # Reuse ESPN search from registrar tab
+            c1, c2 = st.columns(2)
+            with c1:
+                group_names = list(ESPN_LEAGUES_GROUPED.keys())
+                pit_group   = st.selectbox("Deporte", group_names, key="pit_sport_group")
+                ligas_pit   = list(ESPN_LEAGUES_GROUPED[pit_group].keys())
+                pit_liga    = st.selectbox("Liga", ligas_pit, key="pit_liga")
+            with c2:
+                pit_query = st.text_input("Buscar equipo", placeholder="ej: Barcelona, Lakers…", key="pit_query")
+
+            pit_sport, pit_league = ESPN_LEAGUES[pit_liga]
+
+            if st.button("🔍 BUSCAR EN EL FOSO", key="pit_search"):
+                with st.spinner("Consultando ESPN…"):
+                    pit_events = espn_search_events(pit_sport, pit_league, pit_query)
+                    st.session_state["pit_events"] = pit_events
+                    st.session_state["pit_selected"] = None
+
+            pit_events   = st.session_state.get("pit_events", [])
+            pit_selected = st.session_state.get("pit_selected", None)
+
+            if pit_events:
+                # Same 3-per-row grid
+                sz_p = 36; brad_p = "50%" if pit_sport == "tennis" else "8px"
+                def mk_p(url, flag, name):
+                    src = url or flag; ini = (name[:2]).upper()
+                    if src:
+                        return (f'<img src="{src}" style="width:{sz_p}px;height:{sz_p}px;'
+                                f'object-fit:contain;border-radius:{brad_p};'
+                                f'background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08)" '
+                                f'onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
+                                f'<div style="display:none;width:{sz_p}px;height:{sz_p}px;border-radius:{brad_p};'
+                                f'background:rgba(255,255,255,.07);display:flex;align-items:center;'
+                                f'justify-content:center;font-family:\'Bebas Neue\',sans-serif;'
+                                f'font-size:{sz_p//2}px;color:#8888AA">{ini}</div>')
+                    return (f'<div style="width:{sz_p}px;height:{sz_p}px;border-radius:{brad_p};'
+                            f'background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);'
+                            f'display:flex;align-items:center;justify-content:center;'
+                            f'font-family:\'Bebas Neue\',sans-serif;font-size:{sz_p//2}px;color:#8888AA">{ini}</div>')
+
+                for row_s in range(0, min(len(pit_events), 24), 3):
+                    row_evs = pit_events[row_s:row_s+3]
+                    cols    = st.columns(3)
+                    for col, ev in zip(cols, row_evs):
+                        with col:
+                            is_live = ev.get("is_live", False)
+                            is_sel  = pit_selected and pit_selected["id"] == ev["id"]
+                            border  = "rgba(255,45,85,.6)" if is_sel else ("rgba(255,61,0,.4)" if is_live else "rgba(255,255,255,.08)")
+                            bg      = "rgba(255,45,85,.06)" if is_sel else "rgba(255,255,255,.02)"
+                            status  = "● LIVE" if is_live else ev["date"]
+                            sc      = "#FF3D00" if is_live else "#00FFD1"
+                            st.markdown(
+                                f'<div style="background:{bg};border:1px solid {border};border-radius:12px;'
+                                f'padding:10px 6px;text-align:center">'
+                                f'<div style="display:flex;align-items:center;justify-content:center;gap:5px;margin-bottom:6px">'
+                                f'<div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex:1">'
+                                f'{mk_p(ev.get("away_logo",""),ev.get("away_flag",""),ev["away"])}'
+                                f'<div style="font-size:.6rem;font-weight:700;color:#EEEEF5;overflow:hidden;'
+                                f'text-overflow:ellipsis;white-space:nowrap;max-width:70px">{ev["away"]}</div></div>'
+                                f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.7rem;color:#44445A">VS</div>'
+                                f'<div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex:1">'
+                                f'{mk_p(ev.get("home_logo",""),ev.get("home_flag",""),ev["home"])}'
+                                f'<div style="font-size:.6rem;font-weight:700;color:#EEEEF5;overflow:hidden;'
+                                f'text-overflow:ellipsis;white-space:nowrap;max-width:70px">{ev["home"]}</div></div>'
+                                f'</div>'
+                                f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.5rem;color:{sc}">{status}</div>'
+                                f'</div>',
+                                unsafe_allow_html=True
+                            )
+                            lbl = "✔ SELECCIONADO" if is_sel else "Seleccionar"
+                            if st.button(lbl, key=f"pit_sel_{ev['id']}"):
+                                st.session_state["pit_selected"] = ev
+                                st.rerun()
+
+            # Pick form after selecting event
+            pit_selected = st.session_state.get("pit_selected", None)
+            if pit_selected:
+                st.markdown(
+                    f'<div style="background:rgba(255,45,85,.05);border:1px solid rgba(255,45,85,.3);'
+                    f'border-radius:10px;padding:10px 14px;margin:10px 0">'
+                    f'<div style="font-family:\'Rajdhani\',sans-serif;font-weight:700;color:#EEEEF5">'
+                    f'{pit_selected["away"]} vs {pit_selected["home"]}</div>'
+                    f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.52rem;color:#44445A">'
+                    f'{pit_liga} · {pit_selected["date"]}</div></div>',
+                    unsafe_allow_html=True
+                )
+                c1, c2 = st.columns(2)
+                with c1:
+                    pit_pick_desc = st.text_input(
+                        "Tu pick (ej: Barcelona ML, Over 2.5)",
+                        key="pit_pick_desc",
+                        placeholder="Sé específico — el árbitro es implacable"
+                    )
+                with c2:
+                    pit_momio = st.number_input(
+                        "Momio (mín. 1.50)", min_value=1.50, max_value=50.0,
+                        value=1.80, step=0.05, key="pit_momio"
+                    )
+
+                # Warn if team already used
+                if pit_pick_desc and pit_pick_desc.lower().strip() in equipos_usados:
+                    st.warning("⚠️ Ya usaste ese pick esta ronda. El foso no permite repetir.")
+
+                # Comodín activation
+                if comodin_disp:
+                    usar_como = st.checkbox(
+                        "🛡 Activar Comodín de Badrino (te salva si el partido termina 0-0)",
+                        key="pit_comodin"
+                    )
+                else:
+                    usar_como = False
+
+                if st.button("⚔ DISPARAR PICK AL FOSO", type="primary", key="pit_save"):
+                    if not pit_pick_desc:
+                        st.error("Escribe tu pick.")
+                    elif pit_momio < 1.50:
+                        st.error("La cuota mínima es 1.50. Sin cobardía en el foso.")
+                    elif pit_pick_desc.lower().strip() in equipos_usados:
+                        st.error("Ya usaste ese pick esta ronda.")
+                    else:
+                        pit_save_pick(
+                            ronda_id, apodo,
+                            f"{pit_selected['away']} vs {pit_selected['home']}",
+                            pit_liga, pit_selected["id"],
+                            pit_pick_desc, pit_momio, dia_actual
+                        )
+                        if usar_como:
+                            pit_usar_comodin(ronda_id, apodo)
+                        pit_load_picks_ronda.clear()
+                        pit_save_chat("King Rongo",
+                            f"🩸 **{apodo}** acaba de apostar `{pit_pick_desc}` @ {pit_momio}x en el Día {dia_actual}. "
+                            f"El foso observa. Quedan {n_vivos} vivos.", True)
+                        st.session_state.pop("pit_events", None)
+                        st.session_state.pop("pit_selected", None)
+                        st.success("✅ Pick registrado. El foso decidirá tu destino.")
+                        st.rerun()
+
+    # ── Pick del Rey
+    with st.expander("👑 PICK DEL REY — Consejo de King Rongo"):
+        st.markdown(pit_pick_del_rey(ronda_picks))
+
+    # ── Leaderboard THE PIT
+    st.markdown('<div class="sec-head">⚔ Muro de los Vivos y los Caídos</div>', unsafe_allow_html=True)
+
+    vivos_sorted = sorted(vivos, key=lambda p: (-int(p.get("dias_vivo",0)), -float(p.get("roi_acum",0))))
+    elim_sorted  = sorted(eliminados, key=lambda p: -int(p.get("dias_vivo",0)))
+
+    medals = ["🥇","🥈","🥉"]
+
+    # Vivos
+    for i, p in enumerate(vivos_sorted):
+        es_yo   = p.get("apodo","").lower() == apodo.lower()
+        medal   = medals[i] if i < 3 else f"#{i+1}"
+        dias    = int(p.get("dias_vivo",0))
+        roi     = float(p.get("roi_acum",0))
+        como    = "🛡" if str(p.get("comodin_disponible","1")) == "1" else ""
+        st.markdown(
+            f'<div class="lb-row {"me" if es_yo else ""}" '
+            f'style="border-color:{"rgba(0,255,136,.4)" if es_yo else "rgba(0,255,136,.15)"};">'
+            f'<div style="font-size:1rem;width:28px;text-align:center">{medal}</div>'
+            f'<div class="lb-avatar" style="background:linear-gradient(135deg,#00FF88,#00B4FF)">'
+            f'{p["apodo"][0].upper()}</div>'
+            f'<div style="flex:1">'
+            f'<div style="font-size:.85rem;font-weight:700;color:{"#00FF88" if es_yo else "#EEEEF5"}">'
+            f'🟢 {p["apodo"].upper()} {"← TÚ" if es_yo else ""} {como}</div>'
+            f'<div style="font-size:.6rem;color:#8888AA">Día {dias} · ROI {roi:+.1f}%</div>'
+            f'</div>'
+            f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:1rem;color:#00FF88">VIVO</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+    # Eliminados
+    for p in elim_sorted[:10]:
+        es_yo  = p.get("apodo","").lower() == apodo.lower()
+        dias   = int(p.get("dias_vivo",0))
+        asesino = p.get("pick_asesino","?")
+        st.markdown(
+            f'<div class="lb-row" style="opacity:.55;border-color:rgba(255,45,85,.15)">'
+            f'<div style="font-size:1rem;width:28px;text-align:center">💀</div>'
+            f'<div class="lb-avatar" style="background:rgba(255,255,255,.06);color:#44445A">'
+            f'{p["apodo"][0].upper()}</div>'
+            f'<div style="flex:1">'
+            f'<div style="font-size:.82rem;font-weight:700;color:#44445A">'
+            f'{p["apodo"].upper()} {"← TÚ" if es_yo else ""}</div>'
+            f'<div style="font-size:.6rem;color:#44445A">Murió en Día {dias} · Asesinado por: <span style="color:#FF2D55">{asesino}</span></div>'
+            f'</div>'
+            f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.85rem;color:#FF2D55">CAÍDO</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+    # ── Taunt Box
+    st.markdown('<div class="sec-head">🔥 Taunt Box — King Rongo habla</div>', unsafe_allow_html=True)
+
+    chat_msgs = pit_load_chat(25)
+    chat_html = ""
+    for msg in reversed(chat_msgs[-15:]):
+        is_bot = str(msg.get("es_bot","0")) == "1"
+        color  = "#FFB800" if is_bot else "#EEEEF5"
+        name   = "👑 KING RONGO" if is_bot else msg.get("apodo","?").upper()
+        name_c = "#FFB800" if is_bot else "#BF5FFF"
+        ts     = str(msg.get("ts",""))[-8:-3]
+        chat_html += (
+            f'<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04)">'
+            f'<div style="display:flex;justify-content:space-between;margin-bottom:2px">'
+            f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:.55rem;'
+            f'color:{name_c};font-weight:700">{name}</span>'
+            f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:.5rem;color:#44445A">{ts}</span>'
+            f'</div>'
+            f'<div style="font-size:.78rem;color:{color}">{msg.get("mensaje","")}</div>'
+            f'</div>'
+        )
+    st.markdown(
+        f'<div style="background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.07);'
+        f'border-radius:12px;padding:12px 16px;max-height:260px;overflow-y:auto">'
+        f'{chat_html or "<div style=\'color:#44445A;font-size:.75rem;text-align:center;padding:20px\'>El foso está en silencio... por ahora.</div>"}'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+    # Send message
+    c1, c2 = st.columns([5, 1])
+    with c1:
+        nuevo_msg = st.text_input("", placeholder="Habla o calla para siempre…",
+                                   label_visibility="collapsed", key="pit_chat_input")
+    with c2:
+        if st.button("📢", key="pit_send_chat"):
+            if nuevo_msg.strip():
+                pit_save_chat(apodo, nuevo_msg.strip())
+                st.rerun()
+
+
 # ─────────────────────────────────────────────────────────────
 #  MAIN
 # ─────────────────────────────────────────────────────────────
@@ -1911,13 +2586,14 @@ def main():
 
     # Tabs
     t1, t2, t3, t4, t5 = st.tabs([
-        "📝  REGISTRAR", "📋  HISTORIAL", "📊  ANALYTICS", "⚔️  LEADERBOARD", "🔮  SIMULADOR"
+        "📝  REGISTRAR", "📋  HISTORIAL", "📊  ANALYTICS",
+        "⚔️  LEADERBOARD", "🩸  THE PIT"
     ])
     with t1: tab_registrar(apodo, df, bank)
     with t2: tab_historial(df)
     with t3: tab_analytics(df, bank)
     with t4: tab_challenge(apodo, df, bank)
-    with t5: tab_simulador(df, bank)
+    with t5: tab_the_pit(apodo, bank)
 
 
 if __name__ == "__main__":
