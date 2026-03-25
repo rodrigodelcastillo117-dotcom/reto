@@ -530,6 +530,202 @@ div[data-testid="stRadio"] [data-testid="stWidgetLabel"] {
 # ─────────────────────────────────────────────────────────────
 ESPN_BASE = "https://site.api.espn.com/apis/site/v2/sports"
 
+# ─────────────────────────────────────────────────────────────
+#  THE ODDS API
+# ─────────────────────────────────────────────────────────────
+ODDS_BASE = "https://api.the-odds-api.com/v4"
+
+def _get_odds_key() -> str:
+    try:
+        return st.secrets.get("ODDS_API_KEY", "2d5024df981ff5f4a44eccc2ff61affd")
+    except Exception:
+        return "2d5024df981ff5f4a44eccc2ff61affd"
+
+# Sport keys for The Odds API
+ODDS_SPORT_MAP = {
+    # Soccer international
+    "fifa.worldq":         "soccer_fifa_world_cup_qualifier_europe",
+    "fifa.worldq.6":       "soccer_fifa_world_cup_qualifier_europe",
+    "fifa.worldq.europe":  "soccer_fifa_world_cup_qualifier_europe",
+    "uefa.qualifiers":     "soccer_fifa_world_cup_qualifier_europe",
+    "fifa.worldq.2":       "soccer_conmebol_copa_america",
+    "fifa.worldq.5":       "soccer_concacaf_gold_cup",
+    "__team_search__":     "soccer_fifa_world_cup_qualifier_europe",
+    # Club soccer
+    "eng.1":               "soccer_epl",
+    "esp.1":               "soccer_spain_la_liga",
+    "ita.1":               "soccer_italy_serie_a",
+    "ger.1":               "soccer_germany_bundesliga",
+    "fra.1":               "soccer_france_ligue_one",
+    "mex.1":               "soccer_mexico_ligamx",
+    "usa.1":               "soccer_usa_mls",
+    "uefa.champions":      "soccer_uefa_champs_league",
+    "conmebol.libertadores":"soccer_conmebol_libertadores",
+    "uefa.nations":        "soccer_uefa_nations_league",
+    "fifa.friendly":       "soccer_international_friendlies",
+    # Other sports
+    "nba":                 "basketball_nba",
+    "nfl":                 "americanfootball_nfl",
+    "mlb":                 "baseball_mlb",
+    "nhl":                 "icehockey_nhl",
+    "atp":                 "tennis_atp_french_open",
+    "wta":                 "tennis_wta_french_open",
+}
+
+@st.cache_data(ttl=21600, show_spinner=False)  # 6 hours — minimize API calls
+def odds_fetch_sport(sport_key: str) -> list:
+    """
+    Fetch ALL upcoming events + h2h odds for a sport in ONE single API call.
+    Cached 6 hours — this is the only place we hit The Odds API for events.
+    Returns list of events with odds already embedded.
+    """
+    key = _get_odds_key()
+    try:
+        r = requests.get(
+            f"{ODDS_BASE}/sports/{sport_key}/odds",
+            params={
+                "apiKey":     key,
+                "regions":    "eu",
+                "markets":    "h2h",
+                "oddsFormat": "decimal",
+                "dateFormat": "iso",
+            },
+            timeout=10
+        )
+        if r.status_code != 200:
+            return []
+
+        results = []
+        for ev in r.json():
+            home = ev.get("home_team","")
+            away = ev.get("away_team","")
+            eid  = ev.get("id","")
+            date_raw = ev.get("commence_time","")
+
+            # Skip past events
+            try:
+                ev_dt = datetime.fromisoformat(date_raw.replace("Z","+00:00"))
+                if ev_dt.replace(tzinfo=None) < datetime.utcnow() - timedelta(hours=2):
+                    continue
+                dt_mx = ev_dt - timedelta(hours=6)
+                d_str = dt_mx.strftime("%d %b %H:%M")
+            except Exception:
+                d_str = date_raw[:10]
+
+            # Extract odds from first bookmaker
+            home_odds = draw_odds = away_odds = 0.0
+            for bk in ev.get("bookmakers",[]):
+                for mkt in bk.get("markets",[]):
+                    if mkt.get("key") == "h2h":
+                        for oc in mkt.get("outcomes",[]):
+                            if oc["name"] == home:   home_odds = float(oc["price"])
+                            elif oc["name"] == away: away_odds = float(oc["price"])
+                            elif oc["name"] == "Draw": draw_odds = float(oc["price"])
+                        break
+                if home_odds: break
+
+            results.append({
+                "id":           f"odds_{eid}",
+                "name":         f"{away} @ {home}",
+                "short":        f"{away} @ {home}",
+                "home":         home, "away": away,
+                "home_logo":    "", "away_logo": "",
+                "home_flag":    _get_flag_url(home),
+                "away_flag":    _get_flag_url(away),
+                "home_score":   "", "away_score": "",
+                "date":         d_str, "date_raw": date_raw,
+                "status":       "STATUS_SCHEDULED", "status_state": "pre",
+                "status_detail":"", "completed": False, "is_live": False,
+                "sport":        "soccer", "odds_sport": sport_key,
+                # Odds embedded — no extra call needed
+                "home_odds":    round(home_odds, 2),
+                "away_odds":    round(away_odds, 2),
+                "draw_odds":    round(draw_odds, 2),
+            })
+
+        results.sort(key=lambda e: e["date_raw"])
+        return results
+
+    except Exception:
+        return []
+
+
+def odds_search_events(league_slug: str, query: str = "") -> list:
+    """
+    Search events using cached sport data — NO extra API call per search.
+    Filters locally from the cached odds_fetch_sport result.
+    """
+    sport_key = ODDS_SPORT_MAP.get(league_slug, "")
+    q_low     = query.strip().lower()
+
+    # Sports to search — single key or fallback list for international
+    if sport_key:
+        sports = [sport_key]
+    else:
+        sports = [
+            "soccer_fifa_world_cup_qualifier_europe",
+            "soccer_international_friendlies",
+            "soccer_uefa_nations_league",
+        ]
+
+    all_events = []
+    for sk in sports:
+        cached = odds_fetch_sport(sk)
+        all_events.extend(cached)
+        if cached:
+            break  # found results, stop searching
+
+    # Filter by query locally — no API call
+    if q_low:
+        all_events = [
+            e for e in all_events
+            if q_low in (e["home"] + " " + e["away"]).lower()
+            or any(w in (e["home"] + " " + e["away"]).lower()
+                   for w in q_low.split() if len(w) > 2)
+        ]
+
+    return all_events
+
+
+def odds_get_markets(event_id: str, odds_sport: str) -> dict:
+    """
+    Get odds from already-cached event data — zero extra API calls.
+    Just looks up the event in the cached list.
+    """
+    cached = odds_fetch_sport(odds_sport)
+    for ev in cached:
+        if ev.get("id") == event_id:
+            return {
+                "home_odds": ev.get("home_odds", 0),
+                "away_odds": ev.get("away_odds", 0),
+                "draw_odds": ev.get("draw_odds", 0),
+            }
+    return {}
+
+
+
+def _get_flag_url(country_name: str) -> str:
+    """Map country name to flag emoji URL via flagcdn."""
+    code_map = {
+        "turkey":"tr","turkiye":"tr","romania":"ro","italy":"it","northern ireland":"gb-nir",
+        "ukraine":"ua","sweden":"se","poland":"pl","albania":"al","czechia":"cz",
+        "czech republic":"cz","ireland":"ie","republic of ireland":"ie","denmark":"dk",
+        "north macedonia":"mk","wales":"gb-wls","bosnia":"ba","bosnia and herzegovina":"ba",
+        "slovakia":"sk","kosovo":"xk","finland":"fi","england":"gb-eng","france":"fr",
+        "germany":"de","spain":"es","portugal":"pt","netherlands":"nl","belgium":"be",
+        "croatia":"hr","switzerland":"ch","austria":"at","scotland":"gb-sct","serbia":"rs",
+        "greece":"gr","bulgaria":"bg","hungary":"hu","norway":"no","mexico":"mx",
+        "usa":"us","united states":"us","brazil":"br","argentina":"ar","colombia":"co",
+        "japan":"jp","south korea":"kr","australia":"au","morocco":"ma","senegal":"sn",
+    }
+    key = country_name.lower().strip()
+    code = code_map.get(key, "")
+    if code:
+        return f"https://flagcdn.com/w80/{code}.png"
+    return ""
+
+
+
 def _extract_competitor_info(comp: dict, sport: str) -> dict:
     """Extract name, logo, flag, score from a competitor dict."""
     team    = comp.get("team", {})
@@ -1420,13 +1616,16 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
     events = []
 
     if st.button("🔍 BUSCAR PARTIDOS", key="btn_search"):
-        with st.spinner("Consultando ESPN…"):
-            if league == "__team_search__":
-                if query.strip():
-                    events = espn_search_by_team(sport, query)
-                else:
-                    st.warning("Escribe el nombre del equipo para buscar.")
-                    events = []
+        with st.spinner("Consultando…"):
+            # Use Odds API for international soccer (more complete coverage)
+            use_odds = (sport == "soccer" and league in ODDS_SPORT_MAP) or league == "__team_search__"
+            if use_odds:
+                events = odds_search_events(league, query)
+                # Fallback to ESPN if Odds API returned nothing
+                if not events and league != "__team_search__":
+                    events = espn_search_events(sport, league, query)
+            elif league == "__team_search__":
+                events = espn_search_by_team(sport, query) if query.strip() else []
             else:
                 events = espn_search_events(sport, league, query)
             st.session_state["search_events"] = events
@@ -1605,9 +1804,25 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
 
             pick_desc = pick_type + pick_extra
 
+            # Pre-fill momio from cached Odds API event data (no extra API call)
+            default_momio = 1.85
+            if selected.get("id","").startswith("odds_"):
+                try:
+                    if "Home" in pick_type or home in pick_type:
+                        default_momio = float(selected.get("home_odds") or 1.85)
+                    elif "Away" in pick_type or away in pick_type:
+                        default_momio = float(selected.get("away_odds") or 1.85)
+                    elif "Empate" in pick_type or "Draw" in pick_type:
+                        default_momio = float(selected.get("draw_odds") or 1.85)
+                    default_momio = max(1.01, round(default_momio, 2))
+                    if default_momio > 1.01:
+                        st.caption(f"💰 Momio The Odds API: {default_momio}x")
+                except Exception:
+                    default_momio = 1.85
+
             c1, c2 = st.columns(2)
             with c1:
-                momio = st.number_input("Momio (decimal)", min_value=1.01, max_value=99.0, value=1.85, step=0.01, key="pick_momio")
+                momio = st.number_input("Momio (decimal)", min_value=1.01, max_value=99.0, value=default_momio, step=0.01, key="pick_momio")
             with c2:
                 apuesta = st.number_input(
                     "¿Cuánto apostaste? ($MXN)",
