@@ -924,6 +924,10 @@ def _extract_competitor_info(comp: dict, sport: str) -> dict:
     team    = comp.get("team", {})
     athlete = comp.get("athlete", {})
 
+    # ESPN tennis: competitor has displayName directly OR athlete.displayName
+    # Also check top-level displayName on the competitor
+    comp_display = comp.get("displayName","")
+
     # Tennis always uses athlete — also use athlete if team has no displayName
     use_athlete = (sport == "tennis") or (not team.get("displayName") and not team.get("name"))
 
@@ -935,22 +939,31 @@ def _extract_competitor_info(comp: dict, sport: str) -> dict:
         if not logo:
             logo = team.get("flag", {}).get("href", "")
     elif athlete:
-        name  = athlete.get("displayName", athlete.get("fullName", ""))
+        name  = (athlete.get("displayName","") or
+                 athlete.get("fullName","") or
+                 athlete.get("shortName",""))
         logo  = athlete.get("headshot", {}).get("href", "")
         if not logo:
             aid  = athlete.get("id", "")
             logo = (f"https://a.espncdn.com/combiner/i?img=/i/headshots/tennis/players/full/{aid}.png&w=96&h=70&cb=1"
                     if aid else "")
-        flag  = athlete.get("flag", {}).get("href", "")
+        flag  = (athlete.get("flag", {}).get("href", "") or
+                 athlete.get("country", {}).get("flag", {}).get("href", ""))
     else:
         name = ""; logo = ""; flag = ""
 
-    # Final fallback — use event name parsing
-    if not name:
-        name = comp.get("displayName", "")
+    # Final fallback — use top-level displayName on competitor
+    if not name and comp_display and comp_display.upper() not in ["TBD",""]:
+        name = comp_display
+
+    # Try links for headshot if no logo yet (tennis ESPN format)
+    if not logo and sport == "tennis":
+        for link in comp.get("links", []):
+            if "headshot" in link.get("rel", []) or "headshot" in link.get("href",""):
+                logo = link.get("href",""); break
 
     score = comp.get("score", "")
-    return {"name": name or "?", "logo": logo, "flag": flag, "score": score}
+    return {"name": name or "TBD", "logo": logo, "flag": flag, "score": score}
 
 
 @st.cache_data(ttl=120, show_spinner=False)
@@ -1816,15 +1829,14 @@ def load_all_today() -> dict:
             url = f"{ESPN_BASE}/{sport}/{league_slug}/scoreboard"
             events_found = []
 
-            # For tennis, use bare scoreboard (no date) — ESPN returns active tournament matches
-            # Then also check tomorrow for scheduled matches
+            # For tennis: search bare scoreboard + today + tomorrow to get all active matches
             date_params = [None, today, tomorrow] if sport == "tennis" else [today, tomorrow]
 
             for dt_str in date_params:
-                params = {"limit": 200} if sport == "tennis" else {"dates": dt_str, "limit": 100}
-                if dt_str and sport != "tennis":
+                params = {"limit": 200}
+                if dt_str:
                     params["dates"] = dt_str
-                r = requests.get(url, params=params, timeout=6)
+                r = requests.get(url, params=params, timeout=8)
                 if r.status_code != 200:
                     continue
                 for ev in r.json().get("events", []):
@@ -1850,7 +1862,8 @@ def load_all_today() -> dict:
                     except Exception:
                         d_str = date_raw[:10]
                     is_live = (state == "in") and not completed
-                    if home_i["name"] == "?" and away_i["name"] == "?":
+                    # Skip if both names unknown/TBD
+                    if home_i["name"] in ("?","TBD","") and away_i["name"] in ("?","TBD",""):
                         continue
                     # For tennis, extract tournament name from event name
                     display_liga = liga_name
@@ -3087,8 +3100,8 @@ def pit_get_daily_games(seed_date: str) -> list:
                     away_c = next((c for c in comps if c.get("homeAway")=="away"), comps[1] if len(comps)>1 else {})
                     home_i = _extract_competitor_info(home_c, sport)
                     away_i = _extract_competitor_info(away_c, sport)
-                    # Skip if both names are unknown
-                    if home_i["name"] == "?" and away_i["name"] == "?":
+                    # Skip if both names unknown/TBD
+                    if home_i["name"] in ("?","TBD","") and away_i["name"] in ("?","TBD",""):
                         continue
                     date_raw = ev.get("date","")
                     try:
