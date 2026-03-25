@@ -709,6 +709,31 @@ def espn_search_events(sport: str, league: str, query: str) -> list:
             except Exception:
                 continue
 
+    # ── Last resort: ESPN generic events endpoint with date range ──
+    # Catches events not in standard scoreboard slugs (e.g. UEFA WC2026 playoffs)
+    if not results and query.strip() and sport == "soccer":
+        try:
+            tomorrow  = (date.today() + timedelta(days=1)).strftime("%Y%m%d")
+            two_weeks = (date.today() + timedelta(days=14)).strftime("%Y%m%d")
+            for generic_slug in ["fifa.worldq", "fifa.worldq.6", "fifa.worldq.europe",
+                                  "uefa.qualifiers", "fifa.worldq.2", "fifa.worldq.5"]:
+                r_g = requests.get(
+                    f"{ESPN_BASE}/soccer/{generic_slug}/scoreboard",
+                    params={"dates": f"{tomorrow}-{two_weeks}", "limit": 100},
+                    timeout=8
+                )
+                if r_g.status_code == 200:
+                    for ev in r_g.json().get("events", []):
+                        eid = ev.get("id","")
+                        if eid in seen_ids: continue
+                        parsed = parse_event(ev)
+                        if parsed:
+                            results.append(parsed)
+                            seen_ids.add(eid)
+                if results:
+                    break
+        except Exception:
+            pass
 
     def sort_key(ev):
         if ev["is_live"]:       return "0_" + ev["date_raw"]
