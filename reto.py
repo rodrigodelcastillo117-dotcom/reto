@@ -2267,7 +2267,171 @@ def pit_get_daily_games(seed_date: str) -> list:
 
 
 
-def tab_the_pit(apodo: str, bank: float):
+def pit_auto_grade(apodo: str, ronda_id: str, my_record: dict) -> tuple[int, int]:
+    """
+    Check pending PIT picks against ESPN results.
+    Returns (ganados, perdidos) count for this run.
+    Updates pit_picks rows and pit_jugadores state.
+    """
+    ss = get_ss()
+    if not ss: return 0, 0
+
+    try:
+        ws_picks   = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
+        all_picks  = _safe_get_records(ws_picks)
+        my_pending = [
+            (i, r) for i, r in enumerate(all_picks)
+            if str(r.get("ronda_id","")) == str(ronda_id)
+            and r.get("apodo","").lower() == apodo.lower()
+            and r.get("resultado","pendiente") == "pendiente"
+            and r.get("event_id","").strip()
+        ]
+        if not my_pending:
+            return 0, 0
+
+        ganados = 0; perdidos = 0
+
+        for row_idx, pick_row in my_pending:
+            event_id = str(pick_row.get("event_id","")).strip()
+            pick_desc = str(pick_row.get("pick_desc","")).strip().lower()
+            liga_name = str(pick_row.get("liga",""))
+
+            # Find sport for this league name
+            sport = "soccer"
+            league_slug = ""
+            for grp in ESPN_LEAGUES_GROUPED.values():
+                for liga, (sp, sl) in grp.items():
+                    if liga.upper() == liga_name.upper() or sl.upper().replace("."," ") == liga_name.upper():
+                        sport = sp; league_slug = sl; break
+
+            # Try to get event result from ESPN
+            event_data = {}
+            if league_slug:
+                event_data = espn_get_event(sport, league_slug, event_id)
+            # Fallback: try common slugs
+            if not event_data:
+                for sp2, sl2 in [("soccer","eng.1"),("soccer","esp.1"),("basketball","nba"),
+                                  ("football","nfl"),("baseball","mlb"),("hockey","nhl"),
+                                  ("tennis","atp"),("tennis","wta")]:
+                    event_data = espn_get_event(sp2, sl2, event_id)
+                    if event_data:
+                        sport = sp2; break
+
+            if not event_data:
+                continue
+
+            # Check if completed
+            header = event_data.get("header",{})
+            comps  = header.get("competitions",[{}])
+            status = comps[0].get("status",{}).get("type",{}) if comps else {}
+            if not status.get("completed", False):
+                continue
+
+            # Get scores
+            competitors = comps[0].get("competitors",[]) if comps else []
+            home_c = next((c for c in competitors if c.get("homeAway")=="home"), None)
+            away_c = next((c for c in competitors if c.get("homeAway")=="away"), None)
+            if not home_c or not away_c:
+                continue
+
+            try:
+                home_score = float(home_c.get("score",0) or 0)
+                away_score = float(away_c.get("score",0) or 0)
+            except Exception:
+                continue
+
+            home_name = (home_c.get("team",{}).get("displayName","") or
+                         home_c.get("athlete",{}).get("displayName","")).lower()
+            away_name = (away_c.get("team",{}).get("displayName","") or
+                         away_c.get("athlete",{}).get("displayName","")).lower()
+
+            # Determine winner
+            if home_score > away_score:
+                winner = "home"
+            elif away_score > home_score:
+                winner = "away"
+            else:
+                winner = "draw"
+
+            # Match pick to result
+            resultado = None
+            if "empate" in pick_desc or "draw" in pick_desc or pick_desc == "empate":
+                resultado = "ganado" if winner == "draw" else "perdido"
+            else:
+                # Check if pick matches home or away team name
+                pick_is_home = any(w in pick_desc for w in home_name.split() if len(w)>2)
+                pick_is_away = any(w in pick_desc for w in away_name.split() if len(w)>2)
+                if not pick_is_home and not pick_is_away:
+                    # Try partial match
+                    pick_is_home = home_name[:4] in pick_desc
+                    pick_is_away = away_name[:4] in pick_desc
+
+                if pick_is_home:
+                    resultado = "ganado" if winner == "home" else "perdido"
+                elif pick_is_away:
+                    resultado = "ganado" if winner == "away" else "perdido"
+
+            if resultado is None:
+                continue
+
+            # Update pit_picks row
+            try:
+                ws_picks.update_cell(row_idx + 2, 10, resultado)  # col 10 = resultado
+            except Exception:
+                pass
+
+            if resultado == "ganado":
+                ganados += 1
+            else:
+                perdidos += 1
+
+        # Update player state if any picks resolved
+        if ganados > 0 or perdidos > 0:
+            dias_vivo = int(my_record.get("dias_vivo", 0))
+            roi_acum  = float(my_record.get("roi_acum", 0))
+
+            if perdidos > 0:
+                # Eliminated — check comodin
+                comodin = str(my_record.get("comodin_disponible","0")) == "1"
+                if comodin:
+                    # Comodin saves only on 0-0 draw scenarios — here mark comodin used
+                    pit_usar_comodin(ronda_id, apodo)
+                    pit_save_chat("King Rongo",
+                        f"🛡 **{apodo}** activó su Comodín de Badrino y sobrevivió la eliminación. ¡Suerte no dura forever.", True)
+                else:
+                    pit_update_player(
+                        ronda_id, apodo, "eliminado",
+                        dias_vivo, roi_acum,
+                        str(ronda_picks[-1].get("pick_desc","?") if ronda_picks else "?"),
+                        my_record.get("equipos_usados","")
+                    )
+                    pit_load_players.clear()
+                    for _k in ["pit_players","pit_picks"]:
+                        st.session_state.pop(_k, None)
+                    pit_save_chat("King Rongo",
+                        f"💀 **{apodo.upper()}** ha sido ELIMINADO del foso. El Pick los traicionó. "
+                        f"Quedan {n_vivos-1} gladiadores.", True)
+            else:
+                # Survived — update days
+                pit_update_player(
+                    ronda_id, apodo, "vivo",
+                    dias_vivo + 1, roi_acum,
+                    "", my_record.get("equipos_usados","")
+                )
+                pit_load_players.clear()
+                for _k in ["pit_players","pit_picks"]:
+                    st.session_state.pop(_k, None)
+                pit_save_chat("King Rongo",
+                    f"✅ **{apodo}** sobrevivió el Día {dias_vivo+1}. Sigue en pie. "
+                    f"{n_vivos} gladiadores aún respiran.", True)
+
+        return ganados, perdidos
+
+    except Exception:
+        return 0, 0
+
+
+
 
     # ── Header
     st.markdown("""
@@ -2297,7 +2461,7 @@ def tab_the_pit(apodo: str, bank: float):
     col_ref = st.columns([8,1])[1]
     with col_ref:
         if st.button("🔄", key="pit_refresh", help="Actualizar datos del Pit"):
-            for k in ["pit_ronda","pit_players","pit_picks","pit_chat_msgs"]:
+            for k in ["pit_ronda","pit_players","pit_picks","pit_chat_msgs","pit_graded"]:
                 st.session_state.pop(k, None)
             pit_load_ronda_activa.clear()
             pit_load_players.clear()
@@ -2359,7 +2523,41 @@ def tab_the_pit(apodo: str, bank: float):
     yo_vivo   = my_record and my_record.get("estado") == "vivo"
     yo_elim   = my_record and my_record.get("estado") == "eliminado"
 
-    # ── Live counter
+    # ── Auto-grade pending PIT picks (once per session load)
+    if yo_vivo and my_record and "pit_graded" not in st.session_state:
+        with st.spinner("⚔ Verificando resultados del foso…"):
+            try:
+                g, p = pit_auto_grade(apodo, ronda_id, my_record)
+                st.session_state["pit_graded"] = True
+                if g > 0:
+                    st.markdown(
+                        f'<div class="autobanner" style="background:rgba(0,255,136,.07);border-color:rgba(0,255,136,.3)">'
+                        f'⚔ THE PIT: <strong>{g} pick(s) ganados</strong> — ¡Sobreviviste otro día!</div>',
+                        unsafe_allow_html=True
+                    )
+                elif p > 0:
+                    st.markdown(
+                        f'<div class="tilt-alert">💀 THE PIT: <strong>{p} pick(s) perdidos</strong> — '
+                        f'Revisa tu estado en el leaderboard.</div>',
+                        unsafe_allow_html=True
+                    )
+                # Reload players after grading
+                if g > 0 or p > 0:
+                    st.session_state.pop("pit_players", None)
+                    st.session_state.pop("pit_picks", None)
+                    players     = pit_load_players(ronda_id)
+                    ronda_picks = pit_load_picks_ronda(ronda_id)
+                    st.session_state["pit_players"] = players
+                    st.session_state["pit_picks"]   = ronda_picks
+                    vivos      = [p for p in players if p.get("estado") == "vivo"]
+                    eliminados = [p for p in players if p.get("estado") == "eliminado"]
+                    total      = len(players)
+                    n_vivos    = len(vivos)
+                    my_record  = next((p for p in players if p.get("apodo","").lower() == apodo.lower()), None)
+                    yo_vivo    = my_record and my_record.get("estado") == "vivo"
+                    yo_elim    = my_record and my_record.get("estado") == "eliminado"
+            except Exception:
+                st.session_state["pit_graded"] = True
     pct_vivos = n_vivos / total * 100 if total else 0
     st.markdown(f"""
 <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
@@ -2500,7 +2698,7 @@ def tab_the_pit(apodo: str, bank: float):
                     pit_get_daily_games.clear()
                     st.rerun()
             else:
-                for ev in daily_games:
+                for ev_idx, ev in enumerate(daily_games):
                     sport_ev      = ev.get("sport","soccer")
                     is_tennis_pit = (sport_ev == "tennis")
                     is_live       = ev.get("is_live", False)
@@ -2538,7 +2736,7 @@ def tab_the_pit(apodo: str, bank: float):
                     # Momio input
                     pit_momio_val = st.number_input(
                         "Momio (mín 1.50)", min_value=1.50, max_value=50.0,
-                        value=1.85, step=0.05, key=f"pit_momio_{ev['id']}"
+                        value=1.85, step=0.05, key=f"pit_momio_{ev_idx}_{str(ev.get('id',''))[:6]}"
                     )
 
                     # Pick buttons
@@ -2557,7 +2755,7 @@ def tab_the_pit(apodo: str, bank: float):
                             used = pick_val.lower().strip() in equipos_usados
                             if st.button(
                                 f"{'🚫 ' if used else '⚔ '}{lbl}",
-                                key=f"pit_pick_{ev['id']}_{lbl}",
+                                key=f"pp_{ev_idx}_{str(ev.get('id',''))[:6]}_{lbl[:3]}",
                                 disabled=used,
                                 use_container_width=True
                             ):
