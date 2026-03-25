@@ -1224,6 +1224,32 @@ def render_header(apodo: str, bank: float):
 
 
 # ─────────────────────────────────────────────────────────────
+#  SHARED UI HELPERS
+# ─────────────────────────────────────────────────────────────
+def mk_logo(url: str, flag: str, name: str, sz: int = 40, brad: str = "8px") -> str:
+    """Return HTML img tag with initials fallback for team/player logos."""
+    src      = url or flag
+    initials = (name[:2] if len(name) >= 2 else name).upper()
+    if src:
+        return (
+            f'<img src="{src}" style="width:{sz}px;height:{sz}px;object-fit:contain;'
+            f'border-radius:{brad};background:rgba(255,255,255,.04);'
+            f'border:1px solid rgba(255,255,255,.08)" '
+            f'onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
+            f'<div style="display:none;width:{sz}px;height:{sz}px;border-radius:{brad};'
+            f'background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);'
+            f'align-items:center;justify-content:center;font-family:\'Bebas Neue\',sans-serif;'
+            f'font-size:{sz//2}px;color:#8888AA">{initials}</div>'
+        )
+    return (
+        f'<div style="width:{sz}px;height:{sz}px;border-radius:{brad};'
+        f'background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);'
+        f'display:flex;align-items:center;justify-content:center;'
+        f'font-family:\'Bebas Neue\',sans-serif;font-size:{sz//2}px;color:#8888AA">{initials}</div>'
+    )
+
+
+# ─────────────────────────────────────────────────────────────
 #  TAB 1 — REGISTRAR PICK
 # ─────────────────────────────────────────────────────────────
 def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
@@ -1296,29 +1322,8 @@ var _interval = setInterval(function(){
 
     if events:
         is_tennis = (sport == "tennis")
-        sz   = 40
-        brad = "50%" if is_tennis else "8px"
-
-        def mk_logo(url, flag, name, _sz=sz, _brad=brad):
-            src      = url or flag
-            initials = (name[:2] if len(name) >= 2 else name).upper()
-            if src:
-                return (
-                    f'<img src="{src}" style="width:{_sz}px;height:{_sz}px;object-fit:contain;'
-                    f'border-radius:{_brad};background:rgba(255,255,255,.04);'
-                    f'border:1px solid rgba(255,255,255,.08)" '
-                    f'onerror="this.style.display=\'none\';this.nextElementSibling.style.display=\'flex\'">'
-                    f'<div style="display:none;width:{_sz}px;height:{_sz}px;border-radius:{_brad};'
-                    f'background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);'
-                    f'align-items:center;justify-content:center;font-family:\'Bebas Neue\',sans-serif;'
-                    f'font-size:{_sz//2}px;color:#8888AA">{initials}</div>'
-                )
-            return (
-                f'<div style="width:{_sz}px;height:{_sz}px;border-radius:{_brad};'
-                f'background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.1);'
-                f'display:flex;align-items:center;justify-content:center;'
-                f'font-family:\'Bebas Neue\',sans-serif;font-size:{_sz//2}px;color:#8888AA">{initials}</div>'
-            )
+        sz_ev   = 40
+        brad_ev = "50%" if is_tennis else "8px"
 
         ev_list = events[:30]
         st.markdown(
@@ -1327,68 +1332,41 @@ var _interval = setInterval(function(){
             unsafe_allow_html=True
         )
 
-        # Render 3 per row using st.columns
+        # Always 3 columns per row — pad incomplete rows with st.empty()
         for row_start in range(0, len(ev_list), 3):
             row_evs = ev_list[row_start:row_start + 3]
             cols    = st.columns(3)
-
-            for col, ev in zip(cols, row_evs):
-                with col:
-                    is_live  = ev.get("is_live", False)
-                    is_sel   = selected and selected["id"] == ev["id"]
-
-                    if is_live:
-                        status_txt   = "● LIVE"
-                        status_color = "#FF3D00"
-                        status_style = "animation:blinkLive 1.2s infinite"
-                    else:
-                        status_txt   = ev["date"]
-                        status_color = "#00FFD1"
-                        status_style = ""
-
-                    border = "rgba(240,255,0,.6)"  if is_sel else ("rgba(255,61,0,.4)" if is_live else "rgba(255,255,255,.09)")
-                    bg     = "rgba(240,255,0,.05)" if is_sel else ("rgba(255,61,0,.04)" if is_live else "rgba(255,255,255,.025)")
-                    glow   = "0 0 16px rgba(240,255,0,.1)" if is_sel else "0 2px 8px rgba(0,0,0,.35)"
-
-                    away_lg = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), ev["away"])
-                    home_lg = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), ev["home"])
-
-                    card = (
+            for col_idx in range(3):
+                with cols[col_idx]:
+                    if col_idx >= len(row_evs):
+                        st.empty(); continue
+                    ev      = row_evs[col_idx]
+                    is_live = ev.get("is_live", False)
+                    is_sel  = selected and selected["id"] == ev["id"]
+                    s_txt   = "● LIVE" if is_live else ev["date"]
+                    s_col   = "#FF3D00" if is_live else "#00FFD1"
+                    s_anim  = "animation:blinkLive 1.2s infinite" if is_live else ""
+                    border  = "rgba(240,255,0,.6)"  if is_sel else ("rgba(255,61,0,.4)" if is_live else "rgba(255,255,255,.09)")
+                    bg      = "rgba(240,255,0,.05)" if is_sel else ("rgba(255,61,0,.04)" if is_live else "rgba(255,255,255,.025)")
+                    glow    = "0 0 16px rgba(240,255,0,.1)" if is_sel else "0 2px 8px rgba(0,0,0,.35)"
+                    a_lg    = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), ev["away"], sz_ev, brad_ev)
+                    h_lg    = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), ev["home"], sz_ev, brad_ev)
+                    st.markdown(
                         f'<div style="background:{bg};border:1px solid {border};border-radius:12px;'
                         f'padding:12px 8px;box-shadow:{glow};text-align:center">'
-
-                        # Away + VS + Home row
-                        f'<div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-bottom:8px">'
-
-                        # Away
+                        f'<div style="display:flex;align-items:center;justify-content:center;gap:6px;margin-bottom:6px">'
                         f'<div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex:1">'
-                        f'{away_lg}'
-                        f'<div style="font-family:\'Rajdhani\',sans-serif;font-size:.62rem;font-weight:700;'
-                        f'color:#EEEEF5;line-height:1.1;overflow:hidden;text-overflow:ellipsis;'
-                        f'white-space:nowrap;max-width:80px">{ev["away"]}</div>'
-                        f'</div>'
-
-                        # VS
-                        f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.75rem;'
-                        f'color:#44445A;letter-spacing:2px;flex-shrink:0">VS</div>'
-
-                        # Home
+                        f'{a_lg}<div style="font-size:.6rem;font-weight:700;color:#EEEEF5;'
+                        f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px">{ev["away"]}</div></div>'
+                        f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.75rem;color:#44445A">VS</div>'
                         f'<div style="display:flex;flex-direction:column;align-items:center;gap:3px;flex:1">'
-                        f'{home_lg}'
-                        f'<div style="font-family:\'Rajdhani\',sans-serif;font-size:.62rem;font-weight:700;'
-                        f'color:#EEEEF5;line-height:1.1;overflow:hidden;text-overflow:ellipsis;'
-                        f'white-space:nowrap;max-width:80px">{ev["home"]}</div>'
+                        f'{h_lg}<div style="font-size:.6rem;font-weight:700;color:#EEEEF5;'
+                        f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px">{ev["home"]}</div></div>'
                         f'</div>'
-
-                        f'</div>'
-
-                        # Status / time
-                        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.52rem;'
-                        f'color:{status_color};{status_style};margin-bottom:2px">{status_txt}</div>'
-
-                        f'</div>'
+                        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.5rem;'
+                        f'color:{s_col};{s_anim}">{s_txt}</div></div>',
+                        unsafe_allow_html=True
                     )
-                    st.markdown(card, unsafe_allow_html=True)
                     label = "⚡ SELECCIONADO" if is_sel else "✔ Seleccionar"
                     if st.button(label, key=f"sel_{ev['id']}", type="primary" if is_sel else "secondary"):
                         st.session_state["selected_event"] = ev
