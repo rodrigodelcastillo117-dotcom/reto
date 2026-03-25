@@ -2185,8 +2185,88 @@ def pit_pick_del_rey(ronda_picks: list) -> str:
 
 
 # ─────────────────────────────────────────────────────────────
-#  THE PIT — Main tab
+#  THE PIT — Daily 4 random games generator
 # ─────────────────────────────────────────────────────────────
+# One representative league per sport for the daily card
+PIT_DAILY_SPORTS = [
+    ("⚽ Fútbol",      "soccer",     ["eng.1","esp.1","ita.1","ger.1","fra.1","mex.1","usa.1",
+                                       "uefa.champions","conmebol.libertadores","fifa.friendly",
+                                       "fifa.worldq.6","fifa.worldq.europe","concacaf.worldq"]),
+    ("🏀 Basketball",  "basketball", ["nba"]),
+    ("🏈 NFL",         "football",   ["nfl"]),
+    ("⚾ Baseball",    "baseball",   ["mlb"]),
+    ("🏒 Hockey",      "hockey",     ["nhl"]),
+    ("🎾 Tenis",       "tennis",     ["atp","wta"]),
+]
+
+@st.cache_data(ttl=3600, show_spinner=False)  # refresh every hour
+def pit_get_daily_games(seed_date: str) -> list:
+    """
+    Fetch 4 random upcoming games from different sports for today's PIT card.
+    seed_date = str(date.today()) so cache refreshes daily.
+    Returns list of event dicts with extra 'pit_sport_label' and 'pit_liga_name' keys.
+    """
+    import random as _rnd
+    _rnd.seed(seed_date)  # deterministic per day — same games for all users
+
+    candidates = []  # (sport_label, sport, liga_name, event)
+    sports_to_try = list(PIT_DAILY_SPORTS)
+    _rnd.shuffle(sports_to_try)
+
+    for sport_label, sport, leagues in sports_to_try:
+        _rnd.shuffle(leagues)
+        found = False
+        for league in leagues:
+            try:
+                url = f"{ESPN_BASE}/{sport}/{league}/scoreboard"
+                r   = requests.get(url, params={"limit": 50}, timeout=6)
+                if r.status_code != 200:
+                    continue
+                events = r.json().get("events", [])
+                upcoming = []
+                for ev in events:
+                    st_type   = ev.get("status", {}).get("type", {})
+                    state     = st_type.get("state", "pre")
+                    completed = (state == "post") or st_type.get("completed", False)
+                    if completed:
+                        continue
+                    comps = ev.get("competitions", [{}])[0].get("competitors", [])
+                    home_c = next((c for c in comps if c.get("homeAway")=="home"), comps[0] if comps else {})
+                    away_c = next((c for c in comps if c.get("homeAway")=="away"), comps[1] if len(comps)>1 else {})
+                    home_i = _extract_competitor_info(home_c, sport)
+                    away_i = _extract_competitor_info(away_c, sport)
+                    date_raw = ev.get("date","")
+                    try:
+                        dt     = datetime.fromisoformat(date_raw.replace("Z","+00:00"))
+                        dt_mx  = dt - timedelta(hours=6)
+                        d_str  = dt_mx.strftime("%d %b %H:%M")
+                    except Exception:
+                        d_str = date_raw[:10]
+                    is_live = (state == "in") and not completed
+                    upcoming.append({
+                        "id":         ev.get("id",""),
+                        "home":       home_i["name"], "away": away_i["name"],
+                        "home_logo":  home_i["logo"], "away_logo": away_i["logo"],
+                        "home_flag":  home_i["flag"], "away_flag": away_i["flag"],
+                        "date":       d_str, "date_raw": date_raw,
+                        "is_live":    is_live, "sport": sport,
+                        "pit_sport_label": sport_label,
+                        "pit_liga_name":   league.replace("."," ").upper(),
+                    })
+                if upcoming:
+                    pick = _rnd.choice(upcoming)
+                    candidates.append(pick)
+                    found = True
+                    break
+            except Exception:
+                continue
+        if found and len(candidates) >= 4:
+            break
+
+    return candidates[:4]
+
+
+
 def tab_the_pit(apodo: str, bank: float):
 
     # ── Header
@@ -2400,104 +2480,103 @@ def tab_the_pit(apodo: str, bank: float):
        color:{res_c};margin-top:4px">{res.upper()}</div>
 </div>""", unsafe_allow_html=True)
         else:
-            st.markdown('<div class="sec-head">⚔ Elige tu pick de hoy</div>', unsafe_allow_html=True)
-            st.caption("Cuota mínima 1.50 · No puedes repetir equipo · Tienes hasta 5 min antes del partido")
+            st.markdown('<div class="sec-head">⚔ Partidos del día — Elige tu pick</div>', unsafe_allow_html=True)
+            st.caption("4 partidos aleatorios de distintos deportes · Cuota mínima 1.50 · Sin repetir equipo")
 
-            # ── Simple league selector + search
-            c1, c2 = st.columns(2)
-            with c1:
-                pit_group = st.selectbox("Deporte", list(ESPN_LEAGUES_GROUPED.keys()), key="pit_sport_group")
-                pit_liga  = st.selectbox("Liga", list(ESPN_LEAGUES_GROUPED[pit_group].keys()), key="pit_liga")
-            with c2:
-                pit_query = st.text_input("Buscar equipo", placeholder="ej: Barcelona, Italy…", key="pit_query")
+            # Load today's 4 games — cached by date so same for all users
+            today_seed = str(date.today())
+            pit_daily_key = f"pit_daily_{today_seed}"
 
-            pit_sport, pit_league = ESPN_LEAGUES[pit_liga]
+            if pit_daily_key not in st.session_state:
+                with st.spinner("⚔ Preparando la cartelera del foso…"):
+                    st.session_state[pit_daily_key] = pit_get_daily_games(today_seed)
 
-            if st.button("🔍 BUSCAR", key="pit_search"):
-                with st.spinner("Consultando ESPN…"):
-                    st.session_state["pit_events"] = espn_search_events(pit_sport, pit_league, pit_query)
+            daily_games = st.session_state.get(pit_daily_key, [])
 
-            pit_events = st.session_state.get("pit_events", [])
+            if not daily_games:
+                st.warning("No se encontraron partidos hoy. Intenta más tarde.")
+                if st.button("🔄 Reintentar", key="pit_retry_games"):
+                    st.session_state.pop(pit_daily_key, None)
+                    pit_get_daily_games.clear()
+                    st.rerun()
+            else:
+                for ev in daily_games:
+                    sport_ev      = ev.get("sport","soccer")
+                    is_tennis_pit = (sport_ev == "tennis")
+                    is_live       = ev.get("is_live", False)
+                    s_txt         = "● LIVE" if is_live else ev["date"]
+                    s_col         = "#FF3D00" if is_live else "#00FFD1"
+                    away          = ev["away"]; home = ev["home"]
+                    sport_label   = ev.get("pit_sport_label","⚽")
+                    liga_name     = ev.get("pit_liga_name","")
+                    brad_ev       = "50%" if is_tennis_pit else "6px"
+                    a_lg = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 36, brad_ev)
+                    h_lg = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 36, brad_ev)
 
-            if pit_events:
-                st.markdown(
-                    f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.55rem;'
-                    f'color:var(--text3);margin-bottom:8px">{len(pit_events)} PARTIDOS</div>',
-                    unsafe_allow_html=True
-                )
-                # Each event: show card + 3 pick buttons inline (Away / Draw / Home)
-                is_tennis_pit = (pit_sport == "tennis")
-                for ev in pit_events[:18]:
-                    is_live = ev.get("is_live", False)
-                    s_txt   = "● LIVE" if is_live else ev["date"]
-                    s_col   = "#FF3D00" if is_live else "#00FFD1"
-                    away    = ev["away"]; home = ev["home"]
-                    a_lg    = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 32, "50%" if is_tennis_pit else "6px")
-                    h_lg    = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 32, "50%" if is_tennis_pit else "6px")
-
-                    # Card header
+                    # Card
                     st.markdown(
                         f'<div style="background:rgba(255,45,85,.04);border:1px solid rgba(255,45,85,.2);'
-                        f'border-radius:12px;padding:10px 14px;margin-bottom:4px">'
+                        f'border-radius:14px;padding:12px 16px;margin-bottom:6px">'
+                        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.5rem;'
+                        f'color:#BF5FFF;margin-bottom:8px;letter-spacing:2px">'
+                        f'{sport_label} · {liga_name}</div>'
                         f'<div style="display:flex;align-items:center;gap:10px">'
-                        f'<div style="display:flex;align-items:center;gap:6px;flex:1">'
-                        f'{a_lg}<span style="font-size:.78rem;font-weight:700;color:#EEEEF5">{away}</span>'
+                        f'<div style="display:flex;align-items:center;gap:8px;flex:1">'
+                        f'{a_lg}<span style="font-size:.82rem;font-weight:700;color:#EEEEF5">{away}</span>'
                         f'</div>'
-                        f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.7rem;color:#44445A">VS</div>'
-                        f'<div style="display:flex;align-items:center;gap:6px;flex:1;justify-content:flex-end">'
-                        f'<span style="font-size:.78rem;font-weight:700;color:#EEEEF5">{home}</span>{h_lg}'
+                        f'<div style="text-align:center;min-width:40px">'
+                        f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.8rem;color:#44445A">VS</div>'
+                        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.48rem;color:{s_col}">{s_txt}</div>'
                         f'</div>'
+                        f'<div style="display:flex;align-items:center;gap:8px;flex:1;justify-content:flex-end">'
+                        f'<span style="font-size:.82rem;font-weight:700;color:#EEEEF5">{home}</span>{h_lg}'
                         f'</div>'
-                        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.5rem;color:{s_col};margin-top:4px">'
-                        f'{s_txt} · {pit_liga}</div></div>',
+                        f'</div></div>',
                         unsafe_allow_html=True
                     )
 
-                    # Pick buttons — away / draw / home (no draw for tennis)
-                    if is_tennis_pit:
-                        b1, b2 = st.columns(2)
-                        picks_opts = [(b1, f"{away} gana", away), (b2, f"{home} gana", home)]
-                    else:
-                        b1, b2, b3 = st.columns(3)
-                        picks_opts = [(b1, f"{away} gana", away),
-                                      (b2, "Empate", "Empate"),
-                                      (b3, f"{home} gana", home)]
-
-                    # Momio input per event
-                    pit_momio_key = f"pit_momio_{ev['id']}"
+                    # Momio input
                     pit_momio_val = st.number_input(
                         "Momio (mín 1.50)", min_value=1.50, max_value=50.0,
-                        value=1.85, step=0.05, key=pit_momio_key
+                        value=1.85, step=0.05, key=f"pit_momio_{ev['id']}"
                     )
 
-                    for col, lbl, pick_val in picks_opts:
+                    # Pick buttons
+                    if is_tennis_pit:
+                        cols_pick = st.columns(2)
+                        opts = [(cols_pick[0], f"{away} gana", away),
+                                (cols_pick[1], f"{home} gana", home)]
+                    else:
+                        cols_pick = st.columns(3)
+                        opts = [(cols_pick[0], f"{away} gana", away),
+                                (cols_pick[1], "Empate",       "Empate"),
+                                (cols_pick[2], f"{home} gana", home)]
+
+                    for col, lbl, pick_val in opts:
                         with col:
-                            already_used = pick_val.lower().strip() in equipos_usados
-                            btn_disabled = already_used
+                            used = pick_val.lower().strip() in equipos_usados
                             if st.button(
-                                f"{'🚫 ' if already_used else '⚔ '}{lbl}",
+                                f"{'🚫 ' if used else '⚔ '}{lbl}",
                                 key=f"pit_pick_{ev['id']}_{lbl}",
-                                disabled=btn_disabled,
+                                disabled=used,
                                 use_container_width=True
                             ):
-                                if pit_momio_val < 1.50:
-                                    st.error("Momio mínimo 1.50")
-                                else:
-                                    pit_save_pick(
-                                        ronda_id, apodo,
-                                        f"{away} vs {home}",
-                                        pit_liga, ev["id"],
-                                        pick_val, pit_momio_val, dia_actual
-                                    )
-                                    pit_load_picks_ronda.clear()
-                                    for _k in ["pit_picks","pit_players","pit_events"]:
-                                        st.session_state.pop(_k, None)
-                                    pit_save_chat("King Rongo",
-                                        f"🩸 **{apodo}** disparó `{pick_val}` @ {pit_momio_val}x — "
-                                        f"{away} vs {home}. Día {dia_actual}. Quedan {n_vivos} vivos.", True)
-                                    st.success("✅ Pick registrado. El foso decidirá.")
-                                    st.rerun()
-                    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+                                pit_save_pick(
+                                    ronda_id, apodo,
+                                    f"{away} vs {home}",
+                                    liga_name, ev["id"],
+                                    pick_val, pit_momio_val, dia_actual
+                                )
+                                pit_load_picks_ronda.clear()
+                                for _k in ["pit_picks","pit_players"]:
+                                    st.session_state.pop(_k, None)
+                                pit_save_chat("King Rongo",
+                                    f"🩸 **{apodo}** disparó `{pick_val}` @ {pit_momio_val}x — "
+                                    f"{away} vs {home}. Día {dia_actual}. {n_vivos} siguen vivos.", True)
+                                st.success(f"✅ Pick registrado: {pick_val} @ {pit_momio_val}x")
+                                st.rerun()
+
+                    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
 
     # ── Pick del Rey
