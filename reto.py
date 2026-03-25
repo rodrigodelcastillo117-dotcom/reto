@@ -507,6 +507,46 @@ div[data-testid="stRadio"] [data-testid="stWidgetLabel"] {
 .autobanner{background:rgba(0,255,136,.07);border:1px solid rgba(0,255,136,.3);
   border-left:3px solid var(--green);border-radius:10px;padding:12px 16px;margin-bottom:12px;
   font-size:.82rem;color:#6EFFC0;}
+
+/* ── EXPANDERS — force dark theme ── */
+[data-testid="stExpander"]{
+  background:var(--bg3) !important;
+  border:1px solid rgba(255,255,255,.08) !important;
+  border-radius:12px !important;
+}
+[data-testid="stExpander"] summary,
+[data-testid="stExpander"] summary p,
+[data-testid="stExpander"] summary span,
+[data-testid="stExpander"] summary div,
+details summary,
+details summary * {
+  color: var(--text) !important;
+  background: var(--bg3) !important;
+  font-family: 'Rajdhani', sans-serif !important;
+  font-weight: 600 !important;
+  font-size: .9rem !important;
+}
+[data-testid="stExpander"] summary:hover,
+details summary:hover {
+  background: var(--bg4) !important;
+  color: var(--neon) !important;
+}
+[data-testid="stExpander"] > div:last-child {
+  background: var(--bg2) !important;
+  border-top: 1px solid rgba(255,255,255,.06) !important;
+}
+/* Nested expander (liga inside sport) */
+[data-testid="stExpander"] [data-testid="stExpander"] {
+  background: var(--bg4) !important;
+  border: 1px solid rgba(255,255,255,.05) !important;
+  margin: 4px 0 !important;
+}
+[data-testid="stExpander"] [data-testid="stExpander"] summary,
+[data-testid="stExpander"] [data-testid="stExpander"] summary * {
+  color: #BF5FFF !important;
+  background: var(--bg4) !important;
+  font-size: .78rem !important;
+}
 </style>
 <script>
 (function(){
