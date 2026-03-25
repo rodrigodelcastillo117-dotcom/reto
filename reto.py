@@ -61,6 +61,9 @@ RANGOS = [
 
 # ESPN sport slugs → league display name → ESPN league slug
 ESPN_LEAGUES_GROUPED = {
+    "🌐 Todos los partidos de hoy": {
+        "📅 Cargar todo":            ("all", "__all_today__"),
+    },
     "⚽ Fútbol — Clubes": {
         "Premier League":        ("soccer", "eng.1"),
         "La Liga":               ("soccer", "esp.1"),
@@ -1567,6 +1570,249 @@ def render_header(apodo: str, bank: float):
 
 
 # ─────────────────────────────────────────────────────────────
+#  ALL TODAY — Load all games across all sports
+# ─────────────────────────────────────────────────────────────
+
+# All leagues to scan for "today" view — ordered by sport
+ALL_TODAY_LEAGUES = [
+    # Soccer clubs
+    ("⚽ Fútbol — Clubes", "Premier League",      "soccer", "eng.1"),
+    ("⚽ Fútbol — Clubes", "La Liga",              "soccer", "esp.1"),
+    ("⚽ Fútbol — Clubes", "Serie A",              "soccer", "ita.1"),
+    ("⚽ Fútbol — Clubes", "Bundesliga",           "soccer", "ger.1"),
+    ("⚽ Fútbol — Clubes", "Ligue 1",              "soccer", "fra.1"),
+    ("⚽ Fútbol — Clubes", "Liga MX",              "soccer", "mex.1"),
+    ("⚽ Fútbol — Clubes", "MLS",                  "soccer", "usa.1"),
+    ("⚽ Fútbol — Clubes", "Champions League",     "soccer", "uefa.champions"),
+    ("⚽ Fútbol — Clubes", "Europa League",        "soccer", "uefa.europa"),
+    ("⚽ Fútbol — Clubes", "Copa Libertadores",    "soccer", "conmebol.libertadores"),
+    ("⚽ Fútbol — Clubes", "Brasileirão",          "soccer", "bra.1"),
+    ("⚽ Fútbol — Clubes", "Eredivisie",           "soccer", "ned.1"),
+    ("⚽ Fútbol — Clubes", "Liga Portugal",        "soccer", "por.1"),
+    ("⚽ Fútbol — Clubes", "Superliga Argentina",  "soccer", "arg.1"),
+    # Soccer selecciones
+    ("🌍 Fútbol — Selecciones", "Eliminatorias UEFA",     "soccer", "fifa.worldq.6"),
+    ("🌍 Fútbol — Selecciones", "Eliminatorias CONMEBOL", "soccer", "fifa.worldq.2"),
+    ("🌍 Fútbol — Selecciones", "Eliminatorias CONCACAF", "soccer", "fifa.worldq.5"),
+    ("🌍 Fútbol — Selecciones", "Nations League UEFA",    "soccer", "uefa.nations"),
+    ("🌍 Fútbol — Selecciones", "Amistosos Internac.",    "soccer", "fifa.friendly"),
+    ("🌍 Fútbol — Selecciones", "Fútbol Internacional",   "soccer", "fifa.worldq"),
+    # Other sports
+    ("🏀 Basketball", "NBA",  "basketball", "nba"),
+    ("⚾ Baseball",   "MLB",  "baseball",   "mlb"),
+    ("🏒 Hockey",     "NHL",  "hockey",     "nhl"),
+    ("🎾 Tenis",      "ATP",  "tennis",     "atp"),
+    ("🎾 Tenis",      "WTA",  "tennis",     "wta"),
+]
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def load_all_today() -> dict:
+    """
+    Fetch all games happening today+tomorrow across all leagues.
+    Returns dict: {sport_group: {liga: [events]}}
+    Cached 30 min to avoid hammering ESPN.
+    """
+    today    = date.today().strftime("%Y%m%d")
+    tomorrow = (date.today() + timedelta(days=1)).strftime("%Y%m%d")
+    result   = {}  # {sport_group: {liga: [events]}}
+    seen_ids = set()
+
+    for sport_group, liga_name, sport, league_slug in ALL_TODAY_LEAGUES:
+        try:
+            url = f"{ESPN_BASE}/{sport}/{league_slug}/scoreboard"
+            events_found = []
+
+            for dt_str in [today, tomorrow]:
+                r = requests.get(url, params={"dates": dt_str, "limit": 100}, timeout=6)
+                if r.status_code != 200:
+                    continue
+                for ev in r.json().get("events", []):
+                    eid = ev.get("id","")
+                    if eid in seen_ids:
+                        continue
+                    st_type   = ev.get("status",{}).get("type",{})
+                    state     = st_type.get("state","pre")
+                    completed = (state == "post") or st_type.get("completed", False)
+                    if completed:
+                        continue
+                    comp0 = ev.get("competitions",[{}])[0]
+                    comps = comp0.get("competitors",[])
+                    home_c = next((c for c in comps if c.get("homeAway")=="home"), comps[0] if comps else {})
+                    away_c = next((c for c in comps if c.get("homeAway")=="away"), comps[1] if len(comps)>1 else {})
+                    home_i = _extract_competitor_info(home_c, sport)
+                    away_i = _extract_competitor_info(away_c, sport)
+                    date_raw = ev.get("date","")
+                    try:
+                        dt_ev  = datetime.fromisoformat(date_raw.replace("Z","+00:00"))
+                        dt_mx  = dt_ev - timedelta(hours=6)
+                        d_str  = dt_mx.strftime("%d %b %H:%M")
+                    except Exception:
+                        d_str = date_raw[:10]
+                    is_live = (state == "in") and not completed
+                    if home_i["name"] == "?" and away_i["name"] == "?":
+                        continue
+                    events_found.append({
+                        "id": eid, "home": home_i["name"], "away": away_i["name"],
+                        "home_logo": home_i["logo"], "away_logo": away_i["logo"],
+                        "home_flag": home_i["flag"], "away_flag": away_i["flag"],
+                        "date": d_str, "date_raw": date_raw,
+                        "is_live": is_live, "completed": completed,
+                        "sport": sport, "liga": liga_name,
+                        "status_state": state,
+                        "home_score": home_i["score"], "away_score": away_i["score"],
+                        "home_odds": 0.0, "away_odds": 0.0, "draw_odds": 0.0,
+                    })
+                    seen_ids.add(eid)
+
+            if events_found:
+                events_found.sort(key=lambda e: e["date_raw"])
+                if sport_group not in result:
+                    result[sport_group] = {}
+                result[sport_group][liga_name] = events_found
+
+        except Exception:
+            continue
+
+    # Also fetch from Odds API for international soccer
+    try:
+        odds_events = odds_fetch_sport("soccer_fifa_world_cup_qualifier_europe")
+        if odds_events:
+            grp = "🌍 Fútbol — Selecciones"
+            liga = "Playoffs Eliminat. UEFA"
+            if grp not in result:
+                result[grp] = {}
+            existing_ids = {e["id"] for ligas in result.get(grp,{}).values() for e in ligas}
+            new_evs = [e for e in odds_events if e["id"] not in existing_ids]
+            if new_evs:
+                result[grp][liga] = new_evs
+    except Exception:
+        pass
+
+    return result
+
+
+def render_all_today(apodo: str):
+    """Render all today's games grouped by sport → league → time."""
+
+    st.markdown(
+        '<div class="sec-head">📅 Todos los partidos de hoy y mañana</div>',
+        unsafe_allow_html=True
+    )
+
+    # Load / refresh button
+    col_r = st.columns([8,1])[1]
+    with col_r:
+        if st.button("🔄", key="all_today_refresh", help="Actualizar partidos"):
+            load_all_today.clear()
+            st.session_state.pop("all_today_data", None)
+            st.rerun()
+
+    # Cache in session_state so it doesn't reload on every click
+    if "all_today_data" not in st.session_state:
+        with st.spinner("⚡ Cargando partidos de todos los deportes…"):
+            st.session_state["all_today_data"] = load_all_today()
+    data = st.session_state["all_today_data"]
+
+    if not data:
+        st.info("No se encontraron partidos para hoy/mañana.")
+        return
+
+    total_games = sum(len(evs) for ligas in data.values() for evs in ligas.values())
+    st.markdown(
+        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.6rem;'
+        f'color:var(--text3);margin-bottom:16px">'
+        f'{total_games} PARTIDOS ENCONTRADOS</div>',
+        unsafe_allow_html=True
+    )
+
+    selected = st.session_state.get("selected_event", None)
+
+    for sport_group, ligas in data.items():
+        # Sport group header
+        st.markdown(
+            f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:1.1rem;'
+            f'color:var(--neon);letter-spacing:3px;margin:18px 0 8px;'
+            f'border-bottom:1px solid rgba(240,255,0,.15);padding-bottom:4px">'
+            f'{sport_group}</div>',
+            unsafe_allow_html=True
+        )
+
+        for liga_name, events in ligas.items():
+            # League sub-header
+            st.markdown(
+                f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.58rem;'
+                f'color:#BF5FFF;letter-spacing:2px;margin:10px 0 6px">'
+                f'▸ {liga_name.upper()} — {len(events)} partidos</div>',
+                unsafe_allow_html=True
+            )
+
+            is_tennis = events[0].get("sport") == "tennis" if events else False
+            brad      = "50%" if is_tennis else "8px"
+
+            for row_start in range(0, len(events), 3):
+                row_evs = events[row_start:row_start+3]
+                cols    = st.columns(3)
+                for col_idx in range(3):
+                    with cols[col_idx]:
+                        if col_idx >= len(row_evs):
+                            st.empty(); continue
+                        ev      = row_evs[col_idx]
+                        is_live = ev.get("is_live", False)
+                        is_sel  = selected and selected.get("id") == ev["id"]
+                        away    = ev["away"]; home = ev["home"]
+                        s_txt   = "● LIVE" if is_live else ev["date"]
+                        s_col   = "#FF3D00" if is_live else "#00FFD1"
+                        border  = "rgba(240,255,0,.6)" if is_sel else ("rgba(255,61,0,.4)" if is_live else "rgba(255,255,255,.09)")
+                        bg      = "rgba(240,255,0,.05)" if is_sel else "rgba(255,255,255,.02)"
+                        a_lg    = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 36, brad)
+                        h_lg    = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 36, brad)
+
+                        # Odds badges
+                        odds_html = ""
+                        if ev.get("home_odds",0) > 1:
+                            odds_html = (
+                                f'<div style="display:flex;gap:4px;justify-content:center;'
+                                f'margin-top:4px;font-family:\'JetBrains Mono\',monospace;font-size:.5rem">'
+                                f'<span style="background:rgba(0,255,136,.12);color:#00FF88;'
+                                f'padding:1px 5px;border-radius:4px">{ev["away_odds"]}</span>'
+                            )
+                            if ev.get("draw_odds",0) > 1:
+                                odds_html += (
+                                    f'<span style="background:rgba(255,184,0,.12);color:#FFB800;'
+                                    f'padding:1px 5px;border-radius:4px">{ev["draw_odds"]}</span>'
+                                )
+                            odds_html += (
+                                f'<span style="background:rgba(0,180,255,.12);color:#00B4FF;'
+                                f'padding:1px 5px;border-radius:4px">{ev["home_odds"]}</span>'
+                                f'</div>'
+                            )
+
+                        st.markdown(
+                            f'<div style="background:{bg};border:1px solid {border};'
+                            f'border-radius:12px;padding:10px 8px;text-align:center">'
+                            f'<div style="display:flex;align-items:center;justify-content:center;'
+                            f'gap:5px;margin-bottom:5px">'
+                            f'<div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex:1">'
+                            f'{a_lg}<div style="font-size:.58rem;font-weight:700;color:#EEEEF5;'
+                            f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px">'
+                            f'{away}</div></div>'
+                            f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.7rem;color:#44445A">VS</div>'
+                            f'<div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex:1">'
+                            f'{h_lg}<div style="font-size:.58rem;font-weight:700;color:#EEEEF5;'
+                            f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px">'
+                            f'{home}</div></div></div>'
+                            f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.48rem;'
+                            f'color:{s_col}">{s_txt}</div>'
+                            f'{odds_html}</div>',
+                            unsafe_allow_html=True
+                        )
+                        lbl = "⚡ SELECCIONADO" if is_sel else "✔ Seleccionar"
+                        if st.button(lbl, key=f"at_{ev['id'][:12]}", type="primary" if is_sel else "secondary"):
+                            st.session_state["selected_event"] = ev
+                            st.rerun()
+
+
+# ─────────────────────────────────────────────────────────────
 #  SHARED UI HELPERS
 # ─────────────────────────────────────────────────────────────
 def mk_logo(url: str, flag: str, name: str, sz: int = 40, brad: str = "8px") -> str:
@@ -1613,6 +1859,17 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
         )
 
     sport, league = ESPN_LEAGUES[liga_sel]
+
+    # ── All Today mode ──────────────────────────────────────────
+    if league == "__all_today__":
+        render_all_today(apodo)
+        # Step 2 still works — if user selected an event, show pick builder
+        selected = st.session_state.get("selected_event", None)
+        if selected:
+            st.markdown("---")
+        else:
+            return
+
     events = []
 
     if st.button("🔍 BUSCAR PARTIDOS", key="btn_search"):
