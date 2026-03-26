@@ -4106,126 +4106,6 @@ def tab_the_pit(apodo: str, bank: float):
                                     ws_players.update_cell(p_idx + 1, 4, str(my_vidas))  # vidas
                             
                             break
-                    
-                    # ═══════════════════════════════════════════════════════════════
-                    #  TEST MANUAL DE AUTO-CALIFICACIÓN (para debugging)
-                    # ═══════════════════════════════════════════════════════════════
-                    with st.expander("🧪 TEST: Simular Auto-Calificación"):
-                        st.info("Esto te permite probar cómo se califican los picks sin esperar a mañana")
-                        
-                        # Get today's picks to test
-                        today_picks = [p for p in all_picks_sheet
-                                      if str(p.get("ronda_id","")).strip() == str(ronda_id) and
-                                         str(p.get("fecha","")).strip() == str(today_cdmx) and
-                                         str(p.get("apodo","")).lower().strip() == apodo.lower().strip()]
-                        
-                        if today_picks:
-                            st.write(f"📋 Picks de HOY ({len(today_picks)}):")
-                            for idx, pick in enumerate(today_picks):
-                                col1, col2, col3 = st.columns([2, 2, 1])
-                                
-                                with col1:
-                                    st.caption(f"**{pick.get('partido', '?')}**")
-                                
-                                with col2:
-                                    st.caption(f"Pick: {pick.get('pick_desc', '?')}")
-                                
-                                with col3:
-                                    if st.button("🧪 Probar", key=f"test_grade_{idx}", use_container_width=True):
-                                        # Test grading this pick
-                                        event_id = pick.get("event_id", "")
-                                        pick_desc = pick.get("pick_desc", "")
-                                        pick_type = "ML" if pick_desc in ["Home", "Away"] else "O/U"
-                                        partido = pick.get("partido", "")
-                                        
-                                        test_debug = [f"🧪 TESTING: {partido}"]
-                                        test_debug.append(f"  Pick: {pick_desc} ({pick_type})")
-                                        test_debug.append(f"  Event ID: {event_id}")
-                                        
-                                        if not event_id:
-                                            test_debug.append(f"  ❌ Sin event_id - No se puede probar")
-                                        else:
-                                            # Try ESPN endpoints
-                                            espn_urls = [
-                                                f"http://site.api.espn.com/apis/site/v2/sports/baseball/mlb/events/{event_id}",
-                                                f"http://site.api.espn.com/apis/site/v2/sports/basketball/nba/events/{event_id}",
-                                                f"http://site.api.espn.com/apis/site/v2/sports/hockey/nhl/events/{event_id}",
-                                                f"http://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/events/{event_id}",
-                                            ]
-                                            
-                                            espn_data = None
-                                            for url in espn_urls:
-                                                try:
-                                                    r = requests.get(url, timeout=5)
-                                                    if r.status_code == 200:
-                                                        espn_data = r.json()
-                                                        test_debug.append(f"  ✅ ESPN API encontrado")
-                                                        break
-                                                except:
-                                                    continue
-                                            
-                                            if not espn_data:
-                                                test_debug.append(f"  ❌ No se encontró en ESPN")
-                                            else:
-                                                try:
-                                                    competition = espn_data.get("competitions", [{}])[0]
-                                                    status = competition.get("status", {}).get("type", "")
-                                                    test_debug.append(f"  Status: {status}")
-                                                    
-                                                    if status != "STATUS_FINAL":
-                                                        test_debug.append(f"  ⏳ Partido aún NO finalizado")
-                                                        test_debug.append(f"     (Espera a que finalice para auto-calificar)")
-                                                    else:
-                                                        competitors = competition.get("competitors", [])
-                                                        if len(competitors) >= 2:
-                                                            home_score = int(competitors[0].get("score", 0))
-                                                            away_score = int(competitors[1].get("score", 0))
-                                                            total_score = home_score + away_score
-                                                            
-                                                            test_debug.append(f"  Resultado: {away_score} - {home_score}")
-                                                            test_debug.append(f"  Total: {total_score}")
-                                                            
-                                                            if pick_type == "ML":
-                                                                winner = "Home" if home_score > away_score else "Away"
-                                                                resultado = "✅ GANADO" if pick_desc == winner else "❌ PERDIDO"
-                                                                test_debug.append(f"  ML: Ganador={winner} vs Tu pick={pick_desc}")
-                                                                test_debug.append(f"  Resultado: {resultado}")
-                                                            else:
-                                                                pick_value = float(pick_desc.replace("O", "").replace("U", ""))
-                                                                if pick_desc.startswith("O"):
-                                                                    resultado = "✅ GANADO" if total_score > pick_value else "❌ PERDIDO"
-                                                                    test_debug.append(f"  O/U: {total_score} {'>' if total_score > pick_value else '<'} {pick_value}")
-                                                                else:
-                                                                    resultado = "✅ GANADO" if total_score < pick_value else "❌ PERDIDO"
-                                                                    test_debug.append(f"  O/U: {total_score} {'<' if total_score < pick_value else '>'} {pick_value}")
-                                                                test_debug.append(f"  Resultado: {resultado}")
-                                                except Exception as e:
-                                                    test_debug.append(f"  ❌ Error procesando: {str(e)[:50]}")
-                                        
-                                        # Show results
-                                        st.markdown("---")
-                                        for line in test_debug:
-                                            st.caption(line)
-                        else:
-                            st.info("📭 No hay picks de hoy. Hace un pick primero para testear.")
-                    
-                    # ═══════════════════════════════════════════════════════════════
-                    #  EFFECTS SIMULATOR (Previewear WASTED y CONFETTI)
-                    # ═══════════════════════════════════════════════════════════════
-                    with st.expander("🎬 PREVIEW: Efectos Visuales (WASTED/CONFETTI)"):
-                        st.info("Aquí puedes previewear cómo se ven los efectos cuando ganas o pierdes")
-                        
-                        col1, col2 = st.columns(2)
-                        
-                        with col1:
-                            if st.button("💀 Ver WASTED (Pierdes)", use_container_width=True, key="preview_wasted"):
-                                st.markdown('<div class="wasted-overlay">W A S T E D</div>', unsafe_allow_html=True)
-                                st.caption("👆 Este overlay aparece cuando pierdes un pick")
-                        
-                        with col2:
-                            if st.button("🎉 Ver CONFETTI (Ganas)", use_container_width=True, key="preview_confetti"):
-                                st.balloons()
-                                st.success("🎊 ¡GANASTE! Aparece confetti y success message")
     except Exception as e:
         pass
     
@@ -4246,6 +4126,134 @@ def tab_the_pit(apodo: str, bank: float):
         with st.expander("🔍 Debug: Auto-Calificación (Ayer)"):
             for debug_line in grading_debug:
                 st.caption(debug_line)
+    
+    # ═══════════════════════════════════════════════════════════════
+    #  TEST MANUAL DE AUTO-CALIFICACIÓN (para debugging)
+    # ═══════════════════════════════════════════════════════════════
+    try:
+        ss = get_ss()
+        if ss:
+            ws_picks = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
+            all_picks_sheet = _safe_get_records(ws_picks)
+            
+            with st.expander("🧪 TEST: Simular Auto-Calificación"):
+                st.info("Esto te permite probar cómo se califican los picks sin esperar a mañana")
+                
+                # Get today's picks to test
+                today_picks = [p for p in all_picks_sheet
+                              if str(p.get("ronda_id","")).strip() == str(ronda_id) and
+                                 str(p.get("fecha","")).strip() == str(today_cdmx) and
+                                 str(p.get("apodo","")).lower().strip() == apodo.lower().strip()]
+                
+                if today_picks:
+                    st.write(f"📋 Picks de HOY ({len(today_picks)}):")
+                    for idx, pick in enumerate(today_picks):
+                        col1, col2, col3 = st.columns([2, 2, 1])
+                        
+                        with col1:
+                            st.caption(f"**{pick.get('partido', '?')}**")
+                        
+                        with col2:
+                            st.caption(f"Pick: {pick.get('pick_desc', '?')}")
+                        
+                        with col3:
+                            if st.button("🧪 Probar", key=f"test_grade_{idx}", use_container_width=True):
+                                # Test grading this pick
+                                event_id = pick.get("event_id", "")
+                                pick_desc = pick.get("pick_desc", "")
+                                pick_type = "ML" if pick_desc in ["Home", "Away"] else "O/U"
+                                partido = pick.get("partido", "")
+                                
+                                test_debug = [f"🧪 TESTING: {partido}"]
+                                test_debug.append(f"  Pick: {pick_desc} ({pick_type})")
+                                test_debug.append(f"  Event ID: {event_id}")
+                                
+                                if not event_id:
+                                    test_debug.append(f"  ❌ Sin event_id - No se puede probar")
+                                else:
+                                    # Try ESPN endpoints
+                                    espn_urls = [
+                                        f"http://site.api.espn.com/apis/site/v2/sports/baseball/mlb/events/{event_id}",
+                                        f"http://site.api.espn.com/apis/site/v2/sports/basketball/nba/events/{event_id}",
+                                        f"http://site.api.espn.com/apis/site/v2/sports/hockey/nhl/events/{event_id}",
+                                        f"http://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/events/{event_id}",
+                                    ]
+                                    
+                                    espn_data = None
+                                    for url in espn_urls:
+                                        try:
+                                            r = requests.get(url, timeout=5)
+                                            if r.status_code == 200:
+                                                espn_data = r.json()
+                                                test_debug.append(f"  ✅ ESPN API encontrado")
+                                                break
+                                        except:
+                                            continue
+                                    
+                                    if not espn_data:
+                                        test_debug.append(f"  ❌ No se encontró en ESPN")
+                                    else:
+                                        try:
+                                            competition = espn_data.get("competitions", [{}])[0]
+                                            status = competition.get("status", {}).get("type", "")
+                                            test_debug.append(f"  Status: {status}")
+                                            
+                                            if status != "STATUS_FINAL":
+                                                test_debug.append(f"  ⏳ Partido aún NO finalizado")
+                                                test_debug.append(f"     (Espera a que finalice para auto-calificar)")
+                                            else:
+                                                competitors = competition.get("competitors", [])
+                                                if len(competitors) >= 2:
+                                                    home_score = int(competitors[0].get("score", 0))
+                                                    away_score = int(competitors[1].get("score", 0))
+                                                    total_score = home_score + away_score
+                                                    
+                                                    test_debug.append(f"  Resultado: {away_score} - {home_score}")
+                                                    test_debug.append(f"  Total: {total_score}")
+                                                    
+                                                    if pick_type == "ML":
+                                                        winner = "Home" if home_score > away_score else "Away"
+                                                        resultado = "✅ GANADO" if pick_desc == winner else "❌ PERDIDO"
+                                                        test_debug.append(f"  ML: Ganador={winner} vs Tu pick={pick_desc}")
+                                                        test_debug.append(f"  Resultado: {resultado}")
+                                                    else:
+                                                        pick_value = float(pick_desc.replace("O", "").replace("U", ""))
+                                                        if pick_desc.startswith("O"):
+                                                            resultado = "✅ GANADO" if total_score > pick_value else "❌ PERDIDO"
+                                                            test_debug.append(f"  O/U: {total_score} {'>' if total_score > pick_value else '<'} {pick_value}")
+                                                        else:
+                                                            resultado = "✅ GANADO" if total_score < pick_value else "❌ PERDIDO"
+                                                            test_debug.append(f"  O/U: {total_score} {'<' if total_score < pick_value else '>'} {pick_value}")
+                                                        test_debug.append(f"  Resultado: {resultado}")
+                                        except Exception as e:
+                                            test_debug.append(f"  ❌ Error procesando: {str(e)[:50]}")
+                                
+                                # Show results
+                                st.markdown("---")
+                                for line in test_debug:
+                                    st.caption(line)
+                else:
+                    st.info("📭 No hay picks de hoy. Hace un pick primero para testear.")
+            
+            # ═══════════════════════════════════════════════════════════════
+            #  EFFECTS SIMULATOR (Previewear WASTED y CONFETTI)
+            # ═══════════════════════════════════════════════════════════════
+            with st.expander("🎬 PREVIEW: Efectos Visuales (WASTED/CONFETTI)"):
+                st.info("Aquí puedes previewear cómo se ven los efectos cuando ganas o pierdes")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if st.button("💀 Ver WASTED (Pierdes)", use_container_width=True, key="preview_wasted"):
+                        st.markdown('<div class="wasted-overlay">W A S T E D</div>', unsafe_allow_html=True)
+                        st.caption("👆 Este overlay aparece cuando pierdes un pick")
+                
+                with col2:
+                    if st.button("🎉 Ver CONFETTI (Ganas)", use_container_width=True, key="preview_confetti"):
+                        st.balloons()
+                        st.success("🎊 ¡GANASTE! Aparece confetti y success message")
+    except:
+        pass
     
     # Si no tiene vidas, game over
     if my_vidas <= 0:
