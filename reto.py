@@ -2656,7 +2656,7 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                 if st.session_state.get(f"qp_val_{ev['id']}") or
                    st.session_state.get(f"ou_pending_{ev['id'][:10]}")}
 
-    FRIENDLY_LIMIT = 50  # Mostrar TODOS los amistosos
+    FRIENDLY_LIMIT = 12  # cap amistosos to avoid 45-item chaos
 
     for liga_lbl, liga_evs in sorted(by_liga.items(), key=lambda x: -len([e for e in x[1] if e.get("is_live")])):
         # Cap friendlies
@@ -2725,25 +2725,13 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             glow = ""
                             s_col = "#8888AA"
                         
-                        # Mostrar score solo si:
-                        # 1. El partido está EN VIVO o COMPLETADO
-                        # 2. El score NO es "0-0" (que es el valor por defecto PRE-GAME)
+                        # Mostrar score si existe
                         score_display = ""
-                        status_state = ev.get("status_state", "pre")
-                        completed = ev.get("completed", False)
-                        
                         if away_score and home_score:
                             try:
                                 a_score = int(away_score)
                                 h_score = int(home_score)
-                                
-                                # Mostrar score si:
-                                # - El partido NO está en PRE-GAME
-                                # - O si está en PRE pero el score NO es "0-0" (significa que ya empezó)
-                                should_show = (status_state != "pre") or (a_score != 0 and h_score != 0) or (a_score != 0 or h_score != 0)
-                                
-                                if should_show:
-                                    score_display = f"<br><span style='font-size:.5rem;color:#FFD700;'>{a_score} - {h_score}</span>"
+                                score_display = f"<br><span style='font-size:.5rem;color:#FFD700;'>{a_score} - {h_score}</span>"
                             except:
                                 pass
 
