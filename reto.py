@@ -1681,8 +1681,85 @@ def upsert_user(apodo: str, bankroll: float, wins: int, losses: int):
 
 
 # ─────────────────────────────────────────────────────────────
-#  AUTO-GRADER
+#  AUTO-GRADER (includes THE PIT)
 # ─────────────────────────────────────────────────────────────
+
+def auto_grade_pit_picks(apodo: str) -> int:
+    """
+    ✅ Auto-calificar picks de THE PIT
+    Usa la misma lógica: buscar por nombre de partido
+    """
+    try:
+        ss = get_ss()
+        if not ss:
+            return 0
+        
+        ws_pit = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
+        all_pit_picks = _safe_get_records(ws_pit)
+        
+        if not all_pit_picks:
+            return 0
+        
+        # Cargar TODOS los partidos de hoy (una sola vez)
+        all_today = load_all_today_events()
+        
+        graded_count = 0
+        
+        for idx, row in enumerate(all_pit_picks):
+            # Solo calificar pendientes
+            resultado_actual = str(row.get("resultado", "")).lower().strip()
+            if resultado_actual not in ["pendiente", ""]:
+                continue
+            
+            # Obtener nombre del partido
+            partido = str(row.get("partido", ""))
+            
+            if not partido or " vs " not in partido:
+                continue
+            
+            # Buscar en load_all_today_events()
+            found, home_score, away_score = find_match_by_name(partido, all_today)
+            
+            if not found or home_score == -1 or away_score == -1:
+                continue
+            
+            # CALIFICAR
+            pick_desc = str(row.get("pick_desc", ""))
+            
+            # Determinar ganador
+            if home_score > away_score:
+                ganador = "Home"
+            elif away_score > home_score:
+                ganador = "Away"
+            else:
+                ganador = "Tie"
+            
+            # Evaluar pick
+            resultado = ""
+            
+            if "Home" in pick_desc and ganador == "Home":
+                resultado = "ganado"
+            elif "Away" in pick_desc and ganador == "Away":
+                resultado = "ganado"
+            elif ganador == "Tie":
+                resultado = "nulo"
+            else:
+                resultado = "perdido"
+            
+            # Actualizar en Google Sheets
+            try:
+                # Actualizar row idx (0-indexed) → Excel row idx+2 (headers = row 1)
+                ws_pit.update(f"J{idx + 2}", resultado)
+                graded_count += 1
+            except:
+                pass
+        
+        return graded_count
+    
+    except Exception as e:
+        return 0
+
+
 def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.DataFrame, int, float]:
     """
     ✅ SOLUCIÓN B: Auto-calificar picks pendientes usando match por nombre
@@ -4596,6 +4673,17 @@ def main():
             pass
     else:
         bank = get_bankroll(df)
+    
+    # ── AUTO-GRADE THE PIT ──────────────────────────────────
+    try:
+        pit_graded = auto_grade_pit_picks(apodo)
+        if pit_graded > 0:
+            st.markdown(
+                f'<div class="autobanner">🩸 THE PIT: <strong>{pit_graded} pick(s)</strong> calificados.</div>',
+                unsafe_allow_html=True
+            )
+    except Exception:
+        pass
 
     # Manual refresh button
     col_r = st.columns([6,1])[1]
