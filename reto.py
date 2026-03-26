@@ -3073,11 +3073,6 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         ev_id    = ev["id"]
                         away     = ev["away"]; home = ev["home"]
                         sport_ev = ev.get("sport","soccer")
-                        
-                        # ✅ PATCH: Para SOCCER, invertir away/home PORQUE ESPN los devuelve invertidos
-                        if sport_ev.lower() == "soccer":
-                            away, home = home, away
-                        
                         # Formatear según deporte
                         formatted = format_partido_para_display(f"{away}@{home}", sport_ev)
                         if sport_ev.lower() == "soccer":
@@ -3093,6 +3088,8 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         ao = float(ev.get("away_odds",0))
                         ho = float(ev.get("home_odds",0))
                         do = float(ev.get("draw_odds",0))
+                        a_lg = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
+                        h_lg = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
                         qv     = st.session_state.get(f"qp_val_{ev_id}", "")
                         ou_key = f"ou_pending_{ev_id[:10]}"
                         is_open = bool(qv) or bool(st.session_state.get(ou_key))
@@ -3138,13 +3135,17 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             odds_html += (f'<span style="background:rgba(0,180,255,.12);color:#00B4FF;'
                                           f'padding:1px 6px;border-radius:4px;font-size:.58rem">{ho}</span>')
 
-                        # ✅ Logos normales (away/home YA están invertidos para soccer)
-                        logo_left  = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
-                        logo_right = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
-                        team_left, team_right = away_disp, home_disp
+                        # ✅ Para soccer: mostrar HOME a la izquierda, AWAY a la derecha
+                        if sport_ev.lower() == "soccer":
+                            logo_left, logo_right = h_lg, a_lg
+                            team_left, team_right = home_disp, away_disp
+                        else:
+                            # NBA/etc: mostrar AWAY a la izquierda, HOME a la derecha
+                            logo_left, logo_right = a_lg, h_lg
+                            team_left, team_right = away_disp, home_disp
                         
-                        # ✅ Crear columnas para tarjeta y botón
-                        card_c, btn_c = st.columns([4, 1])
+                        # ✅ Crear columnas: 85% tarjeta, 15% botón (más estrecho para que quepa)
+                        card_c, btn_c = st.columns([0.85, 0.15])
                         
                         with card_c:
                             st.markdown(
@@ -3172,7 +3173,6 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             )
                         with btn_c:
                             menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
-                            st.markdown(f'<div style="height:8px"></div>', unsafe_allow_html=True)
                             if st.button("APOSTAR", key=f"open_{ev_id[:10]}",
                                           use_container_width=True,
                                           type="primary" if menu_open else "secondary"):
