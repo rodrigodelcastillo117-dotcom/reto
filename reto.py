@@ -2005,13 +2005,18 @@ ALL_TODAY_LEAGUES = [
 @st.cache_data(ttl=1800, show_spinner=False)
 def load_all_today() -> dict:
     """
-    Fetch all games happening today+tomorrow across all leagues.
+    Fetch all games happening today and tomorrow only.
     Returns dict: {sport_group: {liga: [events]}}
     Cached 30 min to avoid hammering ESPN.
     """
-    today    = date.today().strftime("%Y%m%d")
-    tomorrow = (date.today() + timedelta(days=1)).strftime("%Y%m%d")
-    result   = {}  # {sport_group: {liga: [events]}}
+    today    = date.today()
+    tomorrow = today + timedelta(days=1)
+    # Cutoff: nothing after end of tomorrow
+    cutoff_dt = datetime(tomorrow.year, tomorrow.month, tomorrow.day, 23, 59, 59)
+
+    today_str    = today.strftime("%Y%m%d")
+    tomorrow_str = tomorrow.strftime("%Y%m%d")
+    result   = {}
     seen_ids = set()
 
     for sport_group, liga_name, sport, league_slug in ALL_TODAY_LEAGUES:
@@ -2019,13 +2024,10 @@ def load_all_today() -> dict:
             url = f"{ESPN_BASE}/{sport}/{league_slug}/scoreboard"
             events_found = []
 
-            # For tennis: search bare scoreboard + today + tomorrow to get all active matches
-            date_params = [None, today, tomorrow] if sport == "tennis" else [today, tomorrow]
+            date_params = [today_str, tomorrow_str]
 
             for dt_str in date_params:
-                params = {"limit": 200}
-                if dt_str:
-                    params["dates"] = dt_str
+                params = {"limit": 200, "dates": dt_str}
                 r = requests.get(url, params=params, timeout=8)
                 if r.status_code != 200:
                     continue
@@ -2038,19 +2040,23 @@ def load_all_today() -> dict:
                     completed = (state == "post") or st_type.get("completed", False)
                     if completed:
                         continue
+                    # Strict date filter — skip anything after tomorrow
+                    date_raw = ev.get("date","")
+                    try:
+                        dt_ev = datetime.fromisoformat(date_raw.replace("Z","+00:00"))
+                        dt_ev_naive = dt_ev.replace(tzinfo=None)
+                        if dt_ev_naive > cutoff_dt:
+                            continue
+                        dt_mx = dt_ev - timedelta(hours=6)
+                        d_str = dt_mx.strftime("%d %b %H:%M")
+                    except Exception:
+                        d_str = date_raw[:10]
                     comp0 = ev.get("competitions",[{}])[0]
                     comps = comp0.get("competitors",[])
                     home_c = next((c for c in comps if c.get("homeAway")=="home"), comps[0] if comps else {})
                     away_c = next((c for c in comps if c.get("homeAway")=="away"), comps[1] if len(comps)>1 else {})
                     home_i = _extract_competitor_info(home_c, sport)
                     away_i = _extract_competitor_info(away_c, sport)
-                    date_raw = ev.get("date","")
-                    try:
-                        dt_ev  = datetime.fromisoformat(date_raw.replace("Z","+00:00"))
-                        dt_mx  = dt_ev - timedelta(hours=6)
-                        d_str  = dt_mx.strftime("%d %b %H:%M")
-                    except Exception:
-                        d_str = date_raw[:10]
                     is_live = (state == "in") and not completed
                     # Skip if both names TBD/unknown
                     if home_i["name"] in ("?","TBD","") and away_i["name"] in ("?","TBD",""):
@@ -2304,81 +2310,317 @@ def mk_logo(url: str, flag: str, name: str, sz: int = 40, brad: str = "8px") -> 
 #  TAB 1 — REGISTRAR PICK
 # ─────────────────────────────────────────────────────────────
 def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
-    st.markdown('<div class="sec-head">Buscar partido</div>', unsafe_allow_html=True)
 
-    # ── Step 1: Sport group → then league
-    c1, c2 = st.columns(2)
-    with c1:
-        group_names = list(ESPN_LEAGUES_GROUPED.keys())
-        sport_group = st.selectbox("Deporte", group_names, key="reg_sport_group")
-        ligas_in_group = list(ESPN_LEAGUES_GROUPED[sport_group].keys())
-        liga_sel = st.selectbox("Liga / Torneo", ligas_in_group, key="reg_liga")
-    with c2:
-        query = st.text_input(
-            "Buscar equipo / jugador",
-            placeholder="ej: Turkey, Italy, Liverpool, Lakers…",
-            key="reg_query"
-        )
+    SPORT_TABS = {
+        "🌐 Todos": "__all_today__",
+        "⚽ Soccer": "soccer",
+        "🏀 NBA":    "basketball",
+        "⚾ MLB":    "baseball",
+        "🏒 NHL":    "hockey",
+        "🏈 NFL":    "football",
+    }
+    SPORT_ICONS = {"soccer":"⚽","basketball":"🏀","baseball":"⚾","hockey":"🏒","football":"🏈"}
 
-    sport, league = ESPN_LEAGUES[liga_sel]
+    # ── Top sport filter tabs ─────────────────────────────────
+    tab_names = list(SPORT_TABS.keys())
+    active_sport = st.session_state.get("reg_sport_tab", "🌐 Todos")
 
-    # ── All Today mode ──────────────────────────────────────────
-    if league == "__all_today__":
-        render_all_today(apodo)
-        # Step 2 still works — if user selected an event, show pick builder
-        selected = st.session_state.get("selected_event", None)
-        if selected:
-            st.markdown("---")
-        else:
-            return
+    cols = st.columns(len(tab_names))
+    for i, tname in enumerate(tab_names):
+        with cols[i]:
+            is_active = (active_sport == tname)
+            if st.button(tname,
+                         key=f"sporttab_{i}",
+                         type="primary" if is_active else "secondary",
+                         use_container_width=True):
+                st.session_state["reg_sport_tab"] = tname
+                st.session_state.pop("search_events", None)
+                st.session_state.pop("selected_event", None)
+                st.session_state.pop("reg_query", None)
+                st.rerun()
 
-    events = []
+    active_sport = st.session_state.get("reg_sport_tab", "🌐 Todos")
+    sport_key = SPORT_TABS[active_sport]
 
-    if st.button("🔍 BUSCAR PARTIDOS", key="btn_search"):
-        with st.spinner("Consultando…"):
-            # Use Odds API for international soccer (more complete coverage)
-            use_odds = (sport == "soccer" and league in ODDS_SPORT_MAP) or league == "__team_search__"
-            if use_odds:
-                events = odds_search_events(league, query)
-                # Fallback to ESPN if Odds API returned nothing
-                if not events and league != "__team_search__":
-                    events = espn_search_events(sport, league, query)
-            elif league == "__team_search__":
-                events = espn_search_by_team(sport, query) if query.strip() else []
+    # ── Search bar (optional filter) ─────────────────────────
+    query = st.text_input("🔍 Filtrar equipo...", placeholder="ej: Lakers, Italy, Yankees",
+                          key="reg_query", label_visibility="collapsed")
+
+    # ── Load events ──────────────────────────────────────────
+    @st.cache_data(ttl=1800, show_spinner=False)
+    def _get_today_by_sport(sport_filter: str) -> list:
+        """Get today's events for a specific sport from load_all_today cache."""
+        data = load_all_today()
+        events = []
+        for grp, ligas in data.items():
+            for liga_name, evs in ligas.items():
+                for ev in evs:
+                    sp = ev.get("sport","")
+                    if sport_filter == "__all_today__" or sp == sport_filter:
+                        ev_copy = dict(ev)
+                        ev_copy["_liga_label"] = liga_name
+                        events.append(ev_copy)
+        events.sort(key=lambda e: (e.get("sport",""), e.get("date_raw","")))
+        return events
+
+    with st.spinner("Cargando partidos..."):
+        all_evs = _get_today_by_sport(sport_key)
+
+    # Filter by query
+    if query.strip():
+        q = query.strip().lower()
+        all_evs = [e for e in all_evs
+                   if q in e["home"].lower() or q in e["away"].lower()]
+
+    if not all_evs:
+        st.info("No hay partidos disponibles. Intenta con otro deporte o actualiza con 🔄")
+        return
+
+    # Count + header
+    st.markdown(
+        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.55rem;'
+        f'color:var(--text3);margin:4px 0 8px">'
+        f'{len(all_evs)} PARTIDOS · click en el equipo que quieres que gane</div>',
+        unsafe_allow_html=True
+    )
+
+    # ── Render each event with inline pick ───────────────────
+    for ev_i, ev in enumerate(all_evs):
+        ev_id   = ev["id"]
+        away    = ev["away"]; home = ev["home"]
+        sport_ev = ev.get("sport","soccer")
+        sp_ico  = SPORT_ICONS.get(sport_ev,"🎯")
+        is_live = ev.get("is_live", False)
+        s_txt   = "● LIVE" if is_live else ev.get("date","")
+        s_col   = "#FF3D00" if is_live else "#8888AA"
+        liga_lbl = ev.get("_liga_label", ev.get("liga",""))
+        if "cargar" in liga_lbl.lower(): liga_lbl = sp_ico
+
+        # Odds already on event or will be fetched on pick
+        ao = float(ev.get("away_odds",0))
+        ho = float(ev.get("home_odds",0))
+        do = float(ev.get("draw_odds",0))
+
+        # Flags/logos
+        sz = 32
+        br = "8px"
+        a_lg = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, sz, br)
+        h_lg = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, sz, br)
+
+        # Is this event open?
+        qv  = st.session_state.get(f"qp_val_{ev_id}", "")
+        qm  = st.session_state.get(f"qp_merc_{ev_id}", "")
+        is_open = bool(qv) or st.session_state.get(f"ou_pending_{ev_id[:10]}","") or \
+                  st.session_state.get(f"expand_other_{ev_id[:10]}", False)
+        border = "rgba(240,255,0,.5)" if is_open else ("rgba(255,61,0,.4)" if is_live else "rgba(255,255,255,.06)")
+        bg     = "rgba(240,255,0,.04)" if is_open else "rgba(255,255,255,.015)"
+
+        # ── Compact single-row card ──────────────────────────
+        # Format odds inline
+        odds_str = ""
+        if ao > 1 and ho > 1:
+            if do > 1:
+                odds_str = (f'<span style="color:#00FF88;font-size:.58rem">{ao}</span>'
+                           f'<span style="color:#8888AA;font-size:.52rem"> · </span>'
+                           f'<span style="color:#FFB800;font-size:.58rem">{do}</span>'
+                           f'<span style="color:#8888AA;font-size:.52rem"> · </span>'
+                           f'<span style="color:#00B4FF;font-size:.58rem">{ho}</span>')
             else:
-                events = espn_search_events(sport, league, query)
-            st.session_state["search_events"] = events
-            st.session_state["selected_event"] = None
+                odds_str = (f'<span style="color:#00FF88;font-size:.58rem">{ao}</span>'
+                           f'<span style="color:#8888AA;font-size:.52rem"> · </span>'
+                           f'<span style="color:#00B4FF;font-size:.58rem">{ho}</span>')
 
-    events = st.session_state.get("search_events", [])
-    selected = st.session_state.get("selected_event", None)
-
-    if events:
-        is_tennis = (sport == "tennis")
-        sz_ev   = 40
-        brad_ev = "50%" if is_tennis else "8px"
-
-        ev_list = events[:30]
         st.markdown(
-            f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.58rem;'
-            f'color:var(--text3);margin-bottom:10px">{len(ev_list)} PARTIDOS ENCONTRADOS</div>',
+            f'<div style="background:{bg};border:1px solid {border};border-radius:10px;'
+            f'padding:8px 12px;margin-bottom:3px;display:flex;align-items:center;gap:8px">'
+            f'<div style="font-size:.9rem;flex-shrink:0">{sp_ico}</div>'
+            f'<div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0">'
+            f'{a_lg}'
+            f'<span style="font-size:.78rem;font-weight:700;color:#EEEEF5;white-space:nowrap;'
+            f'overflow:hidden;text-overflow:ellipsis;max-width:110px">{away}</span>'
+            f'<span style="font-size:.6rem;color:#44445A;flex-shrink:0">vs</span>'
+            f'<span style="font-size:.78rem;font-weight:700;color:#EEEEF5;white-space:nowrap;'
+            f'overflow:hidden;text-overflow:ellipsis;max-width:110px">{home}</span>'
+            f'{h_lg}'
+            f'</div>'
+            f'<div style="text-align:right;flex-shrink:0">'
+            f'{odds_str}'
+            f'<div style="font-size:.48rem;color:{s_col};font-family:\'JetBrains Mono\',monospace'
+            f'{";animation:blinkLive 1.2s infinite" if is_live else ""}">{s_txt}</div>'
+            f'</div>'
+            f'</div>',
             unsafe_allow_html=True
         )
 
-        for ev_i, ev in enumerate(ev_list):
-            ev_id   = ev["id"]
-            away    = ev["away"]; home = ev["home"]
+        # ── Quick pick buttons ───────────────────────────────
+        if sport_ev == "soccer":
+            opts = [(away,"ML"),(None,"draw"),( home,"ML")]
+            lbls = [f"⚽ {away[:14]}", "➖ X", f"⚽ {home[:14]}"]
+        elif sport_ev == "basketball":
+            opts = [(away,"ML"),(home,"ML"),("Over","O/U"),("Under","O/U")]
+            lbls = [f"🏀 {away[:12]}", f"🏀 {home[:12]}", "📈 Over", "📉 Under"]
+        elif sport_ev == "baseball":
+            opts = [(away,"ML"),(home,"ML"),("Over","O/U"),("Under","O/U")]
+            lbls = [f"⚾ {away[:12]}", f"⚾ {home[:12]}", "📈 Over", "📉 Under"]
+        elif sport_ev == "hockey":
+            opts = [(away,"ML"),(home,"ML"),("Over 5.5","O/U"),("Under 5.5","O/U")]
+            lbls = [f"🏒 {away[:12]}", f"🏒 {home[:12]}", "📈 O5.5", "📉 U5.5"]
+        elif sport_ev == "football":
+            opts = [(away,"ML"),(home,"ML")]
+            lbls = [f"🏈 {away[:16]}", f"🏈 {home[:16]}"]
+        else:
+            opts = [(away,"ML"),(home,"ML")]
+            lbls = [f"🏆 {away[:16]}", f"🏆 {home[:16]}"]
 
-            # Skip TBD tennis
-            if ev.get("sport","") == "tennis" and (away in ("?","TBD","") or home in ("?","TBD","")):
-                continue
-            is_live = ev.get("is_live", False)
-            is_sel  = selected and selected["id"] == ev_id
-            s_txt   = "● LIVE" if is_live else ev["date"]
-            s_col   = "#FF3D00" if is_live else "#00FFD1"
-            s_anim  = "animation:blinkLive 1.2s infinite" if is_live else ""
-            a_lg    = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, sz_ev, brad_ev)
-            h_lg    = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, sz_ev, brad_ev)
+        btn_cols = st.columns(len(lbls) + 1)
+        for bi, (col, lbl, (pval, pmerc)) in enumerate(zip(btn_cols[:len(lbls)], lbls, opts)):
+            with col:
+                if st.button(lbl, key=f"qp_{ev_id[:10]}_{bi}", use_container_width=True):
+                    if pval in ("Over","Under"):
+                        st.session_state[f"ou_pending_{ev_id[:10]}"] = pval
+                        st.session_state.pop(f"qp_val_{ev_id}", None)
+                    elif pval is None:  # draw
+                        st.session_state[f"qp_val_{ev_id}"]  = "Empate"
+                        st.session_state[f"qp_merc_{ev_id}"] = "1X2"
+                    else:
+                        st.session_state[f"qp_val_{ev_id}"]  = pval
+                        st.session_state[f"qp_merc_{ev_id}"] = pmerc
+                        st.session_state.pop(f"ou_pending_{ev_id[:10]}", None)
+                    st.rerun()
+
+        with btn_cols[-1]:
+            expand_key = f"expand_other_{ev_id[:10]}"
+            if st.button("✏️", key=f"qp_custom_{ev_id[:10]}", use_container_width=True,
+                         help="Más mercados"):
+                st.session_state[expand_key] = not st.session_state.get(expand_key, False)
+                st.rerun()
+
+        # ── Expanded other markets ───────────────────────────
+        if st.session_state.get(expand_key, False) and not qv:
+            if sport_ev == "soccer":
+                more = {f"📈 Over 2.5":("Over 2.5","O/U"),
+                        f"📉 Under 2.5":("Under 2.5","O/U"),
+                        "⚽⚽ BTTS":("Ambos anotan","BTTS"),
+                        f"🔱 {away[:10]} -1":( f"{away} -1","Hándicap"),
+                        f"🔱 {home[:10]} -1":(f"{home} -1","Hándicap")}
+            elif sport_ev in ("basketball","baseball"):
+                more = {f"🔱 {away[:10]} -3.5":(f"{away} -3.5","Hándicap"),
+                        f"🔱 {home[:10]} -3.5":(f"{home} -3.5","Hándicap")}
+            else:
+                more = {}
+            if more:
+                mc = st.columns(min(4, len(more)))
+                for mi, (mk_lbl, (mv, mm)) in enumerate(more.items()):
+                    with mc[mi % len(mc)]:
+                        if st.button(mk_lbl, key=f"op_{ev_id[:10]}_{mi}", use_container_width=True):
+                            st.session_state[f"qp_val_{ev_id}"]  = mv
+                            st.session_state[f"qp_merc_{ev_id}"] = mm
+                            st.session_state[expand_key] = False
+                            st.rerun()
+
+        # ── Over/Under line input ────────────────────────────
+        ou_key = f"ou_pending_{ev_id[:10]}"
+        if st.session_state.get(ou_key):
+            direction = st.session_state[ou_key]
+            def_line = 220.5 if sport_ev=="basketball" else 8.5 if sport_ev=="baseball" else 5.5
+            lc1, lc2, lc3 = st.columns([3,1,1])
+            with lc1:
+                line_val = st.number_input(f"Línea {direction}", min_value=0.5,
+                                            max_value=500.0, value=def_line, step=0.5,
+                                            key=f"ou_line_{ev_id[:10]}")
+            with lc2:
+                if st.button("✅", key=f"ou_ok_{ev_id[:10]}", use_container_width=True):
+                    st.session_state[f"qp_val_{ev_id}"]  = f"{direction} {line_val}"
+                    st.session_state[f"qp_merc_{ev_id}"] = "O/U"
+                    st.session_state.pop(ou_key, None)
+                    st.rerun()
+            with lc3:
+                if st.button("✖", key=f"ou_x_{ev_id[:10]}", use_container_width=True):
+                    st.session_state.pop(ou_key, None)
+                    st.rerun()
+
+        # ── Save form ────────────────────────────────────────
+        qv = st.session_state.get(f"qp_val_{ev_id}", "")
+        qm = st.session_state.get(f"qp_merc_{ev_id}", "ML")
+
+        if qv:
+            # Fetch odds on demand
+            if ao == 0 and ho == 0:
+                with st.spinner("Momios..."):
+                    ao, do, ho = get_live_odds(sport_ev, home, away)
+
+            # Default momio from odds
+            ql = qv.lower()
+            def_momio = 1.85
+            if "empate" in ql and do > 1:              def_momio = round(do, 2)
+            elif home.lower()[:5] in ql and ho > 1:    def_momio = round(ho, 2)
+            elif away.lower()[:5] in ql and ao > 1:    def_momio = round(ao, 2)
+            elif ao > 1:                                def_momio = round(ao, 2)
+
+            # Kelly
+            b = def_momio - 1
+            kelly_bet = max(50.0, round(bank * max(0, (1/def_momio*(b+1)-1)/b) * 0.25, 0)) if b > 0 else 50.0
+            kelly_bet = min(kelly_bet, bank)
+
+            st.markdown(
+                f'<div style="background:rgba(240,255,0,.06);border:1px solid rgba(240,255,0,.3);'
+                f'border-radius:8px;padding:8px 14px;margin:3px 0">'
+                f'<span style="font-size:.6rem;color:#F0FF00;font-family:\'JetBrains Mono\',monospace">'
+                f'💾 {qv}</span>'
+                f'{"  ·  <span style=\\'color:#8888AA;font-size:.55rem\\'>" + str(ao) + " · " + str(do) + " · " + str(ho) + "</span>" if ao > 1 else ""}'
+                f'</div>',
+                unsafe_allow_html=True
+            )
+            sc1, sc2, sc3, sc4 = st.columns([2, 2, 1, 1])
+            with sc1:
+                momio_v = st.number_input("Momio", min_value=1.01, max_value=99.0,
+                                           value=float(def_momio), step=0.05,
+                                           key=f"qmomio_{ev_id[:10]}")
+            with sc2:
+                apuesta_v = st.number_input(f"Apuesta · Kelly ${kelly_bet:,.0f}",
+                                             min_value=1.0, max_value=float(bank),
+                                             value=float(kelly_bet), step=50.0,
+                                             key=f"qapuesta_{ev_id[:10]}")
+                pct = apuesta_v/bank*100 if bank > 0 else 0
+                bar_c = "#00FF88" if pct<=5 else "#FFB800" if pct<=10 else "#FF2D55"
+                st.markdown(
+                    f'<div style="display:flex;align-items:center;gap:6px;margin-top:2px">'
+                    f'<div style="flex:1;background:rgba(255,255,255,.05);border-radius:99px;height:3px">'
+                    f'<div style="width:{min(100,pct*4):.0f}%;height:100%;background:{bar_c};border-radius:99px"></div>'
+                    f'</div><span style="font-size:.5rem;color:{bar_c}">{pct:.1f}%</span></div>',
+                    unsafe_allow_html=True)
+            with sc3:
+                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                if st.button("💾", key=f"qsave_{ev_id[:10]}", type="primary",
+                              use_container_width=True, help="Guardar pick"):
+                    raw_liga = ev.get("_liga_label", ev.get("liga",""))
+                    SPORT_DISPLAY = {"soccer":"⚽ Fútbol","basketball":"🏀 NBA",
+                                     "baseball":"⚾ MLB","hockey":"🏒 NHL","football":"🏈 NFL"}
+                    if not raw_liga or "cargar" in raw_liga.lower():
+                        raw_liga = SPORT_DISPLAY.get(sport_ev, sport_ev.upper())
+                    row = {
+                        "fecha": str(date.today()), "deporte": sport_ev,
+                        "liga": raw_liga, "partido": f"{away} vs {home}",
+                        "event_id": ev_id, "mercado": qm, "pick_desc": qv,
+                        "momio": momio_v, "apuesta": apuesta_v,
+                        "resultado": "pendiente", "ganancia_neta": 0,
+                        "bankroll_post": bank, "notas": "",
+                    }
+                    if save_pick(apodo, row):
+                        st.success(f"✅ {qv} @ {momio_v}x — ${apuesta_v:,.0f}")
+                        for k in ["df_picks","search_events","selected_event","pick_type"]:
+                            st.session_state.pop(k, None)
+                        st.session_state.pop(f"qp_val_{ev_id}", None)
+                        st.session_state.pop(f"qp_merc_{ev_id}", None)
+                        st.rerun()
+            with sc4:
+                st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                if st.button("✖", key=f"qcancel_{ev_id[:10]}", use_container_width=True):
+                    st.session_state.pop(f"qp_val_{ev_id}", None)
+                    st.session_state.pop(f"qp_merc_{ev_id}", None)
+                    st.rerun()
+
+
 
             # Odds display
             ho = ev.get("home_odds",0); ao = ev.get("away_odds",0); do = ev.get("draw_odds",0)
@@ -2658,231 +2900,6 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         st.rerun()
 
             st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
-
-
-    # ── Step 2: Visual pick builder (only if event selected)
-    selected = st.session_state.get("selected_event", None)
-    if selected:
-        away = selected["away"]
-        home = selected["home"]
-        sport_sel = selected.get("sport", sport)
-        is_tennis_pick = (sport_sel == "tennis")
-        is_soccer_pick = (sport_sel == "soccer")
-
-        # Selected event banner
-        away_lg_sm = mk_logo(selected.get("away_logo",""), selected.get("away_flag",""), away)
-        home_lg_sm = mk_logo(selected.get("home_logo",""), selected.get("home_flag",""), home)
-        st.markdown(
-            f'<div style="background:linear-gradient(135deg,rgba(240,255,0,.07),rgba(255,184,0,.04));'
-            f'border:1px solid rgba(240,255,0,.35);border-radius:12px;padding:12px 18px;margin:14px 0;'
-            f'display:flex;align-items:center;gap:14px">'
-            f'<div style="display:flex;align-items:center;gap:8px;flex:1">'
-            f'{away_lg_sm}'
-            f'<div style="font-family:\'Rajdhani\',sans-serif;font-size:.9rem;font-weight:700;color:#EEEEF5">{away}</div>'
-            f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.75rem;color:#44445A;margin:0 4px">VS</div>'
-            f'<div style="font-family:\'Rajdhani\',sans-serif;font-size:.9rem;font-weight:700;color:#EEEEF5">{home}</div>'
-            f'{home_lg_sm}'
-            f'</div>'
-            f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.52rem;color:#44445A;text-align:right">'
-            f'{liga_sel}<br>{selected["date"]}</div>'
-            f'</div>',
-            unsafe_allow_html=True
-        )
-
-        st.markdown('<div class="sec-head">¿Cuál es tu pick?</div>', unsafe_allow_html=True)
-
-        # ── STEP A: Pick type buttons
-        pick_type = st.session_state.get("pick_type", None)
-
-        # Define pick categories based on sport
-        if is_tennis_pick:
-            pick_categories = {
-                "🎾 Ganador del match": "ML",
-                "📊 Hándicap de games": "Hándicap",
-                "🔢 Total de games O/U": "Over/Under Goles",
-            }
-        elif is_soccer_pick:
-            pick_categories = {
-                f"🏆 {away} gana": "ML",
-                "🤝 Empate": "ML",
-                f"🏆 {home} gana": "ML",
-                "⚽ Over/Under goles": "Over/Under Goles",
-                "🎯 BTTS (ambos anotan)": "BTTS (Ambos Anotan)",
-                "📐 Hándicap asiático": "Hándicap Asiático",
-                "🔲 Doble oportunidad": "Doble Oportunidad",
-            }
-        else:
-            # NBA / NFL / NHL / MLB
-            pick_categories = {
-                f"🏆 {away} ML": "ML",
-                f"🏆 {home} ML": "ML",
-                f"📊 {away} hándicap": "Hándicap Asiático",
-                f"📊 {home} hándicap": "Hándicap Asiático",
-                "📈 Over puntos": "Over/Under Goles",
-                "📉 Under puntos": "Over/Under Goles",
-            }
-
-        # Render pick type buttons in a grid
-        cat_keys = list(pick_categories.keys())
-        n_cols   = 3 if len(cat_keys) >= 3 else len(cat_keys)
-        btn_rows = [cat_keys[i:i+n_cols] for i in range(0, len(cat_keys), n_cols)]
-
-        for btn_row in btn_rows:
-            cols = st.columns(len(btn_row))
-            for col, cat in zip(cols, btn_row):
-                with col:
-                    is_active = (pick_type == cat)
-                    # Force dark text on inactive, neon on active
-                    btn_style = (
-                        "background:linear-gradient(135deg,rgba(240,255,0,.15),rgba(255,184,0,.1))!important;"
-                        "border-color:rgba(240,255,0,.6)!important;color:#F0FF00!important;"
-                        "box-shadow:0 0 14px rgba(240,255,0,.2)!important;"
-                    ) if is_active else (
-                        "color:#EEEEF5!important;background:rgba(255,255,255,.06)!important;"
-                        "border-color:rgba(255,255,255,.15)!important;"
-                    )
-                    st.markdown(
-                        f'<style>'
-                        f'div[data-testid="stButton"]:has(button[kind="secondary"][title="{cat}"]) button,'
-                        f'div[data-testid="stButton"]:has(button[data-testid="{cat}"]) button'
-                        f'{{ {btn_style} }}</style>',
-                        unsafe_allow_html=True
-                    )
-                    if st.button(cat, key=f"ptype_{cat}"):
-                        st.session_state["pick_type"]   = cat
-                        st.session_state["pick_desc_v"] = cat
-                        st.rerun()
-
-        # ── STEP B: Details after pick type chosen
-        if pick_type:
-            st.markdown(
-                f'<div style="background:rgba(240,255,0,.05);border:1px solid rgba(240,255,0,.2);'
-                f'border-radius:10px;padding:10px 14px;margin:10px 0;'
-                f'font-family:\'Rajdhani\',sans-serif;font-size:.85rem;color:#F0FF00">'
-                f'Pick seleccionado: <strong>{pick_type}</strong></div>',
-                unsafe_allow_html=True
-            )
-
-            mercado = pick_categories[pick_type]
-
-            # Extra input for lines (Over/Under value, handicap value)
-            pick_extra = ""
-            if "Over" in pick_type or "Under" in pick_type or "O/U" in pick_type or "total" in pick_type.lower():
-                line = st.number_input("Línea (ej: 2.5 goles, 220.5 puntos)", min_value=0.5, max_value=300.0, value=2.5, step=0.5, key="pick_line")
-                direction = "Over" if ("Over" in pick_type or "over" in pick_type.lower()) else "Under"
-                pick_extra = f" {direction} {line}"
-            elif "hándicap" in pick_type.lower() or "Hándicap" in pick_type:
-                hcap = st.number_input("Valor hándicap (ej: -1.5, +2.5)", min_value=-10.0, max_value=10.0, value=-1.5, step=0.5, key="pick_hcap")
-                pick_extra = f" {hcap:+.1f}"
-
-            pick_desc = pick_type + pick_extra
-
-            # Pre-fill momio from Odds API — reset session key when event/pick changes
-            ev_id       = selected.get("id","")
-            momio_key   = f"pick_momio_{ev_id}_{pick_type[:8]}"
-            default_momio = 1.85
-
-            # Try to get odds — either from event object (Odds API events) or by matching
-            ho = float(selected.get("home_odds") or 0)
-            ao = float(selected.get("away_odds") or 0)
-            do = float(selected.get("draw_odds") or 0)
-
-            # If ESPN event (no odds), try to find matching event in Odds API cache
-            if ho == 0 and sport_sel == "soccer":
-                try:
-                    for sk in WC_QUALIFIER_KEYS + [
-                        ODDS_SPORT_MAP.get(liga_sel,""),
-                        "soccer_epl","soccer_spain_la_liga","soccer_italy_serie_a",
-                        "soccer_germany_bundesliga","soccer_france_ligue_one",
-                        "soccer_uefa_champs_league","soccer_conmebol_libertadores",
-                    ]:
-                        if not sk: continue
-                        cached = odds_fetch_sport(sk)
-                        for cev in cached:
-                            ch = cev["home"].lower(); ca = cev["away"].lower()
-                            eh = home.lower();        ea = away.lower()
-                            if (eh[:5] in ch or ch[:5] in eh) and (ea[:5] in ca or ca[:5] in ea):
-                                ho = cev.get("home_odds",0)
-                                ao = cev.get("away_odds",0)
-                                do = cev.get("draw_odds",0)
-                                break
-                        if ho > 0: break
-                except Exception:
-                    pass
-
-            if ho > 1 or ao > 1:
-                pt_low = pick_type.lower()
-                hn_low = home.lower(); an_low = away.lower()
-                if any(w in pt_low for w in [hn_low[:5], "home gana", "local gana"]) and ho > 1:
-                    default_momio = round(ho, 2)
-                elif any(w in pt_low for w in [an_low[:5], "away gana", "visita gana"]) and ao > 1:
-                    default_momio = round(ao, 2)
-                elif any(w in pt_low for w in ["empate","draw"]) and do > 1:
-                    default_momio = round(do, 2)
-                elif ao > 1:
-                    default_momio = round(ao, 2)
-
-            # Show all three odds as reference
-            if ho > 1:
-                odds_ref = (f"💰 **{away}** {ao}  ·  Empate {do}  ·  **{home}** {ho}"
-                            if do > 1 else f"💰 **{away}** {ao}  ·  **{home}** {ho}")
-                st.caption(odds_ref)
-
-            c1, c2 = st.columns(2)
-            with c1:
-                momio = st.number_input(
-                    "Momio (decimal)",
-                    min_value=1.01, max_value=99.0,
-                    value=default_momio,
-                    step=0.01,
-                    key=momio_key  # unique key per event+pick — always reflects correct default
-                )
-            with c2:
-                apuesta = st.number_input(
-                    "¿Cuánto apostaste? ($MXN)",
-                    min_value=1.0, max_value=float(bank),
-                    value=50.0, step=50.0, key="pick_apuesta"
-                )
-
-            notas = st.text_area("Análisis / notas (opcional)", placeholder="¿Por qué este pick?", height=60, key="pick_notas")
-
-            # % del bankroll indicator
-            pct_bank = apuesta / bank * 100 if bank > 0 else 0
-            bar_c = "#00FF88" if pct_bank <= 3 else "#FFB800" if pct_bank <= 5 else "#FF2D55"
-            st.markdown(
-                f'<div style="display:flex;align-items:center;gap:10px;margin:6px 0 12px">'
-                f'<div style="flex:1;background:rgba(255,255,255,.05);border-radius:99px;height:6px;overflow:hidden">'
-                f'<div style="width:{min(100,pct_bank*10):.0f}%;height:100%;background:{bar_c};border-radius:99px"></div>'
-                f'</div>'
-                f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.6rem;color:{bar_c};white-space:nowrap">'
-                f'{pct_bank:.1f}% del bankroll</div>'
-                f'</div>',
-                unsafe_allow_html=True
-            )
-
-            if st.button("💾 GUARDAR PICK", type="primary", key="btn_save_pick"):
-                row = {
-                    "fecha":         str(date.today()),
-                    "deporte":       sport_sel,
-                    "liga":          liga_sel,
-                    "partido":       f"{away} vs {home}",
-                    "event_id":      selected["id"],
-                    "mercado":       mercado,
-                    "pick_desc":     pick_desc,
-                    "momio":         momio,
-                    "apuesta":       apuesta,
-                    "resultado":     "pendiente",
-                    "ganancia_neta": 0,
-                    "bankroll_post": bank,
-                    "notas":         notas,
-                }
-                if save_pick(apodo, row):
-                    st.success(f"✅ Pick guardado: {pick_desc} @ {momio}x — ${apuesta:,.0f}")
-                    st.session_state.pop("df_picks", None)
-                    st.session_state.pop("search_events", None)
-                    st.session_state.pop("selected_event", None)
-                    st.session_state.pop("pick_type", None)
-                    st.rerun()
 
 
     # ── Pending picks — resolve manually
