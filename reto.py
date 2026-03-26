@@ -674,10 +674,16 @@ WC_QUALIFIER_KEYS = [
     "soccer_uefa_nations_league",
 ]
 
+# Odds API budget: ~500 requests/month free plan
+# Strategy: only fetch odds ON DEMAND when user selects a specific league/sport
+# NOT on load_all_today — that would burn the quota fast
+# Each odds_fetch_sport call = 1 request, cached 6h in Google Sheets
+# Safe budget: ~3-4 sport keys per day max = ~100 requests/month
+
 ODDS_CACHE_TAB     = "odds_cache"
 ODDS_CACHE_HEADERS = ["sport_key","fetched_at","event_id","home","away",
                        "date_raw","home_odds","away_odds","draw_odds","odds_sport"]
-ODDS_CACHE_TTL_HRS = 6  # hours before Sheet cache is considered stale
+ODDS_CACHE_TTL_HRS = 12  # hours before Sheet cache is considered stale — conserves API quota
 
 def _odds_sheet_read(sport_key: str) -> list:
     """Read cached odds from Google Sheet. Returns [] if stale or missing."""
@@ -769,6 +775,55 @@ def _odds_sheet_write(sport_key: str, events: list):
             ws.append_rows(new_rows)
     except Exception:
         pass
+
+
+def get_live_odds(sport: str, home: str, away: str) -> tuple:
+    """
+    Get live odds ON DEMAND for a specific event when user is about to bet.
+    Returns (away_odds, draw_odds, home_odds).
+    Uses Sheet cache — only calls The Odds API if cache is stale (12h).
+    """
+    SPORT_KEY_MAP = {
+        "basketball": ["basketball_nba"],
+        "baseball":   ["baseball_mlb"],
+        "hockey":     ["icehockey_nhl"],
+        "football":   ["americanfootball_nfl"],
+        "soccer":     [
+            "soccer_epl","soccer_spain_la_liga","soccer_italy_serie_a",
+            "soccer_germany_bundesliga","soccer_france_ligue_one",
+            "soccer_mexico_ligamx","soccer_usa_mls",
+            "soccer_uefa_champs_league","soccer_conmebol_libertadores",
+            "soccer_international_friendlies",
+            "soccer_fifa_world_cup_qualifier_europe",
+            "soccer_fifa_world_cup_qualifier_concacaf",
+            "soccer_fifa_world_cup_qualifier_conmebol",
+            "soccer_uefa_nations_league",
+            "soccer_uefa_europa_league",
+        ],
+    }
+
+    def name_sim(a: str, b: str) -> bool:
+        a, b = a.lower().strip(), b.lower().strip()
+        if a == b or a in b or b in a: return True
+        aw = [w for w in a.split() if len(w) > 4]
+        bw = [w for w in b.split() if len(w) > 4]
+        return (bool(aw) and any(w in b for w in aw)) or (bool(bw) and any(w in a for w in bw))
+
+    keys = SPORT_KEY_MAP.get(sport, [])
+    for sk in keys:
+        try:
+            events = odds_fetch_sport(sk)
+            for ev in events:
+                h_match = name_sim(ev.get("home",""), home)
+                a_match = name_sim(ev.get("away",""), away)
+                if h_match and a_match:
+                    return float(ev.get("away_odds",0)), float(ev.get("draw_odds",0)), float(ev.get("home_odds",0))
+                # Try reversed
+                if name_sim(ev.get("home",""), away) and name_sim(ev.get("away",""), home):
+                    return float(ev.get("home_odds",0)), float(ev.get("draw_odds",0)), float(ev.get("away_odds",0))
+        except Exception:
+            continue
+    return 0.0, 0.0, 0.0
 
 
 @st.cache_data(ttl=21600, show_spinner=False)  # 6-hour Streamlit cache
@@ -2051,7 +2106,7 @@ def load_all_today() -> dict:
         except Exception:
             continue
 
-    # Also fetch from Odds API for ALL international soccer (all confederations)
+    # Merge Odds API momios into ESPN events + add any extras not in ESPN
     try:
         intl_events = []
         seen_intl = set()
@@ -2066,18 +2121,43 @@ def load_all_today() -> dict:
                 continue
 
         if intl_events:
-            grp  = "🌍 Fútbol — Selecciones"
-            liga = "Partidos Internacionales (The Odds API)"
-            if grp not in result:
-                result[grp] = {}
-            # Remove duplicates with ESPN data
-            espn_ids = {
-                e["id"]
-                for ligas in result.get(grp,{}).values()
-                for e in ligas
-            }
-            new_evs = [e for e in intl_events if e["id"] not in espn_ids]
+            # Build name lookup for all ESPN events already in result
+            def normalize(s: str) -> str:
+                return s.lower().strip().replace("  "," ")
+
+            # Inject odds into matching ESPN events by team name
+            for grp_key, ligas_dict in result.items():
+                for liga_key, evs_list in ligas_dict.items():
+                    for ev in evs_list:
+                        if ev.get("home_odds", 0) > 0:
+                            continue  # already has odds
+                        for odds_ev in intl_events:
+                            h_match = normalize(ev["home"])[:6] in normalize(odds_ev["home"])
+                            a_match = normalize(ev["away"])[:6] in normalize(odds_ev["away"])
+                            if h_match and a_match:
+                                ev["home_odds"] = odds_ev.get("home_odds", 0)
+                                ev["away_odds"] = odds_ev.get("away_odds", 0)
+                                ev["draw_odds"] = odds_ev.get("draw_odds", 0)
+                                break
+
+            # Add Odds API events NOT already in ESPN (by name match)
+            all_espn_names = set()
+            for ligas_dict in result.values():
+                for evs_list in ligas_dict.values():
+                    for ev in evs_list:
+                        all_espn_names.add(normalize(ev["home"])[:6] + normalize(ev["away"])[:6])
+
+            new_evs = []
+            for e in intl_events:
+                key = normalize(e["home"])[:6] + normalize(e["away"])[:6]
+                if key not in all_espn_names:
+                    new_evs.append(e)
+
             if new_evs:
+                grp  = "🌍 Fútbol — Selecciones"
+                liga = "Otros Internacionales"
+                if grp not in result:
+                    result[grp] = {}
                 result[grp][liga] = sorted(new_evs, key=lambda e: e["date_raw"])
     except Exception:
         pass
@@ -2480,45 +2560,13 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
 
             # ── Save form — show when pick is selected ──────────────
             if qv:
-                # Get odds — try event first, then Odds API
+                # Get odds ON DEMAND — 1 API call per sport, cached 12h
                 aho = float(ev.get("home_odds",0))
                 aao = float(ev.get("away_odds",0))
                 ado = float(ev.get("draw_odds",0))
                 if aho == 0 and aao == 0:
-                    try:
-                        # Map sport to Odds API key
-                        odds_key_map = {
-                            "basketball": "basketball_nba",
-                            "baseball":   "baseball_mlb",
-                            "hockey":     "icehockey_nhl",
-                            "football":   "americanfootball_nfl",
-                            "soccer":     None,  # handled by ODDS_SPORT_MAP
-                        }
-                        ok = odds_key_map.get(sport_ev)
-                        if ok:
-                            cached = odds_fetch_sport(ok)
-                            for cev in cached:
-                                h_match = ev["home"].lower()[:6] in cev.get("home","").lower()
-                                a_match = ev["away"].lower()[:6] in cev.get("away","").lower()
-                                if h_match or a_match:
-                                    aho = cev.get("home_odds",0)
-                                    aao = cev.get("away_odds",0)
-                                    ado = cev.get("draw_odds",0)
-                                    break
-                        else:
-                            # Soccer — try all mapped keys
-                            for sk in list(ODDS_SPORT_MAP.values())[:8]:
-                                if not sk: continue
-                                cached = odds_fetch_sport(sk)
-                                for cev in cached:
-                                    if ev["home"].lower()[:5] in cev.get("home","").lower():
-                                        aho = cev.get("home_odds",0)
-                                        aao = cev.get("away_odds",0)
-                                        ado = cev.get("draw_odds",0)
-                                        break
-                                if aho > 0: break
-                    except Exception:
-                        pass
+                    with st.spinner("Buscando momios..."):
+                        aao, ado, aho = get_live_odds(sport_ev, home, away)
 
                 # Pick momio
                 def_momio = 1.85
