@@ -28,7 +28,7 @@ import gspread
 import pandas as pd
 import plotly.graph_objects as go
 import requests
-import math, random, json
+import math, random, json, time
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, date, timedelta, timezone
 
@@ -4077,27 +4077,39 @@ def tab_the_pit(apodo: str, bank: float):
                             
                             if existing_row:
                                 # Actualizar fila existente - BATCH UPDATE
-                                # Actualizar con dos llamadas separadas pero rápidas
                                 col_pick = ws_picks.find("pick_desc").col
                                 col_event = ws_picks.find("event_id").col
                                 ws_picks.update_cell(existing_row, col_pick, value)
                                 ws_picks.update_cell(existing_row, col_event, game_id)
                             else:
                                 # Nuevo pick - append_row
+                                # PIT_PICKS_HEADERS: ["ronda_id","dia","fecha","apodo","partido","liga","event_id","pick_desc","momio","resultado","comodin_usado"]
                                 new_row = [
-                                    ronda_id, "", str(date.today()), apodo, 
-                                    f"{away} vs {home}", sport_label, game_id, 
-                                    value, "1.0", "pendiente", ""
+                                    ronda_id,                    # ronda_id
+                                    str(today_cdmx.weekday()),   # dia (0=Mon, 6=Sun)
+                                    str(date.today()),           # fecha
+                                    apodo,                       # apodo
+                                    f"{away} vs {home}",        # partido
+                                    sport_label,                 # liga
+                                    game_id,                     # event_id
+                                    value,                       # pick_desc
+                                    "1.0",                       # momio
+                                    "pendiente",                 # resultado
+                                    ""                           # comodin_usado
                                 ]
                                 ws_picks.append_row(new_row)
                             
-                            st.success(f"✅ Pick guardado: {value}")
+                            # Limpiar cache y mostrar éxito
                             st.session_state.pop("pit_picks", None)
+                            st.session_state.pop("pit_ronda", None)
+                            st.success(f"✅ Pick guardado: {value}")
+                            time.sleep(1)
                             st.rerun()
                         except Exception as e:
-                            st.error(f"❌ Error guardando: {str(e)[:100]}")
-                        except Exception as e:
-                            st.error(f"Error: {e}")
+                            st.error(f"❌ Error guardando pick: {str(e)[:150]}")
+                            with st.expander("📋 Debug Info"):
+                                st.write(f"Error type: {type(e).__name__}")
+                                st.write(f"Error message: {str(e)}")
 
     if yo_vivo:
         st.write("")
