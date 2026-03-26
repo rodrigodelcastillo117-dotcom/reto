@@ -1181,6 +1181,21 @@ def espn_search_events(sport: str, league: str, query: str) -> list:
 
         comp0 = ev.get("competitions", [{}])[0]
         comps = comp0.get("competitors", [])
+        
+        # ✅ Si name está vacío, construir desde competitors
+        if not name and comps:
+            competitors_names = []
+            for c in comps:
+                team_name = c.get("team", {}).get("displayName", "")
+                if not team_name:
+                    team_name = c.get("team", {}).get("name", "")
+                if team_name:
+                    competitors_names.append(team_name)
+            
+            if len(competitors_names) >= 2:
+                name = f"{competitors_names[0]} vs {competitors_names[1]}"
+            elif len(competitors_names) == 1:
+                name = competitors_names[0]
 
         if q_low:
             all_text = (name + " " + short).lower()
