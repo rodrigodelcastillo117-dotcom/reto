@@ -4017,7 +4017,12 @@ def tab_the_pit(apodo: str, bank: float):
                     f"http://site.api.espn.com/apis/site/v2/sports/baseball/mlb/events/{event_id}",
                     f"http://site.api.espn.com/apis/site/v2/sports/basketball/nba/events/{event_id}",
                     f"http://site.api.espn.com/apis/site/v2/sports/hockey/nhl/events/{event_id}",
+                    # Soccer - multiple leagues
                     f"http://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/events/{event_id}",
+                    f"http://site.api.espn.com/apis/site/v2/sports/soccer/esp.1/events/{event_id}",
+                    f"http://site.api.espn.com/apis/site/v2/sports/soccer/ita.1/events/{event_id}",
+                    f"http://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/events/{event_id}",
+                    f"http://site.api.espn.com/apis/site/v2/sports/soccer/ger.1/events/{event_id}",
                 ]
                 
                 for espn_url in espn_urls:
@@ -4176,7 +4181,12 @@ def tab_the_pit(apodo: str, bank: float):
                                         f"http://site.api.espn.com/apis/site/v2/sports/baseball/mlb/events/{event_id}",
                                         f"http://site.api.espn.com/apis/site/v2/sports/basketball/nba/events/{event_id}",
                                         f"http://site.api.espn.com/apis/site/v2/sports/hockey/nhl/events/{event_id}",
+                                        # Soccer - multiple leagues
                                         f"http://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/events/{event_id}",
+                                        f"http://site.api.espn.com/apis/site/v2/sports/soccer/esp.1/events/{event_id}",
+                                        f"http://site.api.espn.com/apis/site/v2/sports/soccer/ita.1/events/{event_id}",
+                                        f"http://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/events/{event_id}",
+                                        f"http://site.api.espn.com/apis/site/v2/sports/soccer/ger.1/events/{event_id}",
                                     ]
                                     
                                     espn_data = None
