@@ -1957,7 +1957,7 @@ def render_header(apodo: str, bank: float):
 # ─────────────────────────────────────────────────────────────
 
 # All leagues to scan for "today" view — ordered by sport
-ALL_TODAY_LEAGUES = [
+SOCCER_TODAY_LEAGUES = [
     # Soccer clubs
     ("⚽ Fútbol — Clubes", "Premier League",      "soccer", "eng.1"),
     ("⚽ Fútbol — Clubes", "La Liga",              "soccer", "esp.1"),
@@ -1981,21 +1981,26 @@ ALL_TODAY_LEAGUES = [
     ("🌍 Fútbol — Selecciones", "Nations League UEFA",    "soccer", "uefa.nations"),
     ("🌍 Fútbol — Selecciones", "Amistosos Internac.",    "soccer", "fifa.friendly"),
     ("🌍 Fútbol — Selecciones", "Apostar",                 "soccer", "fifa.worldq"),
+]
+
+OTHER_SPORTS_TODAY = [
     # Basketball
     ("🏀 Basketball", "NBA",  "basketball", "nba"),
     # Baseball
     ("⚾ Baseball",   "MLB",  "baseball",   "mlb"),
     # Hockey
     ("🏒 Hockey",     "NHL",  "hockey",     "nhl"),
-    # Tennis — atp and wta cover all active tournaments including Miami Open
 ]
 
+ALL_TODAY_LEAGUES = SOCCER_TODAY_LEAGUES
+
 @st.cache_data(ttl=1800, show_spinner=False)
-def load_all_today() -> dict:
+def load_all_today(include_other_sports: bool = False) -> dict:
     """
     Fetch all games happening today and tomorrow only (Mexico City time, UTC-6).
     Returns dict: {sport_group: {liga: [events]}}
     Cached 30 min to avoid hammering ESPN.
+    If include_other_sports=True, also loads NBA, MLB, NHL.
     """
     # Always use Mexico City time (UTC-6) — Streamlit Cloud runs in UTC
     now_mx    = datetime.utcnow() - timedelta(hours=6)
@@ -2011,7 +2016,12 @@ def load_all_today() -> dict:
     result   = {}
     seen_ids = set()
 
-    for sport_group, liga_name, sport, league_slug in ALL_TODAY_LEAGUES:
+    # Build list of leagues to load
+    leagues_to_load = SOCCER_TODAY_LEAGUES.copy()
+    if include_other_sports:
+        leagues_to_load.extend(OTHER_SPORTS_TODAY)
+
+    for sport_group, liga_name, sport, league_slug in leagues_to_load:
         try:
             url = f"{ESPN_BASE}/{sport}/{league_slug}/scoreboard"
             events_found = []
@@ -2182,7 +2192,7 @@ def render_all_today(apodo: str):
     # Cache in session_state so it doesn't reload on every click
     if "all_today_data" not in st.session_state:
         with st.spinner("⚡ Cargando partidos de todos los deportes…"):
-            st.session_state["all_today_data"] = load_all_today()
+            st.session_state["all_today_data"] = load_all_today(include_other_sports=True)
     data = st.session_state["all_today_data"]
 
     if not data:
@@ -2342,7 +2352,7 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
     @st.cache_data(ttl=1800, show_spinner=False)
     def _get_today_by_sport(sport_filter: str) -> list:
         """Get today's events for a specific sport from load_all_today cache."""
-        data = load_all_today()
+        data = load_all_today(include_other_sports=True)
         events = []
         for grp, ligas in data.items():
             for liga_name, evs in ligas.items():
@@ -2450,7 +2460,7 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                                           f'padding:1px 6px;border-radius:4px;font-size:.58rem">{ho}</span>')
 
                         # Card + APOSTAR button side by side
-                        card_c, btn_c = st.columns([7, 2])
+                        card_c, btn_c = st.columns([6, 3])
                         with card_c:
                             st.markdown(
                                 f'<div style="background:{bg};border:1px solid {border};border-radius:10px;'
@@ -2475,7 +2485,7 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                                 unsafe_allow_html=True
                             )
                         with btn_c:
-                            if st.button("🎯 APOSTAR", key=f"open_{ev_id[:10]}",
+                            if st.button("APOSTAR", key=f"open_{ev_id[:10]}",
                                           use_container_width=True,
                                           type="primary" if is_open else "secondary"):
                                 if is_open:
