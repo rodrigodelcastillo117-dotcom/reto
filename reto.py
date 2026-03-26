@@ -3144,10 +3144,14 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             logo_left, logo_right = a_lg, h_lg
                             team_left, team_right = away_disp, home_disp
                         
-                        # ✅ Tarjeta sin columnas - ancho completo
+                        # ✅ Tarjeta CLICKEABLE - toda es el botón
+                        menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
+                        
                         st.markdown(
                             f'<div style="background:{bg};border:{border_width} solid {border};border-radius:10px;'
-                            f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:2px;{glow}">'
+                            f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:2px;{glow};'
+                            f'cursor:pointer;transition:all 0.2s;'
+                            f'" onclick="document.getElementById(\'btn_{ev_id[:10]}\').click()">'
                             f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">'
                             f'{logo_left}'
                             f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
@@ -3164,31 +3168,15 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             f'{logo_right}'
                             f'</div>'
                             f'{"<div style=\\'margin-left:6px;flex-shrink:0\\'>" + odds_html + "</div>" if odds_html else ""}'
-                            f'{"<div style=\\'margin-left:6px;font-size:.6rem;color:#F0FF00;flex-shrink:0\\'>" + qv + "</div>" if qv else ""}'
                             f'</div>',
                             unsafe_allow_html=True
                         )
                         
-                        # ✅ Botón APOSTAR MICRO con HTML puro
-                        menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
-                        
-                        # Botón HTML muy pequeño, centrado
-                        st.markdown(
-                            f'<div style="text-align:center;margin:2px 0">'
-                            f'<button onclick="alert(\'Abre el panel de apuestas\')" style="'
-                            f'padding:3px 8px;'
-                            f'font-size:0.6rem;'
-                            f'height:20px;'
-                            f'border:1px solid #FF9500;'
-                            f'background:#1a1a2e;'
-                            f'color:#FF9500;'
-                            f'border-radius:4px;'
-                            f'cursor:pointer;'
-                            f'font-weight:600;'
-                            f'">APO</button>'
-                            f'</div>',
-                            unsafe_allow_html=True
-                        )
+                        # Botón invisible que se activa con el HTML
+                        if st.button("", key=f"open_{ev_id[:10]}", 
+                                     label_visibility="collapsed"):
+                            st.session_state[f"open_pick_{ev_id[:10]}"] = not menu_open
+                            st.rerun()
 
                 # Pick panels — full width below each row
                 for ci in range(min(cols_per_row, len(row_evs))):
