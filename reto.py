@@ -1989,7 +1989,10 @@ def _find_resultado_por_event_id(event_id: str, deporte: str = "soccer") -> dict
     import requests
     
     try:
-        if not event_id or event_id.strip() == "":
+        # Convertir a string si es int
+        event_id = str(event_id).strip()
+        
+        if not event_id or event_id == "":
             return {"found": False, "debug": "Event ID vacío"}
         
         sports_map = {
@@ -2036,10 +2039,7 @@ def _find_resultado_por_event_id(event_id: str, deporte: str = "soccer") -> dict
                             "debug": f"⚠️ {league}: Encontrado evento pero sin datos de competidores (len={len(competitors)})"
                         }
                 elif r.status_code == 404:
-                    return {
-                        "found": False,
-                        "debug": f"❌ {league}: Evento no encontrado (404)"
-                    }
+                    continue  # Intentar siguiente liga
             except Exception as e:
                 continue
         
@@ -3525,13 +3525,13 @@ def tab_historial(apodo: str, df: pd.DataFrame):
                             if st.session_state.get(f"test_{idx}"):
                                 st.write(f"**🧪 TEST: {pick.get('partido')}**")
                                 
-                                event_id = pick.get('event_id', '')
-                                partido = pick.get('partido', '')
-                                deporte = pick.get('deporte', 'soccer')
-                                pick_desc = pick.get('pick_desc', '').lower()
+                                event_id = str(pick.get('event_id', '')).strip()  # ← CONVERTIR A STRING
+                                partido = str(pick.get('partido', '')).strip()
+                                deporte = str(pick.get('deporte', 'soccer')).strip()
+                                pick_desc = str(pick.get('pick_desc', '')).lower().strip()
                                 
                                 # Búsqueda 1: Event ID
-                                if event_id:
+                                if event_id and event_id != "":
                                     st.info(f"🔍 Buscando por EVENT_ID: {event_id}")
                                     espn_data = _find_resultado_por_event_id(event_id, deporte)
                                     if espn_data.get('debug'):
@@ -3563,10 +3563,10 @@ def tab_historial(apodo: str, df: pd.DataFrame):
                             if st.session_state.get(f"grade_{idx}"):
                                 st.write(f"**⏳ CALIFICANDO: {pick.get('partido')}**")
                                 
-                                event_id = pick.get('event_id', '')
-                                partido = pick.get('partido', '')
-                                deporte = pick.get('deporte', 'soccer')
-                                pick_desc = pick.get('pick_desc', '').lower()
+                                event_id = str(pick.get('event_id', '')).strip()  # ← CONVERTIR A STRING
+                                partido = str(pick.get('partido', '')).strip()
+                                deporte = str(pick.get('deporte', 'soccer')).strip()
+                                pick_desc = str(pick.get('pick_desc', '')).lower().strip()
                                 
                                 resultado = None
                                 
