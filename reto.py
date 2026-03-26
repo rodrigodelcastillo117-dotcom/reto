@@ -3076,7 +3076,8 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         # Formatear según deporte
                         formatted = format_partido_para_display(f"{away}@{home}", sport_ev)
                         if sport_ev.lower() == "soccer":
-                            away_disp, home_disp = formatted.split(" vs ")
+                            parts = formatted.split(" vs ")
+                            home_disp, away_disp = parts[0], parts[1]  # ✅ CORRECTO
                         else:
                             away_disp, home_disp = formatted.split("@")
                         s_txt = ev.get("date","")
@@ -3087,8 +3088,6 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         ao = float(ev.get("away_odds",0))
                         ho = float(ev.get("home_odds",0))
                         do = float(ev.get("draw_odds",0))
-                        a_lg = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
-                        h_lg = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
                         qv     = st.session_state.get(f"qp_val_{ev_id}", "")
                         ou_key = f"ou_pending_{ev_id[:10]}"
                         is_open = bool(qv) or bool(st.session_state.get(ou_key))
@@ -3134,16 +3133,27 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             odds_html += (f'<span style="background:rgba(0,180,255,.12);color:#00B4FF;'
                                           f'padding:1px 6px;border-radius:4px;font-size:.58rem">{ho}</span>')
 
-                        # Card + APOSTAR button side by side
-                        card_c, btn_c = st.columns([5, 4])
+                        # ✅ PATCH: Logos asignados SEGÚN DEPORTE
+                        # PASO 1: Determinar layout ANTES de asignar logos
+                        if sport_ev.lower() == "soccer":
+                            # Soccer: Home a la IZQUIERDA, Away a la DERECHA
+                            logo_left  = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
+                            logo_right = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
+                            team_left, team_right = home_disp, away_disp
+                        else:
+                            # NBA/NHL/MLB/NFL: Away a la IZQUIERDA, Home a la DERECHA
+                            logo_left  = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
+                            logo_right = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
+                            team_left, team_right = away_disp, home_disp
+                        
                         with card_c:
                             st.markdown(
                                 f'<div style="background:{bg};border:{border_width} solid {border};border-radius:10px;'
                                 f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:2px;{glow}">'
                                 f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">'
-                                f'{a_lg}'
+                                f'{logo_left}'
                                 f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
-                                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{away_disp}</span>'
+                                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{team_left}</span>'
                                 f'</div>'
                                 f'<div style="font-size:.55rem;color:#44445A;flex-shrink:0;text-align:center;padding:0 4px">'
                                 f'vs<br><span style="font-size:.42rem;color:{s_col};font-weight:{"700" if is_live else "400"};'
@@ -3152,8 +3162,8 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                                 f'</div>'
                                 f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0;justify-content:flex-end">'
                                 f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
-                                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right">{home_disp}</span>'
-                                f'{h_lg}'
+                                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right">{team_right}</span>'
+                                f'{logo_right}'
                                 f'</div>'
                                 f'{"<div style=\\'margin-left:6px;flex-shrink:0\\'>" + odds_html + "</div>" if odds_html else ""}'
                                 f'{"<div style=\\'margin-left:6px;font-size:.6rem;color:#F0FF00;flex-shrink:0\\'>" + qv + "</div>" if qv else ""}'
