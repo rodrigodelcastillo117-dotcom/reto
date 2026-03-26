@@ -1237,22 +1237,24 @@ def espn_search_events(sport: str, league: str, query: str) -> list:
         status_short = status_type.get("shortDetail", "")
         completed    = (state == "post") or status_type.get("completed", False)
         
-        # ✅ DETECCIÓN DE EN VIVO POR HORA:
-        # Si el partido empezó hace menos de 3 horas y no está completado = EN VIVO
+        # ✅ DETECCIÓN DE EN VIVO POR HORA (sin depender de ESPN)
         is_live = False
-        if not completed:
-            try:
-                # Parsear fecha del partido
+        try:
+            # Parsear fecha del partido
+            date_raw = ev.get("date_raw", "")
+            if date_raw:
                 dt = datetime.fromisoformat(date_raw.replace("Z", "+00:00"))
                 dt_mx = dt - timedelta(hours=6)  # UTC → Mexico City
                 now_mx = datetime.now(timezone.utc) - timedelta(hours=6)
                 
-                # Si pasaron menos de 3 horas desde que empezó el partido = EN VIVO
-                time_diff = (now_mx - dt_mx).total_seconds() / 3600  # en horas
-                if 0 <= time_diff <= 3:  # Empezó entre 0 y 3 horas atrás
+                # Si pasaron entre 0 y 3.5 horas desde que empezó = EN VIVO
+                time_diff_hours = (now_mx - dt_mx).total_seconds() / 3600
+                
+                # EN VIVO: si el partido empezó hace 0 a 3.5 horas
+                if 0 <= time_diff_hours <= 3.5:
                     is_live = True
-            except:
-                pass
+        except:
+            pass
 
         # ── Skip completed (past) games — only show live or upcoming ──
         if completed and not is_live:
