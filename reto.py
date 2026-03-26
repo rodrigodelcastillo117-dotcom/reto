@@ -3147,35 +3147,35 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             logo_left, logo_right = a_lg, h_lg
                             team_left, team_right = away_disp, home_disp
                         
-                        # ✅ Crear columnas: 85% tarjeta, 15% botón (más estrecho para que quepa)
-                        card_c, btn_c = st.columns([0.85, 0.15])
+                        # ✅ Tarjeta SIN columna separada
+                        st.markdown(
+                            f'<div style="background:{bg};border:{border_width} solid {border};border-radius:10px;'
+                            f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:2px;{glow}">'
+                            f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">'
+                            f'{logo_left}'
+                            f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
+                            f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{team_left}</span>'
+                            f'</div>'
+                            f'<div style="font-size:.55rem;color:#44445A;flex-shrink:0;text-align:center;padding:0 4px">'
+                            f'vs<br><span style="font-size:.42rem;color:{s_col};font-weight:{"700" if is_live else "400"};'
+                            f'{"animation:blinkLive 1s infinite;" if is_live else ""}">{s_txt}</span>'
+                            f'{score_display}'
+                            f'</div>'
+                            f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0;justify-content:flex-end">'
+                            f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
+                            f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right">{team_right}</span>'
+                            f'{logo_right}'
+                            f'</div>'
+                            f'{"<div style=\\'margin-left:6px;flex-shrink:0\\'>" + odds_html + "</div>" if odds_html else ""}'
+                            f'{"<div style=\\'margin-left:6px;font-size:.6rem;color:#F0FF00;flex-shrink:0\\'>" + qv + "</div>" if qv else ""}'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
                         
-                        with card_c:
-                            st.markdown(
-                                f'<div style="background:{bg};border:{border_width} solid {border};border-radius:10px;'
-                                f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:2px;{glow}">'
-                                f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">'
-                                f'{logo_left}'
-                                f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
-                                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{team_left}</span>'
-                                f'</div>'
-                                f'<div style="font-size:.55rem;color:#44445A;flex-shrink:0;text-align:center;padding:0 4px">'
-                                f'vs<br><span style="font-size:.42rem;color:{s_col};font-weight:{"700" if is_live else "400"};'
-                                f'{"animation:blinkLive 1s infinite;" if is_live else ""}">{s_txt}</span>'
-                                f'{score_display}'
-                                f'</div>'
-                                f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0;justify-content:flex-end">'
-                                f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
-                                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right">{team_right}</span>'
-                                f'{logo_right}'
-                                f'</div>'
-                                f'{"<div style=\\'margin-left:6px;flex-shrink:0\\'>" + odds_html + "</div>" if odds_html else ""}'
-                                f'{"<div style=\\'margin-left:6px;font-size:.6rem;color:#F0FF00;flex-shrink:0\\'>" + qv + "</div>" if qv else ""}'
-                                f'</div>',
-                                unsafe_allow_html=True
-                            )
-                        with btn_c:
-                            menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
+                        # ✅ Botón APOSTAR pequeño, CENTRADO, debajo
+                        menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
+                        btn_col_center = st.columns([1, 2, 1])[1]  # Columna del medio (33% ancho)
+                        with btn_col_center:
                             if st.button("APOSTAR", key=f"open_{ev_id[:10]}",
                                           use_container_width=True,
                                           type="primary" if menu_open else "secondary"):
