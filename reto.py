@@ -32,6 +32,22 @@ import math, random, json, time
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime, date, timedelta, timezone
 
+import time as _time_module
+
+# Rate limiter para Google Sheets (evitar error 429)
+_last_gs_read = {}
+
+def _rate_limit_gs(key: str, min_seconds: float = 0.5):
+    """Esperar para no exceder rate limit de Google Sheets"""
+    now = _time_module.time()
+    last = _last_gs_read.get(key, 0)
+    elapsed = now - last
+    if elapsed < min_seconds:
+        _time_module.sleep(min_seconds - elapsed)
+    _last_gs_read[key] = _time_module.time()
+
+
+
 # ─────────────────────────────────────────────────────────────
 #  PAGE CONFIG
 # ─────────────────────────────────────────────────────────────
@@ -1644,6 +1660,37 @@ def format_partido_para_display(partido: str, deporte: str) -> str:
         # NBA/NHL/MLB/NFL: Away@Home (VISITANTE@LOCAL con @)
         return f"{away}@{home}"
 
+
+
+
+def puede_registrar_pick_hoy(apodo: str, ronda_id: str) -> tuple[bool, str]:
+    """
+    ✅ Validar si el usuario ya registró 1 pick hoy
+    Solo permite 1 pick por día
+    """
+    try:
+        ss = get_ss()
+        if not ss:
+            return False, "❌ Error: No hay conexión a Google Sheets"
+        
+        ws_picks = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
+        _rate_limit_gs("pit_picks_check")  # Rate limit
+        all_picks = _safe_get_records(ws_picks)
+        
+        today_cdmx = datetime.now(pytz.timezone('America/Mexico_City')).date()
+        
+        # Contar picks de hoy para este usuario en esta ronda
+        picks_hoy = [p for p in all_picks 
+                     if str(p.get("ronda_id","")).strip() == str(ronda_id) and
+                        str(p.get("apodo","")).lower().strip() == apodo.lower().strip() and
+                        str(p.get("fecha","")).startswith(str(today_cdmx))]
+        
+        if len(picks_hoy) >= 1:
+            return False, f"❌ Ya registraste 1 pick hoy en esta ronda. Solo se permite 1 por día."
+        
+        return True, "✅ Puedes registrar tu pick"
+    except Exception as e:
+        return False, f"❌ Error al validar: {str(e)[:100]}"
 
 
 def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.DataFrame, int, float]:
@@ -4005,6 +4052,13 @@ def tab_the_pit(apodo: str, bank: float):
     </div>
     """, unsafe_allow_html=True)
     
+    # ✅ BOTÓN DE REFRESH PARA ACTUALIZAR LA TABLA EN TIEMPO REAL
+    col_ref = st.columns([10, 1])[1]
+    with col_ref:
+        if st.button("🔄", help="Actualizar tabla de picks en tiempo real", key="pit_refresh_main"):
+            st.session_state.pop("pit_picks", None)
+            st.rerun()
+    
     # CARGAR RONDA
     if "pit_ronda" not in st.session_state:
         st.session_state["pit_ronda"] = pit_load_ronda_activa()
@@ -4083,6 +4137,8 @@ def tab_the_pit(apodo: str, bank: float):
         ss = get_ss()
         if ss:
             ws_picks = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
+            _rate_limit_gs("pit_picks_load", 0.5)
+
             all_picks_sheet = _safe_get_records(ws_picks)
             
             # Obtener picks de AYER (para auto-gradarlos HOY)
@@ -4228,6 +4284,60 @@ def tab_the_pit(apodo: str, bank: float):
     vidas_display = "💚 " * my_vidas + "💀 " * (3 - my_vidas)
     st.markdown(f"<div style='text-align: center; font-size: 2rem; margin: 20px 0;'>{vidas_display}</div>", unsafe_allow_html=True)
     
+    # ═══════════════════════════════════════════════════════════════
+    # ✅ TABLA DE PICKS - EN TIEMPO REAL (ACTUALIZA AUTOMÁTICAMENTE)
+    # ═══════════════════════════════════════════════════════════════
+    try:
+        ss = get_ss()
+        if ss:
+            ws_picks = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
+            _rate_limit_gs("pit_picks_table", 0.5)
+            all_picks_sheet = _safe_get_records(ws_picks)
+            
+            # Filtrar picks de la ronda actual
+            ronda_picks = [p for p in all_picks_sheet
+                          if str(p.get("ronda_id","")).strip() == str(ronda_id)]
+            
+            if ronda_picks:
+                st.markdown("""
+                <div style="background: rgba(220,20,60,0.15); border: 2px solid rgba(220,20,60,0.4); 
+                border-radius: 12px; padding: 16px; margin-bottom: 20px;">
+                <div style="font-family: Bebas Neue; font-size: 1.2rem; color: #FFB800; letter-spacing: 1px;">
+                📊 PICKS DE LA RONDA EN VIVO
+                </div>
+                """, unsafe_allow_html=True)
+                
+                # Preparar datos para tabla
+                table_data = []
+                for pick in ronda_picks:
+                    partido_fmt = format_partido_para_display(pick.get("partido", "?"), pick.get("deporte", "soccer"))
+                    resultado = pick.get("resultado", "pendiente")
+                    
+                    # Color según resultado
+                    if resultado == "ganado":
+                        resultado_icon = "✅ GANADO"
+                    elif resultado == "perdido":
+                        resultado_icon = "❌ PERDIDO"
+                    elif resultado == "nulo":
+                        resultado_icon = "↔️ NULO"
+                    else:
+                        resultado_icon = "⏳ PENDIENTE"
+                    
+                    table_data.append({
+                        "Apodo": pick.get("apodo", "?"),
+                        "Partido": partido_fmt,
+                        "Pick": pick.get("pick_desc", "?"),
+                        "Momio": pick.get("momio", "?"),
+                        "Resultado": resultado_icon,
+                    })
+                
+                df_picks_table = pd.DataFrame(table_data)
+                st.dataframe(df_picks_table, use_container_width=True, hide_index=True)
+                
+                st.markdown("</div>", unsafe_allow_html=True)
+    except Exception as e:
+        pass
+    
     # Show auto-grading debug if there were picks to grade
     if grading_debug:
         with st.expander("🔍 Debug: Auto-Calificación (Ayer)"):
@@ -4241,7 +4351,33 @@ def tab_the_pit(apodo: str, bank: float):
         ss = get_ss()
         if ss:
             ws_picks = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
+            _rate_limit_gs("pit_picks_load", 0.5)
+
             all_picks_sheet = _safe_get_records(ws_picks)
+            
+            # ✅ TABLA CON TODOS LOS PICKS DE LA RONDA
+            ronda_picks = [p for p in all_picks_sheet
+                          if str(p.get("ronda_id","")).strip() == str(ronda_id)]
+            
+            if ronda_picks:
+                st.markdown('<div style="font-family: Bebas Neue; font-size: 1rem; color: #FFB800; letter-spacing: 1px; margin: 15px 0 10px;">📊 PICKS DE LA RONDA</div>', unsafe_allow_html=True)
+                
+                # Preparar datos para tabla
+                table_data = []
+                for pick in ronda_picks:
+                    partido_fmt = format_partido_para_display(pick.get("partido", "?"), pick.get("deporte", "soccer"))
+                    table_data.append({
+                        "Apodo": pick.get("apodo", "?"),
+                        "Partido": partido_fmt,
+                        "Liga": pick.get("liga", "?"),
+                        "Pick": pick.get("pick_desc", "?"),
+                        "Momio": pick.get("momio", "?"),
+                        "Resultado": pick.get("resultado", "pendiente"),
+                        "Día": pick.get("dia", "?"),
+                    })
+                
+                df_picks_table = pd.DataFrame(table_data)
+                st.dataframe(df_picks_table, use_container_width=True, hide_index=True)
             
             with st.expander("🧪 TEST: Simular Auto-Calificación"):
                 st.info("Esto te permite probar cómo se califican los picks sin esperar a mañana")
@@ -4568,8 +4704,16 @@ def tab_the_pit(apodo: str, bank: float):
         for j, (label, value) in enumerate(picks):
             with cols[j]:
                 if st.button(label, key=f"pit_pick_{i}_{j}", use_container_width=True):
+                    # Validar que solo pueda registrar 1 pick por día
+                    puede, mensaje = puede_registrar_pick_hoy(apodo, ronda_id)
+                    
+                    if not puede:
+                        st.error(mensaje)
+                        st.stop()
+                    
                     try:
                         ws_picks = ensure_tab(get_ss(), "pit_picks", PIT_PICKS_HEADERS)
+                        _rate_limit_gs("pit_picks_append", 0.5)  # Rate limit
                         new_row = [
                             ronda_id,
                             str(today_cdmx.weekday()),
@@ -4584,13 +4728,17 @@ def tab_the_pit(apodo: str, bank: float):
                             ""
                         ]
                         ws_picks.append_row(new_row)
-                        st.session_state.pop("pit_picks", None)
-                        st.session_state.pop("pit_ronda", None)
+                        _rate_limit_gs("pit_picks_append", 1.0)
+                        
+                        # Limpiar cache sin `.pop()` agresivo
+                        if "pit_picks" in st.session_state:
+                            del st.session_state["pit_picks"]
+                        
                         st.success(f"✅ Pick guardado: {format_partido_para_display(f'{away}@{home}', sport)} - {value}")
                         time.sleep(1)
                         st.rerun()
                     except Exception as e:
-                        st.error(f"❌ Error: {str(e)[:100]}")
+                        st.error(f"❌ Error: {str(e)[:150]}")  # Mostrar más detalles del error
     
     st.write("")
     
