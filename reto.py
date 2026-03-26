@@ -2600,7 +2600,9 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                     with col1:
                         st.write("**Básico:**")
                         st.write(f"- id: {ev.get('id', '?')}")
-                        st.write(f"- name: {ev.get('name', '?')}")
+                        # Mostrar name con fallback
+                        name_display = ev.get('name') or f"{ev.get('away', '?')} vs {ev.get('home', '?')}"
+                        st.write(f"- name: {name_display}")
                         st.write(f"- sport: {ev.get('sport', '?')}")
                         st.write(f"- is_live: {ev.get('is_live', False)}")
                         st.write(f"- status_state: {ev.get('status_state', '?')}")
