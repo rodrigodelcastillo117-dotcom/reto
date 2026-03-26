@@ -1783,31 +1783,12 @@ def auto_grade_all_picks_master():
         if not ss:
             return
         
-        # ─── REGISTRAR: Calificar picks ───
-        try:
-            ws_picks = ensure_tab(ss, "picks_headers", [])
-            # Buscar todas las hojas picks_* de usuarios
-            for sheet in ss.worksheets():
-                if sheet.title.startswith("picks_"):
-                    try:
-                        records = _safe_get_records(sheet)
-                        # Calificar picks pendientes
-                        for idx, row in enumerate(records):
-                            if row.get("resultado", "").strip().lower() == "pendiente":
-                                # Intentar calificar automáticamente
-                                _auto_qualify_pick_robust(sheet, idx + 2, row)
-                    except:
-                        pass
-        except:
-            pass
-        
-        # ─── THE PIT: Calificar picks ───
+        # ─── THE PIT: Calificar picks (más importante) ───
         try:
             ws_pit = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
             records = _safe_get_records(ws_pit)
             for idx, row in enumerate(records):
                 if row.get("resultado", "").strip().lower() == "pendiente":
-                    # Intentar calificar automáticamente
                     _auto_qualify_pit_robust(ws_pit, idx + 2, row)
         except:
             pass
@@ -1816,32 +1797,6 @@ def auto_grade_all_picks_master():
         # Silenciar errores - la función no debe fallar nunca
         pass
 
-
-def _auto_qualify_pick_robust(sheet, row_idx: int, pick_row: dict):
-    """
-    Califica UN pick con máxima robustez
-    Intenta: NOMBRE → ID → Fallback
-    """
-    try:
-        partido = pick_row.get("partido", "").strip()
-        deporte = pick_row.get("deporte", "soccer").strip().lower()
-        pick_desc = pick_row.get("pick_desc", "").strip().lower()
-        
-        if not partido or not pick_desc:
-            return
-        
-        # Buscar resultado en ESPN
-        resultado = _find_resultado_robusto(partido, deporte, pick_desc)
-        
-        if resultado:  # "ganado" o "perdido"
-            # Actualizar Google Sheets
-            try:
-                col_resultado = 10  # Ajustar según estructura
-                sheet.update_cell(row_idx, col_resultado, resultado)
-            except:
-                pass
-    except:
-        pass
 
 
 def _auto_qualify_pit_robust(sheet, row_idx: int, pick_row: dict):
