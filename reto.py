@@ -2884,8 +2884,20 @@ def tab_historial(apodo: str, df: pd.DataFrame):
     resolved = df[df["resultado"].isin(["ganado","perdido","nulo"])].copy()
     if not resolved.empty:
         st.markdown('<div class="sec-head">📊 Tu rendimiento por liga</div>', unsafe_allow_html=True)
+        SPORT_DISPLAY = {"soccer":"⚽ Fútbol","basketball":"🏀 NBA",
+                         "baseball":"⚾ MLB","hockey":"🏒 NHL","football":"🏈 NFL"}
+        # Normalize liga — replace "Cargar todo" with deporte display name
+        resolved_h = resolved.copy()
+        def fix_liga(row):
+            liga = str(row.get("liga",""))
+            if not liga or "cargar" in liga.lower():
+                dep = str(row.get("deporte","")).lower()
+                return SPORT_DISPLAY.get(dep, dep.upper() or "Otro")
+            return liga
+        resolved_h["liga_display"] = resolved_h.apply(fix_liga, axis=1)
+
         liga_stats = []
-        for liga, grp in resolved.groupby("liga"):
+        for liga, grp in resolved_h.groupby("liga_display"):
             total = len(grp)
             wins  = (grp["resultado"]=="ganado").sum()
             roi   = grp["ganancia_neta"].sum() / grp["apuesta"].sum() * 100 if grp["apuesta"].sum() > 0 else 0
@@ -3112,8 +3124,20 @@ def tab_analytics(df: pd.DataFrame, bank: float):
     # ── Bankroll chart — logarithmic
     st.markdown('<div class="sec-head">Evolución del bankroll (escala logarítmica)</div>', unsafe_allow_html=True)
     bank_df = resolved.sort_values("fecha").copy()
-    bank_vals = [START_BANK] + bank_df["bankroll_post"].tolist()
-    bank_vals = [max(v, 1) for v in bank_vals]
+
+    # Reconstruct bankroll from ganancia_neta if bankroll_post is flat/wrong
+    bp_vals = bank_df["bankroll_post"].tolist()
+    gn_vals = bank_df["ganancia_neta"].tolist()
+    # Detect if bankroll_post is all the same value (flat = broken)
+    if len(set(round(v,0) for v in bp_vals)) <= 1:
+        # Rebuild from START_BANK + cumulative ganancia_neta
+        running = START_BANK
+        bank_vals = [START_BANK]
+        for g in gn_vals:
+            running = round(running + float(g), 2)
+            bank_vals.append(max(running, 1))
+    else:
+        bank_vals = [START_BANK] + [max(v, 1) for v in bp_vals]
 
     # Dynamic log ticks based on max
     max_val  = max(bank_vals + [bank])
@@ -3155,13 +3179,24 @@ def tab_analytics(df: pd.DataFrame, bank: float):
 
     # ── Stats por liga
     st.markdown('<div class="sec-head">Rendimiento por liga</div>', unsafe_allow_html=True)
+    SPORT_DISPLAY = {"soccer":"⚽ Fútbol","basketball":"🏀 NBA",
+                     "baseball":"⚾ MLB","hockey":"🏒 NHL","football":"🏈 NFL"}
+    resolved_an = resolved.copy()
+    def fix_liga_an(row):
+        liga = str(row.get("liga",""))
+        if not liga or "cargar" in liga.lower():
+            dep = str(row.get("deporte","")).lower()
+            return SPORT_DISPLAY.get(dep, dep.upper() or "Otro")
+        return liga
+    resolved_an["liga_norm"] = resolved_an.apply(fix_liga_an, axis=1)
+
     liga_stats = []
-    for liga, grp in resolved.groupby("liga"):
+    for liga, grp in resolved_an.groupby("liga_norm"):
         g = (grp["resultado"]=="ganado").sum()
         p = (grp["resultado"]=="perdido").sum()
         t = len(grp)
-        wr_l  = g/t*100 if t else 0
-        roi_l = grp["ganancia_neta"].sum()/grp["apuesta"].sum()*100 if grp["apuesta"].sum() else 0
+        wr_l   = g/t*100 if t else 0
+        roi_l  = grp["ganancia_neta"].sum()/grp["apuesta"].sum()*100 if grp["apuesta"].sum() else 0
         neto_l = grp["ganancia_neta"].sum()
         liga_stats.append({"liga":liga,"g":g,"p":p,"t":t,"wr":wr_l,"roi":roi_l,"neto":neto_l})
     liga_stats.sort(key=lambda x: x["roi"], reverse=True)
