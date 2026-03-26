@@ -4170,12 +4170,17 @@ def tab_the_pit(apodo: str, bank: float):
     daily_games = []
     sports_to_fetch = ["soccer", "basketball", "hockey", "football"]
     sports_found = set()
+    debug_info = []
     
     try:
         all_today = load_all_today()
+        debug_info.append(f"load_all_today() returned {len(all_today)} sport groups")
+        debug_info.append(f"Sport groups: {list(all_today.keys())}")
         
         # all_today structure: {sport_group: {liga_name: [events]}}
         for sport_group, leagues_dict in all_today.items():
+            debug_info.append(f"Processing {sport_group}: {len(leagues_dict)} leagues")
+            
             if sport_group not in sports_to_fetch:
                 continue
             if sport_group in sports_found:
@@ -4183,6 +4188,8 @@ def tab_the_pit(apodo: str, bank: float):
             
             # Get first event from first league in this sport
             for liga_name, events in leagues_dict.items():
+                debug_info.append(f"  {sport_group}/{liga_name}: {len(events)} events")
+                
                 if events and len(events) > 0:
                     event = events[0]  # Take first event
                     game_obj = {
@@ -4195,9 +4202,16 @@ def tab_the_pit(apodo: str, bank: float):
                     }
                     daily_games.append(game_obj)
                     sports_found.add(sport_group)
+                    debug_info.append(f"  ✅ Added: {game_obj['home']} vs {game_obj['away']}")
                     break  # Got one from this sport, move to next sport
     except Exception as e:
-        pass
+        debug_info.append(f"ERROR: {str(e)}")
+    
+    # Show debug info
+    if not daily_games:
+        st.warning("⚠️ No games found. Debug info:")
+        for info in debug_info:
+            st.caption(info)
     
     # Reorder to ensure: Soccer, Basketball, Hockey, Football
     ordered_games = []
