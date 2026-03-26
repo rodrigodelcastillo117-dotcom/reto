@@ -4788,24 +4788,26 @@ def tab_the_pit(apodo: str, bank: float):
                             st.caption(f"Pick: {pick.get('pick_desc', '?')}")
                         
                         with col3:
-                            if st.button("🧪 Probar", key=f"test_grade_{idx}", use_container_width=True):
-                                # Test grading this pick
-                                event_id = pick.get("event_id", "")
-                                pick_desc = pick.get("pick_desc", "")
-                                pick_type = "ML" if pick_desc in ["Home", "Away"] else "O/U"
-                                partido = pick.get("partido", "")
-                                
-                                test_debug = [f"🧪 TESTING: {partido}"]
-                                test_debug.append(f"  Pick: {pick_desc} ({pick_type})")
-                                test_debug.append(f"  Event ID: {event_id}")
-                                
-                                if not event_id:
-                                    test_debug.append(f"  ❌ Sin event_id - No se puede probar")
-                                else:
-                                    # Try ESPN endpoints
-                                    espn_urls = [
-                                        # Soccer - amistosos internacionales (friendly)
-                                        f"http://site.api.espn.com/apis/site/v2/sports/soccer/international-friendly/events/{event_id}",
+                            col3a, col3b = st.columns(2)
+                            with col3a:
+                                if st.button("🧪 Probar", key=f"test_grade_{idx}", use_container_width=True):
+                                    # Test grading this pick
+                                    event_id = pick.get("event_id", "")
+                                    pick_desc = pick.get("pick_desc", "")
+                                    pick_type = "ML" if pick_desc in ["Home", "Away"] else "O/U"
+                                    partido = pick.get("partido", "")
+                                    
+                                    test_debug = [f"🧪 TESTING: {partido}"]
+                                    test_debug.append(f"  Pick: {pick_desc} ({pick_type})")
+                                    test_debug.append(f"  Event ID: {event_id}")
+                                    
+                                    if not event_id:
+                                        test_debug.append(f"  ❌ Sin event_id - No se puede probar")
+                                    else:
+                                        # Try ESPN endpoints
+                                        espn_urls = [
+                                            # Soccer - amistosos internacionales (friendly)
+                                            f"http://site.api.espn.com/apis/site/v2/sports/soccer/international-friendly/events/{event_id}",
                                         # Soccer - main leagues
                                         f"http://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/events/{event_id}",
                                         f"http://site.api.espn.com/apis/site/v2/sports/soccer/esp.1/events/{event_id}",
@@ -4874,6 +4876,29 @@ def tab_the_pit(apodo: str, bank: float):
                                 st.markdown("---")
                                 for line in test_debug:
                                     st.caption(line)
+                            
+                            with col3b:
+                                if st.button("✅ FORZAR", key=f"force_grade_{idx}", use_container_width=True):
+                                    # FORZAR CALIFICACIÓN INMEDIATA (para testing)
+                                    try:
+                                        partido = pick.get("partido", "")
+                                        pick_desc = pick.get("pick_desc", "").lower()
+                                        deporte = pick.get("deporte", "soccer").lower()
+                                        
+                                        # Simular que el partido terminó y calificar
+                                        resultado = _find_resultado_robusto(partido, deporte, pick_desc)
+                                        
+                                        if resultado:
+                                            # Actualizar en Google Sheets
+                                            try:
+                                                ws_picks.update_cell(idx + 2 + len([p for p in all_picks_sheet if str(p.get("ronda_id","")) == str(ronda_id) and str(p.get("apodo","")).lower() == apodo.lower() and str(p.get("resultado","")) != "pendiente"]), 10, resultado)
+                                                st.success(f"✅ Pick calificado como: **{resultado.upper()}**")
+                                            except Exception as e:
+                                                st.warning(f"⚠️ No se pudo actualizar: {str(e)[:50]}")
+                                        else:
+                                            st.error("❌ No se encontró resultado en ESPN")
+                                    except Exception as e:
+                                        st.error(f"Error: {str(e)[:100]}")
                 else:
                     st.info("📭 No hay picks de hoy. Hace un pick primero para testear.")
             
