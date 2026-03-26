@@ -2599,12 +2599,12 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
     # ═══════════════════════════════════════════════════════════════
     # 🔍 DEBUG PANEL - Ver qué datos recibe ESPN
     # ═══════════════════════════════════════════════════════════════
-    with st.expander("🔍 DEBUG: Datos de ESPN (para troubleshooting)"):
+    with st.expander("🔍 DEBUG: Datos de ESPN (para troubleshooting)", expanded=True):
         if all_evs:
-            # Mostrar primeros 3 partidos con TODOS sus datos
-            st.write("**Primeros 5 partidos completos:**")
-            for i, ev in enumerate(all_evs[:5]):
-                with st.expander(f"Partido {i+1}: {ev.get('away', '?')} vs {ev.get('home', '?')} - Score: {ev.get('away_score', '?')} - {ev.get('home_score', '?')}"):
+            # Mostrar primeros 10 partidos con TODOS sus datos
+            st.write(f"**Total: {len(all_evs)} partidos. Mostrando primeros 10:**")
+            for i, ev in enumerate(all_evs[:10]):
+                with st.expander(f"Partido {i+1}: {ev.get('away', '?')} vs {ev.get('home', '?')} - Score: {ev.get('away_score', '?')} - {ev.get('home_score', '?')} - Live: {ev.get('is_live', False)}"):
                     col1, col2 = st.columns(2)
                     with col1:
                         st.write("**Básico:**")
@@ -2634,12 +2634,21 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         "baseball":"⚾ MLB","hockey":"🏒 NHL","football":"🏈 NFL"}.get(sp, sp.upper())
         by_liga[liga_lbl].append(ev)
 
+    # 🔍 DEBUG: Estadísticas generales
+    st.write(f"**📊 Total de partidos cargados: {len(all_evs)}**")
+    st.write(f"**⚡ Partidos EN VIVO (detectados por hora): {len([e for e in all_evs if e.get('is_live', False)])}**")
+    with st.expander("📈 Breakdown por liga:"):
+        for liga_lbl in sorted(by_liga.keys()):
+            count = len(by_liga[liga_lbl])
+            live = len([e for e in by_liga[liga_lbl] if e.get('is_live', False)])
+            st.write(f"- {liga_lbl}: {count} partidos ({live} EN VIVO)")
+
     # Any open pick form?
     open_ids = {ev["id"] for ev in all_evs
                 if st.session_state.get(f"qp_val_{ev['id']}") or
                    st.session_state.get(f"ou_pending_{ev['id'][:10]}")}
 
-    FRIENDLY_LIMIT = 12  # cap amistosos to avoid 45-item chaos
+    FRIENDLY_LIMIT = 50  # Mostrar TODOS los amistosos
 
     for liga_lbl, liga_evs in sorted(by_liga.items(), key=lambda x: -len([e for e in x[1] if e.get("is_live")])):
         # Cap friendlies
