@@ -4169,37 +4169,37 @@ def tab_the_pit(apodo: str, bank: float):
     # Obtener 1 de cada deporte: Soccer, Basketball, Hockey, Football
     daily_games = []
     sports_to_fetch = ["soccer", "basketball", "hockey", "football"]
-    sports_found = {sport: False for sport in sports_to_fetch}
+    sports_found = set()
     
     try:
         all_today = load_all_today()
         
-        # Iterate through each sport group
+        # all_today structure: {sport_group: {liga_name: [events]}}
         for sport_group, leagues_dict in all_today.items():
             if sport_group not in sports_to_fetch:
                 continue
-            if sports_found[sport_group]:
+            if sport_group in sports_found:
                 continue
             
-            # Get first event from this sport
+            # Get first event from first league in this sport
             for liga_name, events in leagues_dict.items():
                 if events and len(events) > 0:
-                    event = events[0]  # Take first event from this league
+                    event = events[0]  # Take first event
                     game_obj = {
                         "id": event.get("id", ""),
                         "away": event.get("away", "?"),
                         "home": event.get("home", "?"),
-                        "liga": liga_name,
+                        "liga": event.get("liga", liga_name),
                         "sport": sport_group,
                         "date": event.get("date", "")
                     }
                     daily_games.append(game_obj)
-                    sports_found[sport_group] = True
+                    sports_found.add(sport_group)
                     break  # Got one from this sport, move to next sport
     except Exception as e:
         pass
     
-    # Reorder to: Soccer, Basketball, Hockey, Football
+    # Reorder to ensure: Soccer, Basketball, Hockey, Football
     ordered_games = []
     for sport in sports_to_fetch:
         game = next((g for g in daily_games if g["sport"] == sport), None)
