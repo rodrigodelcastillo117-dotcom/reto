@@ -3133,7 +3133,7 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             odds_html += (f'<span style="background:rgba(0,180,255,.12);color:#00B4FF;'
                                           f'padding:1px 6px;border-radius:4px;font-size:.58rem">{ho}</span>')
 
-                        # ✅ PATCH: Logos asignados SEGÚN DEPORTE (antes de invertir)
+                        # ✅ PATCH: Logos creados DIRECTAMENTE según deporte (sin h_lg, a_lg)
                         if sport_ev.lower() == "soccer":
                             # Soccer: Home a la IZQUIERDA, Away a la DERECHA
                             logo_left  = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
@@ -3145,7 +3145,7 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             logo_right = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
                             team_left, team_right = away_disp, home_disp
                         
-                        # ✅ Crear las columnas para tarjeta y botón
+                        # ✅ Crear columnas para tarjeta y botón (4:1 ratio)
                         card_c, btn_c = st.columns([4, 1])
                         
                         with card_c:
@@ -3174,6 +3174,7 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             )
                         with btn_c:
                             menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
+                            st.markdown(f'<div style="height:8px"></div>', unsafe_allow_html=True)
                             if st.button("APOSTAR", key=f"open_{ev_id[:10]}",
                                           use_container_width=True,
                                           type="primary" if menu_open else "secondary"):
