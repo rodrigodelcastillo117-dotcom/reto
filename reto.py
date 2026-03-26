@@ -4113,14 +4113,39 @@ def tab_the_pit(apodo: str, bank: float):
     
     st.markdown("<div style='font-family: Bebas Neue; font-size: 1.2rem; color: #FFB800; letter-spacing: 2px; margin: 20px 0 15px;'>🎯 4 PARTIDOS - ELIGE TU PICK</div>", unsafe_allow_html=True)
     
+    # ═══════════════════════════════════════════════════════════════
+    #  PARTIDOS: SOLO DEL MISMO DÍA, SOLO LOS QUE NO HAN EMPEZADO
+    # ═══════════════════════════════════════════════════════════════
     # Decidir si usar hoy o mañana basado en la hora
-    # Si ya pasaron las 10 PM (22:00), mostrar partidos de MAÑANA
+    # Si ya pasaron las 22:00 (10 PM), mostrar partidos de MAÑANA
     use_tomorrow = hour_cdmx >= 22
-    games_date = (today_cdmx + timedelta(days=1)) if use_tomorrow else today_cdmx
+    target_date = (today_cdmx + timedelta(days=1)) if use_tomorrow else today_cdmx
     
-    daily_games = pit_get_daily_games(str(games_date))
+    # Obtener partidos de ESE DÍA
+    all_games = pit_get_daily_games(str(target_date))
     
-    # FILTRAR: solo partidos que aún no empiezan
+    # FILTRAR:
+    # 1. Solo partidos del target_date (mismo día)
+    # 2. Solo partidos que NO han empezado (futuro)
+    daily_games = []
+    if all_games:
+        for game in all_games:
+            try:
+                date_raw = game.get("date_raw","")
+                game_time = datetime.fromisoformat(date_raw.replace("Z","+00:00"))
+                game_date_utc = game_time.date()
+                
+                # Convertir game_date_utc a CDMX
+                game_date_cdmx = (game_time - timedelta(hours=6)).date()
+                
+                # SOLO si es del target_date Y todavía no empieza
+                if game_date_cdmx == target_date and game_time > now_utc:
+                    daily_games.append(game)
+            except:
+                pass
+    
+    daily_games = daily_games[:4]  # Máximo 4 partidos
+    
     if daily_games:
         # Parsear fecha de cada juego y comparar con ahora
         active_games = []
