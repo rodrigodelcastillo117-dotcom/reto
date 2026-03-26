@@ -98,7 +98,19 @@ ESPN_LEAGUES_GROUPED = {
         "Gold Cup":                      ("soccer", "concacaf.gold"),
         "Amistosos Internac.":           ("soccer", "fifa.friendly"),
         "Mundial de Clubes":             ("soccer", "fifa.cwc"),
-        "Apostar":                       ("soccer", "fifa.worldq"),
+        "Fútbol Internacional":          ("soccer", "fifa.worldq"),
+    },
+    "🏀 Basketball": {
+        "NBA":                   ("basketball", "nba"),
+    },
+    "🏈 American Football": {
+        "NFL":                   ("football", "nfl"),
+    },
+    "⚾ Baseball": {
+        "MLB":                   ("baseball", "mlb"),
+    },
+    "🏒 Hockey": {
+        "NHL":                   ("hockey", "nhl"),
     },
 }
 
@@ -1980,7 +1992,7 @@ ALL_TODAY_LEAGUES = [
     ("🌍 Fútbol — Selecciones", "Eliminatorias CONCACAF", "soccer", "fifa.worldq.5"),
     ("🌍 Fútbol — Selecciones", "Nations League UEFA",    "soccer", "uefa.nations"),
     ("🌍 Fútbol — Selecciones", "Amistosos Internac.",    "soccer", "fifa.friendly"),
-    ("🌍 Fútbol — Selecciones", "Apostar",                 "soccer", "fifa.worldq"),
+    ("🌍 Fútbol — Selecciones", "Fútbol Internacional",   "soccer", "fifa.worldq"),
     # Basketball
     ("🏀 Basketball", "NBA",  "basketball", "nba"),
     # Baseball
@@ -2450,7 +2462,7 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                                           f'padding:1px 6px;border-radius:4px;font-size:.58rem">{ho}</span>')
 
                         # Card + APOSTAR button side by side
-                        card_c, btn_c = st.columns([5, 4])
+                        card_c, btn_c = st.columns([7, 2])
                         with card_c:
                             st.markdown(
                                 f'<div style="background:{bg};border:1px solid {border};border-radius:10px;'
@@ -2475,12 +2487,15 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                                 unsafe_allow_html=True
                             )
                         with btn_c:
-                            menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
-                            if st.button("APOSTAR", key=f"open_{ev_id[:10]}",
+                            if st.button("🎯 APOSTAR", key=f"open_{ev_id[:10]}",
                                           use_container_width=True,
-                                          type="primary" if menu_open else "secondary"):
-                                # Toggle: si está abierto cierra, si está cerrado abre
-                                st.session_state[f"open_pick_{ev_id[:10]}"] = not menu_open
+                                          type="primary" if is_open else "secondary"):
+                                if is_open:
+                                    st.session_state.pop(f"qp_val_{ev_id}", None)
+                                    st.session_state.pop(f"qp_merc_{ev_id}", None)
+                                    st.session_state.pop(ou_key, None)
+                                else:
+                                    st.session_state[f"open_pick_{ev_id[:10]}"] = True
                                 st.rerun()
 
                 # Pick panels — full width below each row
@@ -2495,7 +2510,7 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                     ou_key = f"ou_pending_{ev_id[:10]}"
                     qv = st.session_state.get(f"qp_val_{ev_id}", "")
                     qm = st.session_state.get(f"qp_merc_{ev_id}", "ML")
-                    open_flag = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
+                    open_flag = st.session_state.pop(f"open_pick_{ev_id[:10]}", False)
 
                     if not qv and not st.session_state.get(ou_key) and not open_flag:
                         continue  # nothing to show for this event
@@ -2630,6 +2645,250 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
 
                     st.markdown("<div style='height:2px'></div>", unsafe_allow_html=True)
 
+
+
+    # Check if any event has an open pick form
+    any_open_id = None
+    for ev in all_evs:
+        ev_id = ev["id"]
+        if (st.session_state.get(f"qp_val_{ev_id}") or
+            st.session_state.get(f"ou_pending_{ev_id[:10]}") or
+            st.session_state.get(f"expand_other_{ev_id[:10]}")):
+            any_open_id = ev_id
+            break
+
+    for liga_lbl, liga_evs in by_liga.items():
+        n = len(liga_evs)
+        # Auto-expand if has open pick or <=6 events
+        default_open = n <= 6 or any_open_id in [e["id"] for e in liga_evs]
+
+        with st.expander(f"{liga_lbl}  ·  {n} partidos", expanded=default_open):
+            # 3 columns grid
+            for row_start in range(0, len(liga_evs), 3):
+                row_evs = liga_evs[row_start:row_start+3]
+                grid_cols = st.columns(3)
+                for col_i in range(3):
+                    with grid_cols[col_i]:
+                        if col_i >= len(row_evs):
+                            continue
+                        ev      = row_evs[col_i]
+                        ev_id   = ev["id"]
+                        away    = ev["away"]; home = ev["home"]
+                        sport_ev = ev.get("sport","soccer")
+                        sp_ico  = SPORT_ICONS.get(sport_ev,"🎯")
+                        is_live = ev.get("is_live", False)
+                        s_txt   = "● LIVE" if is_live else ev.get("date","")
+                        s_col   = "#FF3D00" if is_live else "#8888AA"
+                        ao = float(ev.get("away_odds",0))
+                        ho = float(ev.get("home_odds",0))
+                        do = float(ev.get("draw_odds",0))
+                        a_lg = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 28, "8px")
+                        h_lg = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 28, "8px")
+                        qv  = st.session_state.get(f"qp_val_{ev_id}", "")
+                        is_open = bool(qv) or bool(st.session_state.get(f"ou_pending_{ev_id[:10]}"))
+                        border = "rgba(240,255,0,.5)" if is_open else ("rgba(255,61,0,.4)" if is_live else "rgba(255,255,255,.07)")
+                        bg     = "rgba(240,255,0,.05)" if is_open else "rgba(255,255,255,.02)"
+
+                        # Compact card
+                        odds_html = ""
+                        if ao > 1:
+                            odds_html = f'<div style="font-size:.52rem;margin-top:3px">'
+                            odds_html += f'<span style="color:#00FF88">{ao}</span>'
+                            if do > 1: odds_html += f'<span style="color:#8888AA"> · </span><span style="color:#FFB800">{do}</span>'
+                            odds_html += f'<span style="color:#8888AA"> · </span><span style="color:#00B4FF">{ho}</span></div>'
+
+                        st.markdown(
+                            f'<div style="background:{bg};border:1px solid {border};'
+                            f'border-radius:10px;padding:8px;text-align:center;margin-bottom:4px">'
+                            f'<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">'
+                            f'<div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex:1">'
+                            f'{a_lg}<span style="font-size:.62rem;font-weight:700;color:#EEEEF5;'
+                            f'max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">{away}</span>'
+                            f'</div>'
+                            f'<div style="font-size:.55rem;color:#44445A;flex-shrink:0;padding:0 4px">'
+                            f'vs<div style="font-size:.42rem;color:{s_col}">{s_txt}</div></div>'
+                            f'<div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex:1">'
+                            f'{h_lg}<span style="font-size:.62rem;font-weight:700;color:#EEEEF5;'
+                            f'max-width:70px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block">{home}</span>'
+                            f'</div></div>'
+                            f'{odds_html}'
+                            f'{"<div style=\\'font-size:.55rem;color:#F0FF00;margin-top:4px\\'>" + qv + "</div>" if qv else ""}'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+
+                        # Pick buttons — compact, sport-specific
+                        if sport_ev == "soccer":
+                            opts = [(away,"ML"),(None,"draw"),(home,"ML")]
+                            lbls = [f"⚽ {away[:8]}", "✗", f"⚽ {home[:8]}"]
+                        elif sport_ev == "basketball":
+                            opts = [(away,"ML"),(home,"ML"),("Over","O/U"),("Under","O/U")]
+                            lbls = [f"{away[:7]}", f"{home[:7]}", "📈 O", "📉 U"]
+                        elif sport_ev == "baseball":
+                            opts = [(away,"ML"),(home,"ML"),("Over","O/U"),("Under","O/U")]
+                            lbls = [f"{away[:7]}", f"{home[:7]}", "📈 O", "📉 U"]
+                        elif sport_ev == "hockey":
+                            opts = [(away,"ML"),(home,"ML"),("Over 5.5","O/U"),("Under 5.5","O/U")]
+                            lbls = [f"{away[:7]}", f"{home[:7]}", "📈 5.5", "📉 5.5"]
+                        else:
+                            opts = [(away,"ML"),(home,"ML")]
+                            lbls = [f"{away[:10]}", f"{home[:10]}"]
+
+                        btn_c = st.columns(len(lbls))
+                        for bi, (bc, lbl, (pval, pmerc)) in enumerate(zip(btn_c, lbls, opts)):
+                            with bc:
+                                if st.button(lbl, key=f"qp_{ev_id[:10]}_{bi}",
+                                             use_container_width=True):
+                                    if pval in ("Over","Under"):
+                                        st.session_state[f"ou_pending_{ev_id[:10]}"] = pval
+                                        st.session_state.pop(f"qp_val_{ev_id}", None)
+                                    elif pval is None:
+                                        st.session_state[f"qp_val_{ev_id}"]  = "Empate"
+                                        st.session_state[f"qp_merc_{ev_id}"] = "1X2"
+                                        st.session_state.pop(f"ou_pending_{ev_id[:10]}", None)
+                                    else:
+                                        st.session_state[f"qp_val_{ev_id}"]  = pval
+                                        st.session_state[f"qp_merc_{ev_id}"] = pmerc
+                                        st.session_state.pop(f"ou_pending_{ev_id[:10]}", None)
+                                    st.rerun()
+
+                # ── Forms span full width below each grid row ────
+                for col_i in range(min(3, len(row_evs))):
+                    ev     = row_evs[col_i]
+                    ev_id  = ev["id"]
+                    away   = ev["away"]; home = ev["home"]
+                    sport_ev = ev.get("sport","soccer")
+                    ao = float(ev.get("away_odds",0))
+                    ho = float(ev.get("home_odds",0))
+                    do = float(ev.get("draw_odds",0))
+                    ou_key = f"ou_pending_{ev_id[:10]}"
+                    qv = st.session_state.get(f"qp_val_{ev_id}", "")
+                    qm = st.session_state.get(f"qp_merc_{ev_id}", "ML")
+
+                    # Over/Under line input
+                    if st.session_state.get(ou_key):
+                        direction = st.session_state[ou_key]
+                        def_line = 220.5 if sport_ev=="basketball" else 8.5 if sport_ev=="baseball" else 5.5
+                        lc1, lc2, lc3 = st.columns([3,1,1])
+                        with lc1:
+                            line_val = st.number_input(
+                                f"Línea {direction} — {away} vs {home}",
+                                min_value=0.5, max_value=500.0,
+                                value=def_line, step=0.5, key=f"ou_line_{ev_id[:10]}")
+                        with lc2:
+                            if st.button("✅", key=f"ou_ok_{ev_id[:10]}", use_container_width=True):
+                                st.session_state[f"qp_val_{ev_id}"]  = f"{direction} {line_val}"
+                                st.session_state[f"qp_merc_{ev_id}"] = "O/U"
+                                st.session_state.pop(ou_key, None)
+                                st.rerun()
+                        with lc3:
+                            if st.button("✖", key=f"ou_x_{ev_id[:10]}", use_container_width=True):
+                                st.session_state.pop(ou_key, None)
+                                st.rerun()
+
+                    # Save form
+                    if qv:
+                        if ao == 0 and ho == 0:
+                            with st.spinner("Momios..."):
+                                ao, do, ho = get_live_odds(sport_ev, home, away)
+                        ql = qv.lower()
+                        def_momio = 1.85
+                        if "empate" in ql and do > 1:           def_momio = round(do,2)
+                        elif home.lower()[:5] in ql and ho > 1: def_momio = round(ho,2)
+                        elif away.lower()[:5] in ql and ao > 1: def_momio = round(ao,2)
+                        elif ao > 1:                             def_momio = round(ao,2)
+
+                        b = def_momio - 1
+                        kelly_bet = max(50.0, round(bank * max(0,(1/def_momio*(b+1)-1)/b)*0.25, 0)) if b>0 else 50.0
+                        kelly_bet = min(kelly_bet, bank)
+
+                        st.markdown(
+                            f'<div style="background:rgba(240,255,0,.06);border:1px solid rgba(240,255,0,.3);'
+                            f'border-radius:8px;padding:6px 12px;margin:2px 0">'
+                            f'<span style="font-size:.6rem;color:#F0FF00">💾 <b>{away} vs {home}</b> → {qv}</span>'
+                            f'</div>', unsafe_allow_html=True)
+
+                        sc1, sc2, sc3, sc4 = st.columns([2,2,1,1])
+                        with sc1:
+                            momio_v = st.number_input("Momio", min_value=1.01, max_value=99.0,
+                                                       value=float(def_momio), step=0.05,
+                                                       key=f"qmomio_{ev_id[:10]}")
+                        with sc2:
+                            apuesta_v = st.number_input(f"Apuesta (Kelly ~${kelly_bet:,.0f})",
+                                                         min_value=1.0, max_value=float(bank),
+                                                         value=float(kelly_bet), step=50.0,
+                                                         key=f"qapuesta_{ev_id[:10]}")
+                            pct = apuesta_v/bank*100 if bank>0 else 0
+                            bar_c = "#00FF88" if pct<=5 else "#FFB800" if pct<=10 else "#FF2D55"
+                            st.markdown(
+                                f'<div style="display:flex;align-items:center;gap:4px;margin-top:1px">'
+                                f'<div style="flex:1;background:rgba(255,255,255,.05);border-radius:99px;height:3px">'
+                                f'<div style="width:{min(100,pct*4):.0f}%;height:100%;background:{bar_c};border-radius:99px"></div>'
+                                f'</div><span style="font-size:.5rem;color:{bar_c}">{pct:.1f}%</span></div>',
+                                unsafe_allow_html=True)
+                        with sc3:
+                            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                            if st.button("💾", key=f"qsave_{ev_id[:10]}", type="primary",
+                                          use_container_width=True):
+                                raw_liga = ev.get("_liga_label", ev.get("liga",""))
+                                SPORT_DISPLAY = {"soccer":"⚽ Fútbol","basketball":"🏀 NBA",
+                                                 "baseball":"⚾ MLB","hockey":"🏒 NHL","football":"🏈 NFL"}
+                                if not raw_liga or "cargar" in raw_liga.lower():
+                                    raw_liga = SPORT_DISPLAY.get(sport_ev, sport_ev.upper())
+                                row = {"fecha": str(date.today()), "deporte": sport_ev,
+                                       "liga": raw_liga, "partido": f"{away} vs {home}",
+                                       "event_id": ev_id, "mercado": qm, "pick_desc": qv,
+                                       "momio": momio_v, "apuesta": apuesta_v,
+                                       "resultado": "pendiente", "ganancia_neta": 0,
+                                       "bankroll_post": bank, "notas": ""}
+                                if save_pick(apodo, row):
+                                    st.success(f"✅ {qv} @ {momio_v}x")
+                                    for k in ["df_picks","selected_event","pick_type"]:
+                                        st.session_state.pop(k, None)
+                                    st.session_state.pop(f"qp_val_{ev_id}", None)
+                                    st.session_state.pop(f"qp_merc_{ev_id}", None)
+                                    st.rerun()
+                        with sc4:
+                            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+                            if st.button("✖", key=f"qcancel_{ev_id[:10]}", use_container_width=True):
+                                st.session_state.pop(f"qp_val_{ev_id}", None)
+                                st.session_state.pop(f"qp_merc_{ev_id}", None)
+                                st.rerun()
+
+
+
+
+    # ── Pending picks — resolve manually
+    pending = df[df["resultado"] == "pendiente"].copy()
+    if not pending.empty:
+        st.markdown('<div class="sec-head">Picks pendientes</div>', unsafe_allow_html=True)
+        st.caption("El auto-calificar se ejecuta al abrir la app. Aquí puedes resolver manualmente si ESPN no lo detecta.")
+        for idx, row in pending.iterrows():
+            with st.expander(f"⏳  {row['partido']}  ·  {row['liga']}  ·  {row['momio']}x  ·  ${float(row['apuesta']):,.0f}"):
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    if st.button("✅ Ganado", key=f"w_{idx}"):
+                        gan = round(float(row["apuesta"]) * (float(row["momio"]) - 1), 2)
+                        nb  = round(bank + gan, 2)
+                        update_pick_row(apodo, idx, "ganado", gan, nb)
+                        st.session_state["fx"] = "confetti"
+                        st.rerun()
+                with c2:
+                    if st.button("❌ Perdido", key=f"l_{idx}"):
+                        gan = -float(row["apuesta"])
+                        nb  = round(bank + gan, 2)
+                        update_pick_row(apodo, idx, "perdido", gan, nb)
+                        st.session_state["fx"] = "wasted"
+                        st.rerun()
+                with c3:
+                    if st.button("➖ Nulo", key=f"n_{idx}"):
+                        update_pick_row(apodo, idx, "nulo", 0, bank)
+                        st.rerun()
+
+
+# ─────────────────────────────────────────────────────────────
+#  TAB 2 — HISTORIAL
+# ─────────────────────────────────────────────────────────────
 def tab_historial(apodo: str, df: pd.DataFrame):
     if df.empty:
         st.info("Sin picks registrados aún.")
@@ -3746,564 +4005,478 @@ def pit_auto_grade(apodo: str, ronda_id: str, my_record: dict) -> tuple[int, int
 #  THE PIT — Main tab
 # ─────────────────────────────────────────────────────────────
 def tab_the_pit(apodo: str, bank: float):
-    """
-    THE PIT: Arena de picks diarios. Estructura brutal, visualmente sangriento.
-    - Basado en hora CDMX para seed diario de picks random
-    - 4 secciones claras: STATUS | PICKS HOY | LEADERBOARD | CHAT
-    - Diseño terrorífico con sangre, calaveras, oscuridad
-    """
-    from datetime import datetime, timedelta
-    # ─────────────────────────────────────────────────────────────
-    #  AUTO-REFRESH CADA 10 SEGUNDOS PARA ACTUALIZACIONES EN VIVO
-    # ─────────────────────────────────────────────────────────────
-    if "pit_last_check" not in st.session_state:
-        st.session_state["pit_last_check"] = 0
-    
-    import time
-    current_time = time.time()
-    if current_time - st.session_state["pit_last_check"] > 10:  # Cada 10 segundos
-        st.session_state["pit_last_check"] = current_time
-        # Forzar recarga sin cacheo
-        st.session_state.pop("pit_players", None)
-        st.session_state.pop("pit_picks", None)
-        st.rerun()
-    
-    # JavaScript para auto-refresh cada 30 segundos en el cliente (como seguridad adicional)
-    st.markdown("""
-    <script>
-        if (!window.pitAutoRefreshSet) {
-            window.pitAutoRefreshSet = true;
-            setInterval(() => {
-                location.reload();
-            }, 30000);  // 30 segundos
-        }
-    </script>
-    """, unsafe_allow_html=True)
 
-    
-    import random
-    
-    # ─────────────────────────────────────────────────────────────
-    #  CDMX TIME & SEED
-    # ─────────────────────────────────────────────────────────────
-    # Calcular hora CDMX (UTC-6, o UTC-5 si DST)
-    now_utc = datetime.utcnow()
-    cdmx_offset = timedelta(hours=-6)  # Simplificar: asumir UTC-6
-    now_cdmx = now_utc + cdmx_offset
-    today_cdmx = now_cdmx.date()
-    hour_cdmx = now_cdmx.hour
-    
-    # Seed diario reproducible basado en CDMX
-    daily_seed = int(today_cdmx.strftime("%Y%m%d"))
-    random.seed(daily_seed)
-    
-    # ─────────────────────────────────────────────────────────────
-    #  HEADER ÉPICO
-    # ─────────────────────────────────────────────────────────────
+    # ── Header
     st.markdown("""
-<style>
-  .pit-header {
-    position: relative;
-    text-align: center;
-    padding: 40px 20px;
-    background: linear-gradient(180deg, rgba(139,0,0,.15) 0%, rgba(0,0,0,.3) 100%);
-    border: 2px solid rgba(220,20,60,.4);
-    border-radius: 12px;
-    margin-bottom: 24px;
-    overflow: hidden;
-    box-shadow: 0 0 30px rgba(220,20,60,.3), inset 0 0 40px rgba(220,20,60,.1);
-  }
-  .pit-header::before {
-    content: "";
-    position: absolute;
-    inset: 0;
-    background: radial-gradient(circle at 20% 50%, rgba(255,0,0,.08) 0%, transparent 60%),
-                radial-gradient(circle at 80% 50%, rgba(139,0,0,.08) 0%, transparent 60%);
-    pointer-events: none;
-  }
-  .pit-title {
-    font-family: 'Bebas Neue', 'Arial Black', sans-serif;
-    font-size: 5rem;
-    font-weight: 900;
-    letter-spacing: 8px;
-    background: linear-gradient(135deg, #DC143C, #8B0000, #FF4500);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-    text-shadow: 0 0 30px rgba(220,20,60,.8);
-    filter: drop-shadow(0 0 25px rgba(220,20,60,.5));
-    margin: 0;
-    position: relative;
-    z-index: 2;
-  }
-  .pit-subtitle {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.7rem;
-    letter-spacing: 6px;
-    color: #FF6B6B;
-    text-transform: uppercase;
-    margin: 12px 0 0 0;
-    text-shadow: 0 0 10px rgba(220,20,60,.5);
-  }
-  .pit-time {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 0.65rem;
-    color: rgba(255,107,107,.6);
-    letter-spacing: 2px;
-    margin-top: 10px;
-  }
-  .pit-stats {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 12px;
-    margin-top: 24px;
-  }
-  .pit-stat-box {
-    background: rgba(220,20,60,.08);
-    border: 1px solid rgba(220,20,60,.25);
-    border-radius: 8px;
-    padding: 12px;
-    text-align: center;
-  }
-  .pit-stat-val {
-    font-family: 'Bebas Neue', sans-serif;
-    font-size: 1.8rem;
-    color: #FF4500;
-    font-weight: 700;
-    margin-bottom: 4px;
-  }
-  .pit-stat-lbl {
-    font-size: 0.65rem;
-    color: #8888AA;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-  }
-  .pit-danger {
-    color: #FF6B6B;
-  }
-  .pit-alive {
-    color: #00FF88;
-  }
-  .pit-warning {
-    color: #FFB800;
-  }
-</style>
-
-<div class="pit-header">
-  <div style="position: relative; z-index: 2;">
-    <div style="font-size: 2.2rem; margin-bottom: 8px;">☠️ 🗡️ ⚔️ 🩸 💀</div>
-    <h1 class="pit-title">THE PIT</h1>
-    <div class="pit-subtitle">🔥 ARENA DE SANGRE Y GLORIA 🔥</div>
-    <div class="pit-subtitle">MIL ENTRAN · CERO SALEN ILESOS</div>
-    <div class="pit-time">CDMX · {today} · {hour_cdmx:02d}:{now_cdmx.minute:02d}</div>
+<div style="position:relative;text-align:center;padding:28px 20px 20px;overflow:hidden;
+     background:linear-gradient(180deg,rgba(255,45,85,.08) 0%,transparent 100%);
+     border:1px solid rgba(255,45,85,.2);border-radius:16px;margin-bottom:18px">
+  <div style="position:absolute;inset:0;pointer-events:none;
+       background-image:linear-gradient(rgba(255,45,85,.04) 1px,transparent 1px),
+       linear-gradient(90deg,rgba(255,45,85,.04) 1px,transparent 1px);
+       background-size:24px 24px"></div>
+  <div style="font-family:'JetBrains Mono',monospace;font-size:.55rem;letter-spacing:6px;
+       color:rgba(255,45,85,.6);text-transform:uppercase;margin-bottom:8px">⚔ ARENA DE MUERTE ⚔</div>
+  <div style="font-family:'Bebas Neue',sans-serif;font-size:4rem;line-height:.9;
+       background:linear-gradient(135deg,#FF2D55,#FF6B00,#FFB800);
+       -webkit-background-clip:text;-webkit-text-fill-color:transparent;
+       filter:drop-shadow(0 0 20px rgba(255,45,85,.5));letter-spacing:4px">
+    THE PIT
+  </div>
+  <div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;color:rgba(255,255,255,.25);
+       letter-spacing:4px;margin-top:8px">
+    MIL ENTRAN · SOLO UNO SALE CON LOS BOLSILLOS LLENOS
   </div>
 </div>
-""".format(
-    today=today_cdmx.strftime("%d %b %Y"),
-    hour_cdmx=hour_cdmx,
-    now_cdmx=now_cdmx
-), unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
-    # ─────────────────────────────────────────────────────────────
-    #  RONDA ACTIVA
-    # ─────────────────────────────────────────────────────────────
+    # ── Refresh button (manual)
+    col_ref = st.columns([8,1])[1]
+    with col_ref:
+        if st.button("🔄", key="pit_refresh", help="Actualizar datos del Pit"):
+            for k in ["pit_ronda","pit_players","pit_picks","pit_chat_msgs","pit_graded"]:
+                st.session_state.pop(k, None)
+            pit_load_ronda_activa.clear()
+            pit_load_players.clear()
+            pit_load_picks_ronda.clear()
+            pit_load_chat.clear()
+            st.rerun()
+
+    # ── Load active ronda — use session cache to avoid API call on every button click
     if "pit_ronda" not in st.session_state:
         st.session_state["pit_ronda"] = pit_load_ronda_activa()
     ronda = st.session_state["pit_ronda"]
 
+    # ── No active ronda
     if not ronda:
         st.markdown("""
-<div style="text-align:center;padding:40px;background:rgba(139,0,0,.08);
-     border:2px solid rgba(220,20,60,.3);border-radius:10px;margin-bottom:20px">
-  <div style="font-family:'Bebas Neue',sans-serif;font-size:2.5rem;color:#DC143C;
-       letter-spacing:4px;margin-bottom:12px">⚠️ EL FOSO ESTÁ VACÍO</div>
-  <div style="font-size:.85rem;color:#8888AA;margin-bottom:20px">
-    No hay ronda activa en este momento. El siguiente torneo pronto abrirá sus puertas...
+<div style="text-align:center;padding:30px;background:rgba(255,45,85,.05);
+     border:1px solid rgba(255,45,85,.2);border-radius:14px">
+  <div style="font-family:'Bebas Neue',sans-serif;font-size:1.8rem;color:#FF2D55;margin-bottom:8px">
+    NO HAY RONDA ACTIVA
   </div>
+  <div style="font-size:.8rem;color:#8888AA">El siguiente torneo aún no ha comenzado.</div>
 </div>""", unsafe_allow_html=True)
         c = st.columns([2,1,2])[1]
         with c:
-            if st.button("⚔ ABRIR EL FOSO", type="primary", use_container_width=True):
+            if st.button("⚔ CREAR NUEVA RONDA", type="primary"):
                 rid = pit_crear_ronda()
                 if rid:
-                    st.success(f"🩸 ¡El Foso abre sus puertas! Ronda #{rid} iniciada.")
+                    st.success(f"Ronda #{rid} creada. ¡Que comience el foso!")
                     st.session_state.pop("pit_ronda", None)
                     st.rerun()
         return
 
-    ronda_id = str(ronda["ronda_id"])
-    estado = ronda.get("estado","")
+    ronda_id     = str(ronda["ronda_id"])
+    estado_ronda = ronda.get("estado","")
+    fecha_inicio = ronda.get("fecha_inicio","")
+    fecha_fin    = ronda.get("fecha_fin","")
+    hoy          = date.today()
+    try:
+        dia_actual = (hoy - date.fromisoformat(str(fecha_inicio))).days + 1
+    except Exception:
+        dia_actual = 1
 
-    # Cargar datos
+    # Cache players and picks in session_state
     if "pit_players" not in st.session_state:
         st.session_state["pit_players"] = pit_load_players(ronda_id)
     if "pit_picks" not in st.session_state:
         st.session_state["pit_picks"] = pit_load_picks_ronda(ronda_id)
 
-    players = st.session_state["pit_players"]
+    players     = st.session_state["pit_players"]
     ronda_picks = st.session_state["pit_picks"]
 
-    vivos = [p for p in players if p.get("estado") == "vivo"]
+    vivos      = [p for p in players if p.get("estado") == "vivo"]
     eliminados = [p for p in players if p.get("estado") == "eliminado"]
-    total = len(players)
-    n_vivos = len(vivos)
+    total      = len(players)
+    n_vivos    = len(vivos)
 
+    # My player record
     my_record = next((p for p in players if p.get("apodo","").lower() == apodo.lower()), None)
-    yo_vivo = my_record and my_record.get("estado") == "vivo"
-    yo_elim = my_record and my_record.get("estado") == "eliminado"
+    yo_vivo   = my_record and my_record.get("estado") == "vivo"
+    yo_elim   = my_record and my_record.get("estado") == "eliminado"
 
-    # ─────────────────────────────────────────────────────────────
-    #  SECTION 1: STATUS RONDA
-    # ─────────────────────────────────────────────────────────────
-    st.markdown("""
-<div style="background: linear-gradient(135deg, rgba(220,20,60,.1), rgba(139,0,0,.08));
-     border: 1px solid rgba(220,20,60,.25); border-radius: 10px; padding: 20px; margin-bottom: 20px;">
-  <div style="font-family: 'Bebas Neue', sans-serif; font-size: 1.1rem; color: #FF6B6B;
-       letter-spacing: 2px; margin-bottom: 16px;">⚔️ STATUS DEL FOSO</div>
-""", unsafe_allow_html=True)
-
-    # Stats
-    pct_muertos = (total - n_vivos) / total * 100 if total else 0
-    pct_vivos = n_vivos / total * 100 if total else 0
-
-    col1, col2, col3, col4 = st.columns(4)
-    with col1:
-        st.metric("💀 ENTRARON", total, delta=None)
-    with col2:
-        st.metric("🩸 ELIMINADOS", total - n_vivos, delta=None)
-    with col3:
-        st.metric("💚 VIVOS", n_vivos, delta=f"{pct_vivos:.0f}%")
-    with col4:
-        st.metric("📅 DÍA", "1", delta=None)
-
-    # Progress bar
-    st.markdown(f"""
-<div style="background: rgba(255,255,255,.05); border-radius: 99px; height: 10px; 
-     overflow: hidden; margin: 16px 0; border: 1px solid rgba(220,20,60,.2);">
-  <div style="width: {pct_muertos:.1f}%; height: 100%;
-       background: linear-gradient(90deg, #DC143C, #8B0000, #FF4500);
-       border-radius: 99px;
-       box-shadow: 0 0 15px rgba(220,20,60,.6)"></div>
-</div>
-<div style="text-align: center; font-family: 'JetBrains Mono', monospace;
-     font-size: 0.7rem; color: #FF6B6B; letter-spacing: 2px;">
-  {pct_muertos:.0f}% CAÍDOS · {pct_vivos:.0f}% AÚN RESPIRAN
-</div>
-</div>
-""", unsafe_allow_html=True)
-
-    # Auto-grade — SIEMPRE VERIFICAR PICKS PENDIENTES (no cachear)
-    # Auto-grade — VERIFICAR PICKS PENDIENTES CADA VEZ (sin cachear)
+    # ── Auto-grade pending PIT picks (SIEMPRE VERIFICAR - sin cacheo)
     if yo_vivo and my_record:
-        with st.spinner("⚔ Verificando tus heridas…"):
+        with st.spinner("⚔ Verificando resultados del foso…"):
             try:
                 g, p = pit_auto_grade(apodo, ronda_id, my_record)
-                # NO CACHEAR: Remover pit_graded para que SIEMPRE verifique
-                
-                # ─────────────────────────────────────────────────────────────
-                #  CELEBRACIÓN O LAMENTO ÉPICO
-                # ─────────────────────────────────────────────────────────────
                 if g > 0:
-                    # 🎉 GANASTE
-                    celebraciones = [
-                        "¡🔥 BRUTAL! ¡SOBREVIVISTE OTRO DÍA!",
-                        "💚 ¡VIVO! ¡EL FOSO NO TE TIENE HOY!",
-                        "🎯 ¡ACERTADO! ¡LA SUERTE ESTÁ CONTIGO!",
-                        "⚔ ¡GLORIA! ¡OTRO PICK GANADO!",
-                        "🏆 ¡CAMPEÓN! ¡SIGUES EN PIE!",
-                        "🔥 ¡INFERNAL! ¡OTRO DÍA MÁS!",
-                        "💪 ¡INVENCIBLE! ¡NADA TE DETIENE!",
-                        "🎊 ¡ESPECTACULAR! ¡SIGUE LA RACHA!",
-                    ]
-                    import random
-                    celebracion = random.choice(celebraciones)
-                    
-                    st.markdown(f"""
-<div style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-     z-index: 9999; text-align: center; animation: bounce 0.6s ease-in-out;">
-  <style>
-    @keyframes bounce {{
-      0%, 100% {{ transform: translate(-50%, -50%) scale(1); }}
-      50% {{ transform: translate(-50%, -50%) scale(1.2); }}
-    }}
-    @keyframes glow {{
-      0%, 100% {{ text-shadow: 0 0 10px rgba(0,255,136,.5); }}
-      50% {{ text-shadow: 0 0 40px rgba(0,255,136,1); }}
-    }}
-  </style>
-  <div style="font-family: 'Bebas Neue', sans-serif; font-size: 4rem; 
-       color: #00FF88; font-weight: 900; letter-spacing: 4px;
-       animation: glow 1s ease-in-out;">
-    {celebracion}
-  </div>
-  <div style="font-size: 3rem; margin-top: 10px; animation: pulse 1s infinite;">
-    🎉 🎉 🎉
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-                    st.balloons()
-                    st.success(f"✅ **+{g}** PICK(S) GANADO(S) - ¡Otro día de gloria en el Foso!")
-                    
+                    st.markdown(
+                        f'<div class="autobanner" style="background:rgba(0,255,136,.07);border-color:rgba(0,255,136,.3)">'
+                        f'⚔ THE PIT: <strong>{g} pick(s) ganados</strong> — ¡Sobreviviste otro día!</div>',
+                        unsafe_allow_html=True
+                    )
                 elif p > 0:
-                    # 💀 PERDISTE
-                    lamentos = [
-                        "💀 ¡CAÍSTE! ¡EL FOSO COBRA SUS VÍCTIMAS!",
-                        "🩸 ¡TERMINÓ! ¡TU PICK FUE TU PERDICIÓN!",
-                        "⚰️ ¡ELIMINADO! ¡EL FOSO TE HA VENCIDO!",
-                        "🗡️ ¡VENCIDO! ¡OTRO CUERPO EN EL ARENA!",
-                        "💔 ¡DEVASTADOR! ¡NO LO VISTE VENIR!",
-                        "🌑 ¡OSCURIDAD! ¡EL FIN HA LLEGADO!",
-                        "☠️ ¡MALDICIÓN! ¡EL FOSO NO PERDONA!",
-                        "⛓️ ¡ENCADENADO! ¡LA DEUDA ESTÁ PAGADA!",
-                    ]
-                    import random
-                    lamento = random.choice(lamentos)
-                    
-                    st.markdown(f"""
-<div style="position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
-     z-index: 9999; text-align: center; animation: shake 0.5s;">
-  <style>
-    @keyframes shake {{
-      0%, 100% {{ transform: translate(-50%, -50%) rotateZ(0deg); }}
-      25% {{ transform: translate(-50%, -50%) rotateZ(-5deg); }}
-      75% {{ transform: translate(-50%, -50%) rotateZ(5deg); }}
-    }}
-    @keyframes bloodglow {{
-      0%, 100% {{ text-shadow: 0 0 20px rgba(220,20,60,.8); }}
-      50% {{ text-shadow: 0 0 50px rgba(220,20,60,1); }}
-    }}
-  </style>
-  <div style="font-family: 'Bebas Neue', sans-serif; font-size: 4rem; 
-       color: #FF2D55; font-weight: 900; letter-spacing: 4px;
-       animation: bloodglow 1s ease-in-out;">
-    {lamento}
-  </div>
-  <div style="font-size: 3rem; margin-top: 10px; animation: pulse 1s infinite;">
-    💀 💀 💀
-  </div>
-</div>
-""", unsafe_allow_html=True)
-
-                    st.error(f"❌ **{p}** PICK(S) PERDIDO(S) - El foso ha cobrado su precio...")
-                    
+                    st.markdown(
+                        f'<div class="tilt-alert">💀 THE PIT: <strong>{p} pick(s) perdidos</strong> — '
+                        f'Revisa tu estado en el leaderboard.</div>',
+                        unsafe_allow_html=True
+                    )
+                # Reload players after grading
                 if g > 0 or p > 0:
                     st.session_state.pop("pit_players", None)
                     st.session_state.pop("pit_picks", None)
-                    st.rerun()
-            except Exception as e:
-                pass  # Silently continue if grading fails
+                    players     = pit_load_players(ronda_id)
+                    ronda_picks = pit_load_picks_ronda(ronda_id)
+                    st.session_state["pit_players"] = players
+                    st.session_state["pit_picks"]   = ronda_picks
+                    vivos      = [p for p in players if p.get("estado") == "vivo"]
+                    eliminados = [p for p in players if p.get("estado") == "eliminado"]
+                    total      = len(players)
+                    n_vivos    = len(vivos)
+                    my_record  = next((p for p in players if p.get("apodo","").lower() == apodo.lower()), None)
+                    yo_vivo    = my_record and my_record.get("estado") == "vivo"
+                    yo_elim    = my_record and my_record.get("estado") == "eliminado"
+            except Exception:
+                pass
+    
+    pct_vivos = n_vivos / total * 100 if total else 0
+    st.markdown(f"""
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:16px">
+  <div class="kpi-box" style="border-color:rgba(255,45,85,.3)">
+    <div class="kpi-val" style="color:#FF2D55">{total}</div>
+    <div class="kpi-lbl">Entraron</div>
+  </div>
+  <div class="kpi-box" style="border-color:rgba(0,255,136,.3)">
+    <div class="kpi-val" style="color:#00FF88">{n_vivos}</div>
+    <div class="kpi-lbl">Siguen Vivos</div>
+  </div>
+  <div class="kpi-box" style="border-color:rgba(255,184,0,.3)">
+    <div class="kpi-val" style="color:#FFB800">Día {dia_actual}</div>
+    <div class="kpi-lbl">{fecha_inicio} → {fecha_fin}</div>
+  </div>
+</div>
+<div style="background:rgba(255,255,255,.04);border-radius:99px;height:8px;overflow:hidden;margin-bottom:16px">
+  <div style="width:{100-pct_vivos:.1f}%;height:100%;
+       background:linear-gradient(90deg,#FF2D55,#FF6B00);border-radius:99px;
+       box-shadow:0 0 12px rgba(255,45,85,.5)"></div>
+</div>
+<div style="font-family:'JetBrains Mono',monospace;font-size:.55rem;color:#8888AA;
+     text-align:center;margin-bottom:16px">
+  {total-n_vivos} ELIMINADOS · {pct_vivos:.0f}% AÚN RESPIRAN
+</div>
+""", unsafe_allow_html=True)
 
-    # ─────────────────────────────────────────────────────────────
-    #  SECTION 2: TU STATUS
-    # ─────────────────────────────────────────────────────────────
-    if estado == "inscripcion" and not my_record:
+    # ── Inscripcion / Join
+    if estado_ronda == "inscripcion" and not my_record:
         st.markdown("""
-<div style="background: linear-gradient(135deg, rgba(255,180,0,.1), rgba(255,107,0,.08));
-     border: 2px solid rgba(255,180,0,.3); border-radius: 10px; padding: 24px; 
-     text-align: center; margin-bottom: 20px;">
-  <div style="font-family: 'Bebas Neue', sans-serif; font-size: 1.5rem; color: #FFB800;
-       letter-spacing: 3px; margin-bottom: 8px;">¿TIENES LO QUE SE NECESITA?</div>
-  <div style="font-size: 0.85rem; color: #8888AA; margin: 12px 0 16px;">
-    1 pick/día · Cuota mínima 1.50 · Sin repetir · Muerte súbita
+<div style="background:linear-gradient(135deg,rgba(255,45,85,.1),rgba(255,107,0,.06));
+     border:1px solid rgba(255,45,85,.35);border-radius:14px;padding:20px;text-align:center;margin-bottom:16px">
+  <div style="font-family:'Bebas Neue',sans-serif;font-size:1.4rem;color:#FF2D55;letter-spacing:3px">
+    ¿TIENES LO QUE SE NECESITA?
+  </div>
+  <div style="font-size:.78rem;color:#8888AA;margin:8px 0 16px">
+    Un pick al día · Cuota mínima 1.50 · Sin repetir equipo · Muerte súbita
   </div>
 </div>""", unsafe_allow_html=True)
-        c = st.columns([1,2,1])[1]
+        c = st.columns([2,1,2])[1]
         with c:
-            if st.button("⚔ ENTRAR AL FOSO", type="primary", use_container_width=True):
+            if st.button("⚔ ENTRAR AL FOSO", type="primary"):
                 pit_inscribir(ronda_id, apodo)
                 pit_load_players.clear()
                 pit_save_chat("King Rongo",
-                    f"⚔ **{apodo}** entra al foso. {n_vivos+1} víctimas potenciales.", True)
+                    f"⚔ Un nuevo gladiador entra al foso: **{apodo}**. El Pit tiene {n_vivos+1} víctimas potenciales.", True)
                 st.rerun()
         return
 
+    # ── Already eliminated
     if yo_elim:
-        asesino = my_record.get('pick_asesino','?')
-        dias = my_record.get('dias_vivo',0)
-        
-        mensajes_muerte = [
-            f"Tu pick <strong>{asesino}</strong> fue tu perdición",
-            f"<strong>{asesino}</strong> cortó tu racha",
-            f"El destino te alcanzó con <strong>{asesino}</strong>",
-            f"<strong>{asesino}</strong> fue más fuerte",
-        ]
-        import random
-        mensaje = random.choice(mensajes_muerte)
-        
+        asesino = my_record.get("pick_asesino","?")
         st.markdown(f"""
-<div style="position: relative; background: linear-gradient(135deg, rgba(220,20,60,.2), rgba(139,0,0,.15));
-     border: 2px solid rgba(220,20,60,.5); border-radius: 12px; padding: 40px 32px; 
-     text-align: center; margin-bottom: 20px; box-shadow: 0 0 30px rgba(220,20,60,.4), inset 0 0 20px rgba(220,20,60,.1);">
-  
-  <div style="position: absolute; top: -20px; left: 50%; transform: translateX(-50%); font-size: 3rem;">
-    ⚰️ 💀 ⚰️
+<div style="background:rgba(255,45,85,.08);border:1px solid rgba(255,45,85,.4);
+     border-radius:14px;padding:24px;text-align:center;margin-bottom:16px">
+  <div style="font-family:'Bebas Neue',sans-serif;font-size:3rem;color:#FF2D55;
+       letter-spacing:6px;animation:wastedFade 0s forwards;opacity:1">ELIMINADO</div>
+  <div style="font-size:.8rem;color:#8888AA;margin-top:8px">
+    Tu pick <strong style="color:#FF2D55">{asesino}</strong> te costó el torneo.
   </div>
-  
-  <div style="font-family: 'Bebas Neue', sans-serif; font-size: 4rem; color: #FF2D55;
-       letter-spacing: 8px; margin-bottom: 16px; font-weight: 900;">
-    ELIMINADO
+  <div style="font-size:.7rem;color:#44445A;margin-top:6px">
+    Sobreviviste <strong style="color:#FFB800">{my_record.get('dias_vivo',0)}</strong> día(s) esta ronda.
+    La próxima ronda empieza el próximo lunes.
   </div>
-  
-  <div style="font-size: 0.95rem; color: #FF6B6B; margin-bottom: 16px; font-weight: 600;">
-    {mensaje}
-  </div>
-  
-  <div style="font-size: 1rem; color: #8888AA; margin-bottom: 20px;">
-    Sobreviviste <strong style="color: #FFB800; font-size: 1.1rem;">{dias}</strong> día{'s' if dias != 1 else ''} en el Foso
-  </div>
-  
-  <div style="background: rgba(255,255,255,.05); border-radius: 8px; padding: 12px; 
-       border: 1px solid rgba(255,255,255,.1);">
-    <div style="font-size: 0.75rem; color: #44445A; line-height: 1.6;">
-      🔥 La próxima ronda empieza el próximo lunes<br>
-      🎯 Prepárate para buscar venganza<br>
-      💪 El Foso siempre necesita más víctimas
-    </div>
-  </div>
-</div>
-""")
+</div>""", unsafe_allow_html=True)
 
-        st.markdown("""
-<style>
-  @keyframes skeleton {{
-    0% {{ opacity: 1; }}
-    50% {{ opacity: 0.5; }}
-    100% {{ opacity: 1; }}
-  }}
-  .eliminated-msg {{
-    animation: skeleton 2s infinite;
-  }}
-</style>
-""", unsafe_allow_html=True)
-        
-        return
-
-    # ─────────────────────────────────────────────────────────────
-    #  SECTION 3: PICK DEL DÍA (si vivo)
-    # ─────────────────────────────────────────────────────────────
+    # ── Pick del día (if alive)
     if yo_vivo:
-        from datetime import date
-        today = date.today()
-
+        # Check if already picked today
         today_pick = next(
             (p for p in ronda_picks
              if p.get("apodo","").lower() == apodo.lower()
-             and str(p.get("fecha","")) == str(today)),
+             and str(p.get("fecha","")) == str(hoy)),
             None
         )
+        # Equipos ya usados
+        mis_picks_ronda  = [p for p in ronda_picks if p.get("apodo","").lower() == apodo.lower()]
+        equipos_usados   = set()
+        for pp in mis_picks_ronda:
+            desc = pp.get("pick_desc","")
+            # extract team name (first word group before spaces/symbols)
+            equipos_usados.add(desc.lower().strip())
 
-        used_teams = set()
-        for pick in ronda_picks:
-            if pick.get("apodo","").lower() == apodo.lower():
-                team = pick.get("equipo_pick","")
-                if team:
-                    used_teams.add(team)
+        comodin_disp = str(my_record.get("comodin_disponible","1")) == "1"
 
-        st.markdown("""
-<div style="background: linear-gradient(135deg, rgba(0,255,136,.08), rgba(0,200,100,.05));
-     border: 1px solid rgba(0,255,136,.3); border-radius: 10px; padding: 20px; margin-bottom: 20px;">
-  <div style="font-family: 'Bebas Neue', sans-serif; font-size: 1.1rem; color: #00FF88;
-       letter-spacing: 2px; margin-bottom: 16px;">🎯 PICK DEL DÍA</div>
-""", unsafe_allow_html=True)
+        st.markdown(f"""
+<div style="background:linear-gradient(135deg,rgba(0,255,136,.07),rgba(0,180,255,.04));
+     border:1px solid rgba(0,255,136,.3);border-radius:12px;padding:14px 18px;margin-bottom:14px">
+  <div style="display:flex;justify-content:space-between;align-items:center">
+    <div>
+      <div style="font-family:'Bebas Neue',sans-serif;font-size:.7rem;letter-spacing:3px;
+           color:#00FF88;margin-bottom:2px">🟢 SIGUES VIVO — DÍA {dia_actual}</div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;color:#8888AA">
+        Días sobrevividos: {my_record.get('dias_vivo',0)} · ROI: {float(my_record.get('roi_acum',0)):.2f}%
+      </div>
+    </div>
+    <div style="text-align:right">
+      {"<span style='font-family:\"JetBrains Mono\",monospace;font-size:.6rem;color:#FFB800'>🛡 COMODÍN DISPONIBLE</span>" if comodin_disp else "<span style='font-family:\"JetBrains Mono\",monospace;font-size:.6rem;color:#44445A'>🛡 Comodín usado</span>"}
+    </div>
+  </div>
+</div>""", unsafe_allow_html=True)
 
         if today_pick:
-            st.success(f"✅ Ya elegiste: **{today_pick.get('pick_texto','')}** @ {today_pick.get('momio',1.5):.2f}")
-        else:
-            st.info("📌 Elige un pick para hoy antes de la medianoche CDMX")
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    # ─────────────────────────────────────────────────────────────
-    #  SECTION 4: STANDINGS CON VIDAS
-    # ─────────────────────────────────────────────────────────────
-    st.markdown("""
-<div style="background: linear-gradient(135deg, rgba(255,180,0,.08), rgba(255,107,0,.05));
-     border: 1px solid rgba(255,180,0,.3); border-radius: 10px; padding: 20px; margin-bottom: 20px;">
-  <div style="font-family: 'Bebas Neue', sans-serif; font-size: 1.1rem; color: #FFB800;
-       letter-spacing: 2px; margin-bottom: 16px;">🏆 TABLA DE SANGRE - STANDINGS</div>
-""", unsafe_allow_html=True)
-
-    if vivos:
-        # Ordenar por picks ganados
-        vivos_sorted = sorted(vivos, key=lambda x: x.get("picks_ganados", 0), reverse=True)
-        
-        # Crear tabla con vidas
-        for rank, p in enumerate(vivos_sorted, 1):
-            apodo_p = p.get('apodo','?')
-            ganados = p.get('picks_ganados', 0)
-            perdidos = p.get('picks_perdidos', 0)
-            
-            # Sistema de 3 vidas (diminuye según picks perdidos)
-            vidas = max(0, 3 - perdidos)
-            vidas_visual = "💚" * vidas + "🖤" * (3 - vidas)
-            
-            # Emojis de rank
-            emoji_rank = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣"]
-            emoji = emoji_rank[rank-1] if rank <= len(emoji_rank) else f"#{rank}"
-            
-            # Color según vidas restantes
-            if vidas == 3:
-                color_bg = "rgba(0,255,136,.08)"  # Verde - muy vivo
-                color_border = "rgba(0,255,136,.3)"
-            elif vidas == 2:
-                color_bg = "rgba(255,180,0,.08)"   # Amarillo - cuidado
-                color_border = "rgba(255,180,0,.3)"
-            elif vidas == 1:
-                color_bg = "rgba(255,107,0,.08)"   # Naranja - peligro
-                color_border = "rgba(255,107,0,.3)"
-            else:
-                color_bg = "rgba(220,20,60,.08)"   # Rojo - último suspiro
-                color_border = "rgba(220,20,60,.3)"
-            
-            # Calcular record (ganados - perdidos)
-            record = ganados - perdidos
-            record_color = "#00FF88" if record > 0 else "#FF6B6B" if record < 0 else "#8888AA"
-            
+            res = today_pick.get("resultado","pendiente")
+            res_c = {"ganado":"#00FF88","perdido":"#FF2D55","pendiente":"#FFB800"}.get(res,"#888")
             st.markdown(f"""
-<div style="background: {color_bg}; border: 1px solid {color_border}; border-radius: 8px; 
-     padding: 12px 16px; margin-bottom: 10px; display: flex; justify-content: space-between; 
-     align-items: center;">
-  <div style="flex: 1;">
-    <div style="font-weight: 700; color: #EEEEF5; margin-bottom: 4px;">
-      {emoji} <strong>{apodo_p}</strong>
-    </div>
-    <div style="font-size: 0.75rem; color: #8888AA;">
-      Record: <span style="color: {record_color}; font-weight: 700;">{record:+d}</span> 
-      ({ganados}W - {perdidos}L)
-    </div>
+<div style="background:rgba(255,184,0,.06);border:1px solid rgba(255,184,0,.3);
+     border-radius:12px;padding:14px 18px;margin-bottom:14px">
+  <div style="font-family:'Bebas Neue',sans-serif;font-size:.65rem;letter-spacing:3px;
+       color:#FFB800;margin-bottom:6px">PICK DE HOY REGISTRADO</div>
+  <div style="font-family:'Rajdhani',sans-serif;font-size:1rem;font-weight:700;color:#EEEEF5">
+    {today_pick.get('partido','')}
   </div>
-  <div style="text-align: right; font-size: 1.2rem; letter-spacing: 2px;">
-    {vidas_visual}
+  <div style="font-family:'JetBrains Mono',monospace;font-size:.6rem;color:#8888AA">
+    {today_pick.get('pick_desc','')} @ {today_pick.get('momio','')}x
   </div>
-</div>
-""", unsafe_allow_html=True)
-    else:
-        st.info("El foso aún no tiene gladiadores")
+  <div style="font-family:'JetBrains Mono',monospace;font-size:.65rem;font-weight:700;
+       color:{res_c};margin-top:4px">{res.upper()}</div>
+</div>""", unsafe_allow_html=True)
+        else:
+            st.markdown('<div class="sec-head">⚔ Partidos del día — Elige tu pick</div>', unsafe_allow_html=True)
+            st.caption("4 partidos aleatorios de distintos deportes · Cuota mínima 1.50 · Sin repetir equipo")
 
-    st.markdown("</div>", unsafe_allow_html=True)
+            # Load today's 4 games — cached by date so same for all users
+            today_seed = str(date.today())
+            pit_daily_key = f"pit_daily_{today_seed}"
 
-    # ─────────────────────────────────────────────────────────────
-    #  FOOTER
-    # ─────────────────────────────────────────────────────────────
-    # ─────────────────────────────────────────────────────────────
-    #  FOOTER CON TIMESTAMP DE ACTUALIZACIÓN
-    # ─────────────────────────────────────────────────────────────
-    ultimo_update = st.session_state.get("pit_last_check", 0)
-    import time
-    hace = int(time.time() - ultimo_update) if ultimo_update else 0
-    
-    st.markdown(f"""
-<div style="text-align: center; font-family: 'JetBrains Mono', monospace;
-     font-size: 0.7rem; color: #8888AA; letter-spacing: 2px; margin-top: 24px; padding-top: 16px;
-     border-top: 1px solid rgba(220,20,60,.2);">
-  RONDA #{ronda_id} · CDMX {now_cdmx.strftime('%H:%M')} · SEED: {daily_seed}
-  <br>
-  🔄 Última actualización: hace {hace}s | Auto-refresh cada 10s
-</div>
-""", unsafe_allow_html=True)
+            if pit_daily_key not in st.session_state:
+                with st.spinner("⚔ Preparando la cartelera del foso…"):
+                    st.session_state[pit_daily_key] = pit_get_daily_games(today_seed)
+
+            daily_games = st.session_state.get(pit_daily_key, [])
+
+            if not daily_games:
+                st.warning("No se encontraron partidos hoy. Intenta más tarde.")
+                if st.button("🔄 Reintentar", key="pit_retry_games"):
+                    st.session_state.pop(pit_daily_key, None)
+                    pit_get_daily_games.clear()
+                    st.rerun()
+            else:
+                for ev_idx, ev in enumerate(daily_games):
+                    sport_ev      = ev.get("sport","soccer")
+                    is_tennis_pit = (sport_ev == "tennis")
+                    is_soccer_pit = (sport_ev == "soccer")
+                    away          = ev["away"]; home = ev["home"]
+
+                    # Skip TBD tennis
+                    if is_tennis_pit and (away in ("?","TBD","") or home in ("?","TBD","")):
+                        continue
+
+                    is_live       = ev.get("is_live", False)
+                    s_txt         = "● LIVE" if is_live else ev["date"]
+                    s_col         = "#FF3D00" if is_live else "#00FFD1"
+                    sport_label   = ev.get("pit_sport_label","⚽")
+                    liga_name     = ev.get("pit_liga_name","")
+                    brad_ev       = "50%" if is_tennis_pit else "6px"
+                    a_lg = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 36, brad_ev)
+                    h_lg = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 36, brad_ev)
+
+                    # Card
+                    st.markdown(
+                        f'<div style="background:rgba(255,45,85,.04);border:1px solid rgba(255,45,85,.2);'
+                        f'border-radius:14px;padding:12px 16px;margin-bottom:6px">'
+                        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.5rem;'
+                        f'color:#BF5FFF;margin-bottom:8px;letter-spacing:2px">'
+                        f'{sport_label} · {liga_name}</div>'
+                        f'<div style="display:flex;align-items:center;gap:10px">'
+                        f'<div style="display:flex;align-items:center;gap:8px;flex:1">'
+                        f'{a_lg}<span style="font-size:.82rem;font-weight:700;color:#EEEEF5">{away}</span>'
+                        f'</div>'
+                        f'<div style="text-align:center;min-width:40px">'
+                        f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.8rem;color:#44445A">VS</div>'
+                        f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.48rem;color:{s_col}">{s_txt}</div>'
+                        f'</div>'
+                        f'<div style="display:flex;align-items:center;gap:8px;flex:1;justify-content:flex-end">'
+                        f'<span style="font-size:.82rem;font-weight:700;color:#EEEEF5">{home}</span>{h_lg}'
+                        f'</div>'
+                        f'</div></div>',
+                        unsafe_allow_html=True
+                    )
+
+                    # ── Pick buttons per sport ──
+                    if is_tennis_pit:
+                        # Tennis: only winner, no draw
+                        cols_pick = st.columns(2)
+                        opts = [(cols_pick[0], f"🎾 {away} gana", away),
+                                (cols_pick[1], f"🎾 {home} gana", home)]
+                    elif is_soccer_pit:
+                        # Soccer: 1X2
+                        cols_pick = st.columns(3)
+                        opts = [(cols_pick[0], f"⚽ {away[:14]} gana", away),
+                                (cols_pick[1], "➖ Empate",            "Empate"),
+                                (cols_pick[2], f"⚽ {home[:14]} gana", home)]
+                    elif sport_ev == "basketball":
+                        # NBA: ML only in THE PIT — O/U lines vary too much
+                        cols_pick = st.columns(2)
+                        opts = [(cols_pick[0], f"🏀 {away[:16]} ML", away),
+                                (cols_pick[1], f"🏀 {home[:16]} ML", home)]
+                    elif sport_ev == "baseball":
+                        # MLB: ML only in THE PIT
+                        cols_pick = st.columns(2)
+                        opts = [(cols_pick[0], f"⚾ {away[:16]} ML", away),
+                                (cols_pick[1], f"⚾ {home[:16]} ML", home)]
+                    elif sport_ev == "hockey":
+                        # NHL: ML + Over 5.5 (standard line)
+                        cols_pick = st.columns(3)
+                        opts = [(cols_pick[0], f"🏒 {away[:12]} ML", away),
+                                (cols_pick[1], "📈 Over 5.5",         "Over 5.5"),
+                                (cols_pick[2], f"🏒 {home[:12]} ML", home)]
+                    elif sport_ev == "football":
+                        # NFL: spread + ML
+                        cols_pick = st.columns(2)
+                        opts = [(cols_pick[0], f"🏈 {away[:16]} ML", away),
+                                (cols_pick[1], f"🏈 {home[:16]} ML", home)]
+                    else:
+                        cols_pick = st.columns(2)
+                        opts = [(cols_pick[0], f"🏆 {away[:16]} gana", away),
+                                (cols_pick[1], f"🏆 {home[:16]} gana", home)]
+
+                    for opt_idx, (col, lbl, pick_val) in enumerate(opts):
+                        with col:
+                            used = pick_val.lower().strip() in equipos_usados
+                            if st.button(
+                                f"{'🚫 ' if used else ''}{lbl}",
+                                key=f"pp_{ev_idx}_{opt_idx}",
+                                disabled=used,
+                                use_container_width=True
+                            ):
+                                pit_save_pick(
+                                    ronda_id, apodo,
+                                    f"{away} vs {home}",
+                                    liga_name, ev["id"],
+                                    pick_val, 1.85, dia_actual
+                                )
+                                pit_load_picks_ronda.clear()
+                                for _k in ["pit_picks","pit_players"]:
+                                    st.session_state.pop(_k, None)
+                                pit_save_chat("King Rongo",
+                                    f"🩸 **{apodo}** disparó `{pick_val}` — "
+                                    f"{away} vs {home}. Día {dia_actual}. {n_vivos} siguen vivos.", True)
+                                st.success(f"✅ Pick registrado: {pick_val}")
+                                st.rerun()
+
+                    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
 
 
+
+    # ── Pick del Rey
+    with st.expander("👑 PICK DEL REY — Consejo de King Rongo"):
+        st.markdown(pit_pick_del_rey(ronda_picks))
+
+    # ── Leaderboard THE PIT
+    st.markdown('<div class="sec-head">⚔ Muro de los Vivos y los Caídos</div>', unsafe_allow_html=True)
+
+    vivos_sorted = sorted(vivos, key=lambda p: (-int(p.get("dias_vivo",0)), -float(p.get("roi_acum",0))))
+    elim_sorted  = sorted(eliminados, key=lambda p: -int(p.get("dias_vivo",0)))
+
+    medals = ["🥇","🥈","🥉"]
+
+    # Vivos
+    for i, p in enumerate(vivos_sorted):
+        es_yo   = p.get("apodo","").lower() == apodo.lower()
+        medal   = medals[i] if i < 3 else f"#{i+1}"
+        dias    = int(p.get("dias_vivo",0))
+        roi     = float(p.get("roi_acum",0))
+        como    = "🛡" if str(p.get("comodin_disponible","1")) == "1" else ""
+        st.markdown(
+            f'<div class="lb-row {"me" if es_yo else ""}" '
+            f'style="border-color:{"rgba(0,255,136,.4)" if es_yo else "rgba(0,255,136,.15)"};">'
+            f'<div style="font-size:1rem;width:28px;text-align:center">{medal}</div>'
+            f'<div class="lb-avatar" style="background:linear-gradient(135deg,#00FF88,#00B4FF)">'
+            f'{p["apodo"][0].upper()}</div>'
+            f'<div style="flex:1">'
+            f'<div style="font-size:.85rem;font-weight:700;color:{"#00FF88" if es_yo else "#EEEEF5"}">'
+            f'🟢 {p["apodo"].upper()} {"← TÚ" if es_yo else ""} {como}</div>'
+            f'<div style="font-size:.6rem;color:#8888AA">Día {dias} · ROI {roi:+.1f}%</div>'
+            f'</div>'
+            f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:1rem;color:#00FF88">VIVO</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+    # Eliminados
+    for p in elim_sorted[:10]:
+        es_yo  = p.get("apodo","").lower() == apodo.lower()
+        dias   = int(p.get("dias_vivo",0))
+        asesino = p.get("pick_asesino","?")
+        st.markdown(
+            f'<div class="lb-row" style="opacity:.55;border-color:rgba(255,45,85,.15)">'
+            f'<div style="font-size:1rem;width:28px;text-align:center">💀</div>'
+            f'<div class="lb-avatar" style="background:rgba(255,255,255,.06);color:#44445A">'
+            f'{p["apodo"][0].upper()}</div>'
+            f'<div style="flex:1">'
+            f'<div style="font-size:.82rem;font-weight:700;color:#44445A">'
+            f'{p["apodo"].upper()} {"← TÚ" if es_yo else ""}</div>'
+            f'<div style="font-size:.6rem;color:#44445A">Murió en Día {dias} · Asesinado por: <span style="color:#FF2D55">{asesino}</span></div>'
+            f'</div>'
+            f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.85rem;color:#FF2D55">CAÍDO</div>'
+            f'</div>',
+            unsafe_allow_html=True
+        )
+
+    # ── Taunt Box
+    st.markdown('<div class="sec-head">🔥 Taunt Box — King Rongo habla</div>', unsafe_allow_html=True)
+
+    chat_msgs = pit_load_chat(25)
+    chat_html = ""
+    for msg in reversed(chat_msgs[-15:]):
+        is_bot = str(msg.get("es_bot","0")) == "1"
+        color  = "#FFB800" if is_bot else "#EEEEF5"
+        name   = "👑 KING RONGO" if is_bot else msg.get("apodo","?").upper()
+        name_c = "#FFB800" if is_bot else "#BF5FFF"
+        ts     = str(msg.get("ts",""))[-8:-3]
+        chat_html += (
+            f'<div style="padding:6px 0;border-bottom:1px solid rgba(255,255,255,.04)">'
+            f'<div style="display:flex;justify-content:space-between;margin-bottom:2px">'
+            f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:.55rem;'
+            f'color:{name_c};font-weight:700">{name}</span>'
+            f'<span style="font-family:\'JetBrains Mono\',monospace;font-size:.5rem;color:#44445A">{ts}</span>'
+            f'</div>'
+            f'<div style="font-size:.78rem;color:{color}">{msg.get("mensaje","")}</div>'
+            f'</div>'
+        )
+    st.markdown(
+        f'<div style="background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.07);'
+        f'border-radius:12px;padding:12px 16px;max-height:260px;overflow-y:auto">'
+        f'{chat_html or "<div style=\'color:#44445A;font-size:.75rem;text-align:center;padding:20px\'>El foso está en silencio... por ahora.</div>"}'
+        f'</div>',
+        unsafe_allow_html=True
+    )
+
+    # Send message
+    c1, c2 = st.columns([5, 1])
+    with c1:
+        nuevo_msg = st.text_input("", placeholder="Habla o calla para siempre…",
+                                   label_visibility="collapsed", key="pit_chat_input")
+    with c2:
+        if st.button("📢", key="pit_send_chat"):
+            if nuevo_msg.strip():
+                pit_save_chat(apodo, nuevo_msg.strip())
+                st.rerun()
+
+
+# ─────────────────────────────────────────────────────────────
+#  MAIN
+# ─────────────────────────────────────────────────────────────
 def main():
     inject_css()
 
