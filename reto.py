@@ -1359,14 +1359,21 @@ def load_all_today_events():
 
 def find_match_by_name(partition_name: str, all_today: dict) -> tuple:
     """
-    Buscar un partido por nombre exacto: "Away vs Home"
+    Buscar un partido por nombre (tolerante con espacios/mayúsculas)
     Returns: (found, home_score, away_score) or (False, -1, -1)
     """
+    # Normalizar el nombre buscado
+    search_name = partition_name.strip().lower()
+    
     for sport_key, leagues_dict in all_today.items():
         for league_slug, events_list in leagues_dict.items():
             for event in events_list:
-                event_name = f"{event.get('away', '?')} vs {event.get('home', '?')}"
-                if event_name == partition_name:
+                away = str(event.get('away', '?')).strip()
+                home = str(event.get('home', '?')).strip()
+                event_name = f"{away} vs {home}".lower()
+                
+                # Búsqueda tolerante (normalizada)
+                if event_name == search_name:
                     return (True, event.get("home_score", -1), event.get("away_score", -1))
     
     return (False, -1, -1)
