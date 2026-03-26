@@ -2495,7 +2495,7 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                     ou_key = f"ou_pending_{ev_id[:10]}"
                     qv = st.session_state.get(f"qp_val_{ev_id}", "")
                     qm = st.session_state.get(f"qp_merc_{ev_id}", "ML")
-                    open_flag = st.session_state.pop(f"open_pick_{ev_id[:10]}", False)
+                    open_flag = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
 
                     if not qv and not st.session_state.get(ou_key) and not open_flag:
                         continue  # nothing to show for this event
