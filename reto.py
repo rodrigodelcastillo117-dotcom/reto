@@ -3073,6 +3073,11 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         ev_id    = ev["id"]
                         away     = ev["away"]; home = ev["home"]
                         sport_ev = ev.get("sport","soccer")
+                        
+                        # ✅ PATCH: Para SOCCER, invertir away/home desde el principio (ESPN los devuelve invertidos)
+                        if sport_ev.lower() == "soccer":
+                            away, home = home, away
+                        
                         # Formatear según deporte
                         formatted = format_partido_para_display(f"{away}@{home}", sport_ev)
                         if sport_ev.lower() == "soccer":
@@ -3133,17 +3138,14 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             odds_html += (f'<span style="background:rgba(0,180,255,.12);color:#00B4FF;'
                                           f'padding:1px 6px;border-radius:4px;font-size:.58rem">{ho}</span>')
 
-                        # ✅ PATCH: Para SOCCER, INVERTIR TODO porque ESPN los devuelve invertidos
+                        # ✅ Logos normales (away/home ya están invertidos para soccer)
                         if sport_ev.lower() == "soccer":
-                            # Soccer: ESPN devuelve away/home invertidos, así que invertimos TODO
-                            away, home = home, away  # Invertir nombres de equipos
-                            away_disp, home_disp = home_disp, away_disp  # Invertir displays
-                            
+                            # Soccer: Away a la IZQUIERDA, Home a la DERECHA
                             logo_left  = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
                             logo_right = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
                             team_left, team_right = away_disp, home_disp
                         else:
-                            # NBA/etc: no invertir
+                            # NBA/etc: Away a la IZQUIERDA, Home a la DERECHA
                             logo_left  = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
                             logo_right = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
                             team_left, team_right = away_disp, home_disp
