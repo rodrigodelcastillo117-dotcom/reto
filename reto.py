@@ -4166,52 +4166,54 @@ def tab_the_pit(apodo: str, bank: float):
     </div>
     """, unsafe_allow_html=True)
     
-    # Obtener 4 partidos para HOY/MAÑANA
+    # Obtener 4 partidos para HOY/MAÑANA usando load_all_today()
     daily_games = []
     try:
-        for liga_key, liga_name in [("mlb", "MLB"), ("nba", "NBA"), ("nhl", "NHL"), ("nfl", "NFL")]:
-            date_param = today_cdmx.strftime("%Y%m%d")
-            r = requests.get(f"http://site.api.espn.com/apis/site/v2/sports/baseball/mlb/events" if liga_key == "mlb" else
-                           f"http://site.api.espn.com/apis/site/v2/sports/basketball/nba/events" if liga_key == "nba" else
-                           f"http://site.api.espn.com/apis/site/v2/sports/hockey/nhl/events" if liga_key == "nhl" else
-                           f"http://site.api.espn.com/apis/site/v2/sports/football/nfl/events",
-                        timeout=5)
-            if r.status_code == 200:
-                data = r.json()
-                events = data.get("events", [])
-                for event in events[:2]:  # Tomar hasta 2 por liga
-                    comp = event.get("competitions", [{}])[0]
-                    competitors = comp.get("competitors", [])
-                    if len(competitors) >= 2:
-                        daily_games.append({
-                            "id": event.get("id", ""),
-                            "away": competitors[1].get("displayName", "?"),
-                            "home": competitors[0].get("displayName", "?"),
-                            "liga": liga_name,
-                            "sport": liga_key,
-                            "date": event.get("date", "")[:10]
-                        })
+        all_today = load_all_today()
+        
+        # Flatten all leagues y deportes
+        for sport_group, leagues_dict in all_today.items():
+            for liga_name, events in leagues_dict.items():
+                for event in events:
+                    game_obj = {
+                        "id": event.get("id", ""),
+                        "away": event.get("away", "?"),
+                        "home": event.get("home", "?"),
+                        "liga": liga_name,
+                        "sport": sport_group,
+                        "date": event.get("date", "")
+                    }
+                    daily_games.append(game_obj)
+                    if len(daily_games) >= 4:
+                        break
                 if len(daily_games) >= 4:
                     break
-    except:
+            if len(daily_games) >= 4:
+                break
+    except Exception as e:
         pass
     
     daily_games = daily_games[:4]  # Solo 4 partidos
     
     def get_picks_for_sport(sport, ptype):
+        # Map sport groups to pick values
+        sport_map = {
+            "soccer": "O2.5",
+            "basketball": "O227.5",
+            "hockey": "O5.5",
+            "football": "O45.5",
+            "mlb": "O7.5",
+            "nba": "O227.5",
+            "nhl": "O5.5",
+            "nfl": "O45.5",
+        }
+        
         if ptype == "ML":
             return [("Home", "Home"), ("Away", "Away")]
         else:  # O/U
-            if sport == "mlb":
-                return [("O7.5", "O7.5"), ("U7.5", "U7.5")]
-            elif sport == "nba":
-                return [("O227.5", "O227.5"), ("U227.5", "U227.5")]
-            elif sport == "nhl":
-                return [("O5.5", "O5.5"), ("U5.5", "U5.5")]
-            elif sport == "nfl":
-                return [("O45.5", "O45.5"), ("U45.5", "U45.5")]
-            else:
-                return [("OVER", "OVER"), ("UNDER", "UNDER")]
+            default_o = sport_map.get(sport, "OVER")
+            default_u = default_o.replace("O", "U") if "O" in default_o else "UNDER"
+            return [(default_o, default_o), (default_u, default_u)]
     
     for i, game in enumerate(daily_games):
         away = game.get("away", "?")
