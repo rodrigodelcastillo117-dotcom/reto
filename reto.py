@@ -3169,12 +3169,28 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             unsafe_allow_html=True
                         )
                         
-                        # ✅ Botón APOSTAR pequeño y centrado, DEBAJO
+                        # ✅ Botón APOSTAR PEQUEÑO con CSS personalizado
                         menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
-                        col_btn_left, col_btn_center, col_btn_right = st.columns([1, 1, 1])
+                        
+                        # HTML para botón pequeño centrado
+                        st.markdown(
+                            f'<div style="text-align:center;margin-top:4px;margin-bottom:8px">'
+                            f'<style>'
+                            f'button[key="{ev_id[:10]}"] {{'
+                            f'  padding: 4px 12px !important;'
+                            f'  font-size: 0.65rem !important;'
+                            f'  height: auto !important;'
+                            f'  min-height: 24px !important;'
+                            f'}}'
+                            f'</style>'
+                            f'</div>',
+                            unsafe_allow_html=True
+                        )
+                        
+                        col_btn_left, col_btn_center, col_btn_right = st.columns([2, 1, 2])
                         with col_btn_center:
                             if st.button("APOSTAR", key=f"open_{ev_id[:10]}",
-                                          use_container_width=False,
+                                          use_container_width=True,
                                           type="primary" if menu_open else "secondary"):
                                 st.session_state[f"open_pick_{ev_id[:10]}"] = not menu_open
                                 st.rerun()
