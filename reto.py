@@ -3875,15 +3875,21 @@ def tab_the_pit(apodo: str, bank: float):
     if daily_games:
         for game in daily_games:
             sport_label = game.get("pit_sport_label","?")
-            away = game.get("away_name","?")
-            home = game.get("home_name","?")
+            away = game.get("away","?")
+            home = game.get("home","?")
+            date_str = game.get("date","")
             
             st.markdown(f"""
-            <div style="background: rgba(220,20,60,0.08); border: 1px solid rgba(220,20,60,0.25);
-                 border-radius: 8px; padding: 12px 16px; margin-bottom: 8px;">
-                <div style="font-weight: 700; color: #EEEEF5;">{sport_label}</div>
-                <div style="font-size: 0.9rem; color: #8888AA; margin-top: 5px;">
+            <div style="background: rgba(220,20,60,0.12); border: 2px solid rgba(220,20,60,0.3);
+                 border-radius: 10px; padding: 16px; margin-bottom: 10px;">
+                <div style="font-weight: 700; color: #FF4500; font-size: 1rem; margin-bottom: 8px;">
+                    {sport_label}
+                </div>
+                <div style="font-size: 1.1rem; color: #EEEEF5; font-weight: 700;">
                     {away} vs {home}
+                </div>
+                <div style="font-size: 0.8rem; color: #8888AA; margin-top: 6px;">
+                    {date_str}
                 </div>
             </div>
             """, unsafe_allow_html=True)
