@@ -5259,6 +5259,85 @@ def main():
     # Header
     render_header(apodo, bank)
 
+    # ═══════════════════════════════════════════════════════════════
+    # 🔍 DEBUG GLOBAL: Status de calificación de TODOS los partidos
+    # ═══════════════════════════════════════════════════════════════
+    with st.expander("🔍 DEBUG GLOBAL: Status de todos tus picks"):
+        st.write("**Estado de calificación de tus picks:**")
+        
+        try:
+            ss = get_ss()
+            if ss:
+                # THE PIT picks
+                try:
+                    ws_pit = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
+                    pit_records = _safe_get_records(ws_pit)
+                    my_pit_picks = [r for r in pit_records 
+                                   if r.get("apodo", "").lower() == apodo.lower()]
+                    
+                    if my_pit_picks:
+                        st.write("**🩸 THE PIT:**")
+                        for idx, pick in enumerate(my_pit_picks):
+                            col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+                            with col1:
+                                st.caption(f"**{pick.get('partido', '?')}**")
+                            with col2:
+                                st.caption(f"Pick: {pick.get('pick_desc', '?')}")
+                            with col3:
+                                status = pick.get('resultado', 'pendiente').lower()
+                                if status == 'pendiente':
+                                    st.caption("⏳ **PENDIENTE**")
+                                elif status == 'ganado':
+                                    st.caption("✅ **GANADO**")
+                                else:
+                                    st.caption("❌ **PERDIDO**")
+                            with col4:
+                                if st.button("🧪", key=f"debug_pit_{idx}", use_container_width=True):
+                                    # Mostrar debug detallado
+                                    resultado = _find_resultado_robusto(pick.get('partido', ''), pick.get('deporte', 'soccer'), pick.get('pick_desc', '').lower())
+                                    if resultado:
+                                        st.info(f"✅ Se puede calificar como: **{resultado.upper()}**")
+                                    else:
+                                        st.warning("❌ No se encontró resultado en ESPN")
+                except:
+                    pass
+                
+                # REGISTRAR picks
+                try:
+                    for sheet in ss.worksheets():
+                        if sheet.title.startswith("picks_"):
+                            records = _safe_get_records(sheet)
+                            my_picks = [r for r in records if r.get("apodo", "").lower() == apodo.lower()]
+                            
+                            if my_picks:
+                                st.write(f"**📝 REGISTRAR ({sheet.title}):**")
+                                for idx, pick in enumerate(my_picks):
+                                    col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+                                    with col1:
+                                        st.caption(f"**{pick.get('partido', '?')}**")
+                                    with col2:
+                                        st.caption(f"Pick: {pick.get('pick_desc', '?')}")
+                                    with col3:
+                                        status = pick.get('resultado', 'pendiente').lower()
+                                        if status == 'pendiente':
+                                            st.caption("⏳ **PENDIENTE**")
+                                        elif status == 'ganado':
+                                            st.caption("✅ **GANADO**")
+                                        else:
+                                            st.caption("❌ **PERDIDO**")
+                                    with col4:
+                                        if st.button("🧪", key=f"debug_reg_{sheet.title}_{idx}", use_container_width=True):
+                                            # Mostrar debug detallado
+                                            resultado = _find_resultado_robusto(pick.get('partido', ''), pick.get('deporte', 'soccer'), pick.get('pick_desc', '').lower())
+                                            if resultado:
+                                                st.info(f"✅ Se puede calificar como: **{resultado.upper()}**")
+                                            else:
+                                                st.warning("❌ No se encontró resultado en ESPN")
+                except:
+                    pass
+        except:
+            st.error("Error cargando debug")
+
     # Tabs
     t1, t2, t3, t4, t5, t6 = st.tabs([
         "📝  REGISTRAR", "📋  HISTORIAL", "📊  ANALYTICS",
