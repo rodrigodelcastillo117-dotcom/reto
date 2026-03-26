@@ -3169,31 +3169,26 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             unsafe_allow_html=True
                         )
                         
-                        # ✅ Botón APOSTAR PEQUEÑO con CSS personalizado
+                        # ✅ Botón APOSTAR MICRO con HTML puro
                         menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
                         
-                        # HTML para botón pequeño centrado
+                        # Botón HTML muy pequeño, centrado
                         st.markdown(
-                            f'<div style="text-align:center;margin-top:4px;margin-bottom:8px">'
-                            f'<style>'
-                            f'button[key="{ev_id[:10]}"] {{'
-                            f'  padding: 4px 12px !important;'
-                            f'  font-size: 0.65rem !important;'
-                            f'  height: auto !important;'
-                            f'  min-height: 24px !important;'
-                            f'}}'
-                            f'</style>'
+                            f'<div style="text-align:center;margin:2px 0">'
+                            f'<button onclick="alert(\'Abre el panel de apuestas\')" style="'
+                            f'padding:3px 8px;'
+                            f'font-size:0.6rem;'
+                            f'height:20px;'
+                            f'border:1px solid #FF9500;'
+                            f'background:#1a1a2e;'
+                            f'color:#FF9500;'
+                            f'border-radius:4px;'
+                            f'cursor:pointer;'
+                            f'font-weight:600;'
+                            f'">APO</button>'
                             f'</div>',
                             unsafe_allow_html=True
                         )
-                        
-                        col_btn_left, col_btn_center, col_btn_right = st.columns([2, 1, 2])
-                        with col_btn_center:
-                            if st.button("APOSTAR", key=f"open_{ev_id[:10]}",
-                                          use_container_width=True,
-                                          type="primary" if menu_open else "secondary"):
-                                st.session_state[f"open_pick_{ev_id[:10]}"] = not menu_open
-                                st.rerun()
 
                 # Pick panels — full width below each row
                 for ci in range(min(cols_per_row, len(row_evs))):
