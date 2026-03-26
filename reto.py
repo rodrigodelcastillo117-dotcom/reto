@@ -2475,15 +2475,12 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                                 unsafe_allow_html=True
                             )
                         with btn_c:
+                            menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
                             if st.button("APOSTAR", key=f"open_{ev_id[:10]}",
                                           use_container_width=True,
-                                          type="primary" if is_open else "secondary"):
-                                if is_open:
-                                    st.session_state.pop(f"qp_val_{ev_id}", None)
-                                    st.session_state.pop(f"qp_merc_{ev_id}", None)
-                                    st.session_state.pop(ou_key, None)
-                                else:
-                                    st.session_state[f"open_pick_{ev_id[:10]}"] = True
+                                          type="primary" if menu_open else "secondary"):
+                                # Toggle: si está abierto cierra, si está cerrado abre
+                                st.session_state[f"open_pick_{ev_id[:10]}"] = not menu_open
                                 st.rerun()
 
                 # Pick panels — full width below each row
