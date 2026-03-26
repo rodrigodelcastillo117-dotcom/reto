@@ -1186,9 +1186,16 @@ def espn_search_events(sport: str, league: str, query: str) -> list:
         if not name and comps:
             competitors_names = []
             for c in comps:
-                team_name = c.get("team", {}).get("displayName", "")
-                if not team_name:
-                    team_name = c.get("team", {}).get("name", "")
+                # Intentar múltiples formas de obtener el nombre del team
+                team_name = (
+                    c.get("team", {}).get("displayName", "") or
+                    c.get("team", {}).get("name", "") or
+                    c.get("displayName", "") or
+                    c.get("name", "") or
+                    c.get("athlete", {}).get("displayName", "") or
+                    c.get("athlete", {}).get("fullName", "") or
+                    ""
+                )
                 if team_name:
                     competitors_names.append(team_name)
             
