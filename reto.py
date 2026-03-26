@@ -3808,6 +3808,98 @@ def pit_get_daily_games(seed_date: str) -> list:
 
 
 
+
+@st.cache_data(ttl=30, show_spinner=False)
+def pit_get_games_for_date(target_date_str: str) -> list:
+    """
+    Fetch games SPECIFICALLY for target_date (YYYYMMDD format).
+    Returns list of upcoming games for that date only.
+    """
+    import random as _rnd
+    
+    candidates = []
+    sports_to_try = list(PIT_DAILY_SPORTS)
+    _rnd.seed(target_date_str)
+    _rnd.shuffle(sports_to_try)
+    
+    # Convertir target_date_str a date object para comparación
+    try:
+        target_date = datetime.strptime(target_date_str, "%Y%m%d").date()
+    except:
+        return []
+    
+    for sport_label, sport, leagues in sports_to_try:
+        _rnd.shuffle(leagues)
+        found = False
+        
+        for league in leagues:
+            try:
+                # Buscar con la fecha específica
+                url = f"{ESPN_BASE}/{sport}/{league}/scoreboard"
+                r = requests.get(url, params={"dates": target_date_str, "limit": 50}, timeout=6)
+                
+                if r.status_code != 200:
+                    continue
+                
+                events = r.json().get("events", [])
+                upcoming = []
+                
+                for ev in events:
+                    st_type = ev.get("status", {}).get("type", {})
+                    state = st_type.get("state", "pre")
+                    completed = (state == "post") or st_type.get("completed", False)
+                    
+                    if completed:
+                        continue
+                    
+                    # Verificar que sea de target_date
+                    date_raw = ev.get("date", "")
+                    try:
+                        dt = datetime.fromisoformat(date_raw.replace("Z", "+00:00"))
+                        dt_cdmx = dt - timedelta(hours=6)
+                        ev_date = dt_cdmx.date()
+                        
+                        if ev_date != target_date:
+                            continue
+                    except:
+                        continue
+                    
+                    comps = ev.get("competitions", [{}])[0].get("competitors", [])
+                    home_c = next((c for c in comps if c.get("homeAway")=="home"), comps[0] if comps else {})
+                    away_c = next((c for c in comps if c.get("homeAway")=="away"), comps[1] if len(comps)>1 else {})
+                    home_i = _extract_competitor_info(home_c, sport)
+                    away_i = _extract_competitor_info(away_c, sport)
+                    
+                    if home_i["name"] in ("?","TBD","") and away_i["name"] in ("?","TBD",""):
+                        continue
+                    
+                    d_str = dt_cdmx.strftime("%d %b %H:%M")
+                    
+                    upcoming.append({
+                        "id": ev.get("id",""),
+                        "home": home_i["name"], "away": away_i["name"],
+                        "home_logo": home_i["logo"], "away_logo": away_i["logo"],
+                        "home_flag": home_i["flag"], "away_flag": away_i["flag"],
+                        "date": d_str, "date_raw": date_raw,
+                        "sport": sport,
+                        "pit_sport_label": sport_label,
+                    })
+                
+                if upcoming:
+                    pick = _rnd.choice(upcoming)
+                    candidates.append(pick)
+                    found = True
+                    break
+            
+            except Exception:
+                continue
+        
+        if not found:
+            continue
+    
+    return candidates[:4]
+
+
 def pit_auto_grade(apodo: str, ronda_id: str, my_record: dict) -> tuple[int, int]:
     """
     Check pending PIT picks against ESPN results.
@@ -4117,34 +4209,29 @@ def tab_the_pit(apodo: str, bank: float):
     #  PARTIDOS: SOLO DEL MISMO DÍA, SOLO LOS QUE NO HAN EMPEZADO
     # ═══════════════════════════════════════════════════════════════
     # Decidir si usar hoy o mañana basado en la hora
-    # Si ya pasaron las 22:00 (10 PM), mostrar partidos de MAÑANA
-    use_tomorrow = hour_cdmx >= 22
+    # Después de las 21:00 (9 PM) = partidos de MAÑANA
+    use_tomorrow = hour_cdmx >= 21
     target_date = (today_cdmx + timedelta(days=1)) if use_tomorrow else today_cdmx
+    target_date_str = target_date.strftime("%Y%m%d")
     
-    # Obtener partidos de ESE DÍA
-    all_games = pit_get_daily_games(str(target_date))
+    # Obtener partidos ESPECÍFICAMENTE de target_date
+    daily_games = pit_get_games_for_date(target_date_str)
     
-    # FILTRAR:
-    # 1. Solo partidos del target_date (mismo día)
-    # 2. Solo partidos que NO han empezado (futuro)
-    daily_games = []
-    if all_games:
-        for game in all_games:
+    # FILTRAR: solo partidos que NO han empezado
+    active_games = []
+    if daily_games:
+        for game in daily_games:
             try:
                 date_raw = game.get("date_raw","")
                 game_time = datetime.fromisoformat(date_raw.replace("Z","+00:00"))
-                game_date_utc = game_time.date()
                 
-                # Convertir game_date_utc a CDMX
-                game_date_cdmx = (game_time - timedelta(hours=6)).date()
-                
-                # SOLO si es del target_date Y todavía no empieza
-                if game_date_cdmx == target_date and game_time > now_utc:
-                    daily_games.append(game)
+                # SOLO si todavía no empieza
+                if game_time > now_utc:
+                    active_games.append(game)
             except:
-                pass
+                active_games.append(game)  # Incluir si hay error en parse
     
-    daily_games = daily_games[:4]  # Máximo 4 partidos
+    daily_games = active_games[:4]
     
     if daily_games:
         # Parsear fecha de cada juego y comparar con ahora
