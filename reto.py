@@ -3121,9 +3121,6 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             try:
                                 a_score = int(away_score)
                                 h_score = int(home_score)
-                                # ✅ Para SOCCER, invertir scores (ESPN los devuelve al revés)
-                                if sport_ev.lower() == "soccer":
-                                    a_score, h_score = h_score, a_score
                                 score_display = f"<br><span style='font-size:.5rem;color:#FFD700;'>{a_score} - {h_score}</span>"
                             except:
                                 pass
@@ -3147,35 +3144,32 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             logo_left, logo_right = a_lg, h_lg
                             team_left, team_right = away_disp, home_disp
                         
-                        # ✅ Tarjeta SIN columna separada
-                        st.markdown(
-                            f'<div style="background:{bg};border:{border_width} solid {border};border-radius:10px;'
-                            f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:2px;{glow}">'
-                            f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">'
-                            f'{logo_left}'
-                            f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
-                            f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{team_left}</span>'
-                            f'</div>'
-                            f'<div style="font-size:.55rem;color:#44445A;flex-shrink:0;text-align:center;padding:0 4px">'
-                            f'vs<br><span style="font-size:.42rem;color:{s_col};font-weight:{"700" if is_live else "400"};'
-                            f'{"animation:blinkLive 1s infinite;" if is_live else ""}">{s_txt}</span>'
-                            f'{score_display}'
-                            f'</div>'
-                            f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0;justify-content:flex-end">'
-                            f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
-                            f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right">{team_right}</span>'
-                            f'{logo_right}'
-                            f'</div>'
-                            f'{"<div style=\\'margin-left:6px;flex-shrink:0\\'>" + odds_html + "</div>" if odds_html else ""}'
-                            f'{"<div style=\\'margin-left:6px;font-size:.6rem;color:#F0FF00;flex-shrink:0\\'>" + qv + "</div>" if qv else ""}'
-                            f'</div>',
-                            unsafe_allow_html=True
-                        )
-                        
-                        # ✅ Botón APOSTAR pequeño, CENTRADO, debajo
-                        menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
-                        btn_col_center = st.columns([1, 2, 1])[1]  # Columna del medio (33% ancho)
-                        with btn_col_center:
+                        with card_c:
+                            st.markdown(
+                                f'<div style="background:{bg};border:{border_width} solid {border};border-radius:10px;'
+                                f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:2px;{glow}">'
+                                f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">'
+                                f'{logo_left}'
+                                f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
+                                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{team_left}</span>'
+                                f'</div>'
+                                f'<div style="font-size:.55rem;color:#44445A;flex-shrink:0;text-align:center;padding:0 4px">'
+                                f'vs<br><span style="font-size:.42rem;color:{s_col};font-weight:{"700" if is_live else "400"};'
+                                f'{"animation:blinkLive 1s infinite;" if is_live else ""}">{s_txt}</span>'
+                                f'{score_display}'
+                                f'</div>'
+                                f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0;justify-content:flex-end">'
+                                f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
+                                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right">{team_right}</span>'
+                                f'{logo_right}'
+                                f'</div>'
+                                f'{"<div style=\\'margin-left:6px;flex-shrink:0\\'>" + odds_html + "</div>" if odds_html else ""}'
+                                f'{"<div style=\\'margin-left:6px;font-size:.6rem;color:#F0FF00;flex-shrink:0\\'>" + qv + "</div>" if qv else ""}'
+                                f'</div>',
+                                unsafe_allow_html=True
+                            )
+                        with btn_c:
+                            menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
                             if st.button("APOSTAR", key=f"open_{ev_id[:10]}",
                                           use_container_width=True,
                                           type="primary" if menu_open else "secondary"):
@@ -5649,182 +5643,182 @@ def main():
     render_header(apodo, bank)
 
     # ═══════════════════════════════════════════════════════════════
-    # 🔍 DEBUG GLOBAL: Status de calificación de TODOS los partidos
+    # 🔍 DEBUG GLOBAL: DESACTIVADO TEMPORALMENTE (consume mucha cuota de Google Sheets)
     # ═══════════════════════════════════════════════════════════════
-    with st.expander("🔍 DEBUG GLOBAL: Status de todos tus picks (PENDIENTES)"):
-        st.write("**Tus picks que aún necesitan calificación:**")
-        
-        try:
-            ss = get_ss()
-            if ss:
-                found_any = False
-                
-                # Debug: Mostrar TODAS las hojas disponibles con detalles
-                with st.expander("📋 DEBUG: Hojas disponibles y contenido:"):
-                    all_sheets = ss.worksheets()
-                    for sheet in all_sheets:
-                        st.write(f"**Hoja: {sheet.title}**")
-                        try:
-                            records = _safe_get_records(sheet)
-                            st.caption(f"Total registros: {len(records)}")
-                            
-                            # Mostrar estructura
-                            if records:
-                                st.caption(f"Headers: {list(records[0].keys())}")
-                                
-                                # Mostrar TODOS tus registros (comparar exactamente con .lower().strip())
-                                my_records = [r for r in records if str(r.get("apodo", "")).lower().strip() == apodo.lower()]
-                                st.caption(f"Registros con apodo '{apodo}': {len(my_records)}")
-                                
-                                # Mostrar tus registros con TODO el detalle
-                                if my_records:
-                                    for idx, r in enumerate(my_records):
-                                        st.caption(f"  {idx+1}. {r.get('fecha', '?')} | {r.get('partido', '?')} | Pick: {r.get('pick_desc', '?')} | Resultado: '{r.get('resultado', '?')}'")
-                        except Exception as e:
-                            st.error(f"Error leyendo {sheet.title}: {str(e)[:50]}")
-                
-                # THE PIT picks
-                try:
-                    ws_pit = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
-                    pit_records = _safe_get_records(ws_pit)
-                    my_pit_pending = [r for r in pit_records 
-                                     if str(r.get("apodo", "")).lower().strip() == apodo.lower()
-                                     and str(r.get("resultado", "")).strip().lower() == "pendiente"]
-                    
-                    if my_pit_pending:
-                        found_any = True
-                        st.write("**🩸 THE PIT (PENDIENTES):**")
-                        for idx, pick in enumerate(my_pit_pending):
-                            col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
-                            with col1:
-                                st.caption(f"**{pick.get('partido', '?')}**")
-                            with col2:
-                                st.caption(f"Pick: {pick.get('pick_desc', '?')}")
-                            with col3:
-                                st.caption("⏳ **PENDIENTE**")
-                            with col4:
-                                if st.button("🧪", key=f"debug_pit_{idx}", use_container_width=True):
-                                    event_id = pick.get('event_id', '')
-                                    partido = pick.get('partido', '')
-                                    deporte = pick.get('deporte', 'soccer')
-                                    pick_desc = pick.get('pick_desc', '').lower()
-                                    
-                                    # Intentar por EVENT_ID primero
-                                    if event_id:
-                                        espn_data = _find_resultado_por_event_id(event_id, deporte)
-                                        if espn_data.get('found'):
-                                            if espn_data.get('completed'):
-                                                st.success(f"✅ Resultado encontrado por EVENT_ID: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
-                                            else:
-                                                st.info(f"⏳ Partido EN CURSO - Status: {espn_data.get('status', '?')}")
-                                            return
-                                    
-                                    # Si NO hay event_id, BUSCARLO por NOMBRE
-                                    if not event_id:
-                                        st.info("🔍 Buscando event_id por nombre del partido...")
-                                        found_event_id = _buscar_event_id_por_partido(partido, deporte)
-                                        if found_event_id:
-                                            st.success(f"✅ Event_id encontrado: {found_event_id}")
-                                            espn_data = _find_resultado_por_event_id(found_event_id, deporte)
-                                            if espn_data.get('found') and espn_data.get('completed'):
-                                                st.success(f"✅ Resultado: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
-                                                return
-                                            elif espn_data.get('found'):
-                                                st.info(f"⏳ Partido EN CURSO")
-                                                return
-                                    
-                                    # Fallback: buscar por NOMBRE
-                                    st.info("🔍 Buscando por nombre del partido...")
-                                    resultado = _find_resultado_robusto(partido, deporte, pick_desc)
-                                    if resultado:
-                                        st.success(f"✅ Se puede calificar como: **{resultado.upper()}**")
-                                    else:
-                                        st.warning("❌ No se encontró resultado en ESPN")
-                except Exception as e:
-                    pass
-                
-                # REGISTRAR picks - BUSCAR EN TODAS LAS HOJAS picks_*
-                try:
-                    for sheet in ss.worksheets():
-                        # Buscar SOLO en hojas que empiezan con "picks_"
-                        if not sheet.title.startswith("picks_"):
-                            continue
-                        
-                        # Saltar la hoja de pit_picks (ya la procesamos)
-                        if sheet.title == "pit_picks":
-                            continue
-                        
-                        try:
-                            records = _safe_get_records(sheet)
-                            
-                            # El nombre de la hoja ES el apodo (picks_RONGO → RONGO)
-                            sheet_apodo = sheet.title.replace("picks_", "").strip().lower()
-                            
-                            # ¿Es esta hoja para el usuario actual?
-                            if sheet_apodo == apodo.lower():
-                                # Filtrar picks pendientes
-                                # (picks_APODO no tiene columna 'apodo', así que todos son del usuario)
-                                my_pending = [r for r in records 
-                                             if str(r.get("resultado", "")).strip().lower() == "pendiente"]
-                                
-                                if my_pending:
-                                    found_any = True
-                                    st.write(f"**📝 {sheet.title} (PENDIENTES: {len(my_pending)}):**")
-                                    for idx, pick in enumerate(my_pending):
-                                        col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
-                                        with col1:
-                                            st.caption(f"**{pick.get('partido', '?')}**")
-                                        with col2:
-                                            st.caption(f"Pick: {pick.get('pick_desc', '?')}")
-                                        with col3:
-                                            st.caption("⏳ **PENDIENTE**")
-                                        with col4:
-                                            if st.button("🧪", key=f"debug_reg_{sheet.title}_{idx}", use_container_width=True):
-                                                event_id = pick.get('event_id', '')
-                                                partido = pick.get('partido', '')
-                                                deporte = pick.get('deporte', 'soccer')
-                                                pick_desc = pick.get('pick_desc', '').lower()
-                                                
-                                                # Intentar por EVENT_ID primero
-                                                if event_id:
-                                                    espn_data = _find_resultado_por_event_id(event_id, deporte)
-                                                    if espn_data.get('found'):
-                                                        if espn_data.get('completed'):
-                                                            st.success(f"✅ Resultado encontrado por EVENT_ID: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
-                                                        else:
-                                                            st.info(f"⏳ Partido EN CURSO - Status: {espn_data.get('status', '?')}")
-                                                        return
-                                                
-                                                # Si NO hay event_id, BUSCARLO por NOMBRE
-                                                if not event_id:
-                                                    st.info("🔍 Buscando event_id por nombre del partido...")
-                                                    found_event_id = _buscar_event_id_por_partido(partido, deporte)
-                                                    if found_event_id:
-                                                        st.success(f"✅ Event_id encontrado: {found_event_id}")
-                                                        espn_data = _find_resultado_por_event_id(found_event_id, deporte)
-                                                        if espn_data.get('found') and espn_data.get('completed'):
-                                                            st.success(f"✅ Resultado: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
-                                                            return
-                                                        elif espn_data.get('found'):
-                                                            st.info(f"⏳ Partido EN CURSO")
-                                                            return
-                                                
-                                                # Fallback: buscar por NOMBRE
-                                                st.info("🔍 Buscando por nombre del partido...")
-                                                resultado = _find_resultado_robusto(partido, deporte, pick_desc)
-                                                if resultado:
-                                                    st.success(f"✅ Se puede calificar como: **{resultado.upper()}**")
-                                                else:
-                                                    st.warning("❌ No se encontró resultado en ESPN")
-                        except Exception as e:
-                            st.warning(f"Error en {sheet.title}: {str(e)[:30]}")
-                except Exception as e:
-                    pass
-                
-                if not found_any:
-                    st.info("✅ No hay picks pendientes. ¡Todos están calificados!")
-        except Exception as e:
-            st.error(f"Error cargando debug: {str(e)[:100]}")
+#     # with st.expander("🔍 DEBUG GLOBAL: Status de todos tus picks (PENDIENTES)"):
+#     #     st.write("**Tus picks que aún necesitan calificación:**")
+#     #     
+#     #     try:
+#     #         ss = get_ss()
+#     #         if ss:
+#     #             found_any = False
+#     #             
+#     #             # Debug: Mostrar TODAS las hojas disponibles con detalles
+#     #             with st.expander("📋 DEBUG: Hojas disponibles y contenido:"):
+#     #                 all_sheets = ss.worksheets()
+#     #                 for sheet in all_sheets:
+#     #                         st.write(f"**Hoja: {sheet.title}**")
+#     #                         try:
+#     #                             records = _safe_get_records(sheet)
+#     #                             st.caption(f"Total registros: {len(records)}")
+#     #                             
+#     #                             # Mostrar estructura
+#     #                             if records:
+#     #                                 st.caption(f"Headers: {list(records[0].keys())}")
+#     #                                 
+#     #                                 # Mostrar TODOS tus registros (comparar exactamente con .lower().strip())
+#     #                                 my_records = [r for r in records if str(r.get("apodo", "")).lower().strip() == apodo.lower()]
+#     #                                 st.caption(f"Registros con apodo '{apodo}': {len(my_records)}")
+#     #                                 
+#     #                                 # Mostrar tus registros con TODO el detalle
+#     #                                 if my_records:
+#     #                                     for idx, r in enumerate(my_records):
+#     #                                         st.caption(f"  {idx+1}. {r.get('fecha', '?')} | {r.get('partido', '?')} | Pick: {r.get('pick_desc', '?')} | Resultado: '{r.get('resultado', '?')}'")
+#                         except Exception as e:
+#                             st.error(f"Error leyendo {sheet.title}: {str(e)[:50]}")
+#                 
+#                 # THE PIT picks
+#                 try:
+#                     ws_pit = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
+#                     pit_records = _safe_get_records(ws_pit)
+#                     my_pit_pending = [r for r in pit_records 
+#                                      if str(r.get("apodo", "")).lower().strip() == apodo.lower()
+#                                      and str(r.get("resultado", "")).strip().lower() == "pendiente"]
+#                     
+#                     if my_pit_pending:
+#                         found_any = True
+#                         st.write("**🩸 THE PIT (PENDIENTES):**")
+#                         for idx, pick in enumerate(my_pit_pending):
+#                             col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+#                             with col1:
+#                                 st.caption(f"**{pick.get('partido', '?')}**")
+#                             with col2:
+#                                 st.caption(f"Pick: {pick.get('pick_desc', '?')}")
+#                             with col3:
+#                                 st.caption("⏳ **PENDIENTE**")
+#                             with col4:
+#                                 if st.button("🧪", key=f"debug_pit_{idx}", use_container_width=True):
+#                                     event_id = pick.get('event_id', '')
+#                                     partido = pick.get('partido', '')
+#                                     deporte = pick.get('deporte', 'soccer')
+#                                     pick_desc = pick.get('pick_desc', '').lower()
+#                                     
+#                                     # Intentar por EVENT_ID primero
+#                                     if event_id:
+#                                         espn_data = _find_resultado_por_event_id(event_id, deporte)
+#                                         if espn_data.get('found'):
+#                                             if espn_data.get('completed'):
+#                                                 st.success(f"✅ Resultado encontrado por EVENT_ID: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
+#                                             else:
+#                                                 st.info(f"⏳ Partido EN CURSO - Status: {espn_data.get('status', '?')}")
+#                                             return
+#                                     
+#                                     # Si NO hay event_id, BUSCARLO por NOMBRE
+#                                     if not event_id:
+#                                         st.info("🔍 Buscando event_id por nombre del partido...")
+#                                         found_event_id = _buscar_event_id_por_partido(partido, deporte)
+#                                         if found_event_id:
+#                                             st.success(f"✅ Event_id encontrado: {found_event_id}")
+#                                             espn_data = _find_resultado_por_event_id(found_event_id, deporte)
+#                                             if espn_data.get('found') and espn_data.get('completed'):
+#                                                 st.success(f"✅ Resultado: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
+#                                                 return
+#                                             elif espn_data.get('found'):
+#                                                 st.info(f"⏳ Partido EN CURSO")
+#                                                 return
+#                                     
+#                                     # Fallback: buscar por NOMBRE
+#                                     st.info("🔍 Buscando por nombre del partido...")
+#                                     resultado = _find_resultado_robusto(partido, deporte, pick_desc)
+#                                     if resultado:
+#                                         st.success(f"✅ Se puede calificar como: **{resultado.upper()}**")
+#                                     else:
+#                                         st.warning("❌ No se encontró resultado en ESPN")
+#                 except Exception as e:
+#                     pass
+#                 
+#                 # REGISTRAR picks - BUSCAR EN TODAS LAS HOJAS picks_*
+#                 try:
+#                     for sheet in ss.worksheets():
+#                         # Buscar SOLO en hojas que empiezan con "picks_"
+#                         if not sheet.title.startswith("picks_"):
+#                             continue
+#                         
+#                         # Saltar la hoja de pit_picks (ya la procesamos)
+#                         if sheet.title == "pit_picks":
+#                             continue
+#                         
+#                         try:
+#                             records = _safe_get_records(sheet)
+#                             
+#                             # El nombre de la hoja ES el apodo (picks_RONGO → RONGO)
+#                             sheet_apodo = sheet.title.replace("picks_", "").strip().lower()
+#                             
+#                             # ¿Es esta hoja para el usuario actual?
+#                             if sheet_apodo == apodo.lower():
+#                                 # Filtrar picks pendientes
+#                                 # (picks_APODO no tiene columna 'apodo', así que todos son del usuario)
+#                                 my_pending = [r for r in records 
+#                                              if str(r.get("resultado", "")).strip().lower() == "pendiente"]
+#                                 
+#                                 if my_pending:
+#                                     found_any = True
+#                                     st.write(f"**📝 {sheet.title} (PENDIENTES: {len(my_pending)}):**")
+#                                     for idx, pick in enumerate(my_pending):
+#                                         col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+#                                         with col1:
+#                                             st.caption(f"**{pick.get('partido', '?')}**")
+#                                         with col2:
+#                                             st.caption(f"Pick: {pick.get('pick_desc', '?')}")
+#                                         with col3:
+#                                             st.caption("⏳ **PENDIENTE**")
+#                                         with col4:
+#                                             if st.button("🧪", key=f"debug_reg_{sheet.title}_{idx}", use_container_width=True):
+#                                                 event_id = pick.get('event_id', '')
+#                                                 partido = pick.get('partido', '')
+#                                                 deporte = pick.get('deporte', 'soccer')
+#                                                 pick_desc = pick.get('pick_desc', '').lower()
+#                                                 
+#                                                 # Intentar por EVENT_ID primero
+#                                                 if event_id:
+#                                                     espn_data = _find_resultado_por_event_id(event_id, deporte)
+#                                                     if espn_data.get('found'):
+#                                                         if espn_data.get('completed'):
+#                                                             st.success(f"✅ Resultado encontrado por EVENT_ID: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
+#                                                         else:
+#                                                             st.info(f"⏳ Partido EN CURSO - Status: {espn_data.get('status', '?')}")
+#                                                         return
+#                                                 
+#                                                 # Si NO hay event_id, BUSCARLO por NOMBRE
+#                                                 if not event_id:
+#                                                     st.info("🔍 Buscando event_id por nombre del partido...")
+#                                                     found_event_id = _buscar_event_id_por_partido(partido, deporte)
+#                                                     if found_event_id:
+#                                                         st.success(f"✅ Event_id encontrado: {found_event_id}")
+#                                                         espn_data = _find_resultado_por_event_id(found_event_id, deporte)
+#                                                         if espn_data.get('found') and espn_data.get('completed'):
+#                                                             st.success(f"✅ Resultado: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
+#                                                             return
+#                                                         elif espn_data.get('found'):
+#                                                             st.info(f"⏳ Partido EN CURSO")
+#                                                             return
+#                                                 
+#                                                 # Fallback: buscar por NOMBRE
+#                                                 st.info("🔍 Buscando por nombre del partido...")
+#                                                 resultado = _find_resultado_robusto(partido, deporte, pick_desc)
+#                                                 if resultado:
+#                                                     st.success(f"✅ Se puede calificar como: **{resultado.upper()}**")
+#                                                 else:
+#                                                     st.warning("❌ No se encontró resultado en ESPN")
+#                         except Exception as e:
+#                             st.warning(f"Error en {sheet.title}: {str(e)[:30]}")
+#                 except Exception as e:
+#                     pass
+#                 
+#                 if not found_any:
+#                     st.info("✅ No hay picks pendientes. ¡Todos están calificados!")
+#         except Exception as e:
+#             st.error(f"Error cargando debug: {str(e)[:100]}")
 
     # Tabs
     t1, t2, t3, t4, t5, t6 = st.tabs([
