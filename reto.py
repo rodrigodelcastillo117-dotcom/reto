@@ -4305,11 +4305,11 @@ def tab_the_pit(apodo: str, bank: float):
                             
                             if existing_row:
                                 # Actualizar fila existente - BATCH UPDATE
-                                updates = [
-                                    {"range": f"H{existing_row}", "values": [[value]]},  # pick_desc
-                                    {"range": f"G{existing_row}", "values": [[game_id]]},  # event_id
-                                ]
-                                get_ss().batch_update({"data": updates})
+                                # Actualizar con dos llamadas separadas pero rápidas
+                                col_pick = ws_picks.find("pick_desc").col
+                                col_event = ws_picks.find("event_id").col
+                                ws_picks.update_cell(existing_row, col_pick, value)
+                                ws_picks.update_cell(existing_row, col_event, game_id)
                             else:
                                 # Nuevo pick - append_row
                                 new_row = [
