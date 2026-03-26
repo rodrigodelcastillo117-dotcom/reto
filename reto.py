@@ -3947,6 +3947,52 @@ def tab_the_pit(apodo: str, bank: float):
     if total > 0:
         st.progress(n_muertos / total)
 
+    st.write("")
+    
+    # ═══════════════════════════════════════════════════════════════
+    #  LEADERBOARD - TODOS LOS PARTICIPANTES Y SUS PICKS
+    # ═══════════════════════════════════════════════════════════════
+    st.markdown('<div style="font-family: Bebas Neue; font-size: 1.1rem; color: #FFB800; letter-spacing: 1px; margin: 15px 0 10px;">📊 LEADERBOARD - PICKS DE HOY</div>', unsafe_allow_html=True)
+    
+    try:
+        # Load all picks for today from Google Sheets
+        ss = get_ss()
+        if ss:
+            ws_pit = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
+            all_picks_today = [p for p in _safe_get_records(ws_pit) 
+                              if str(p.get("ronda_id", "")).strip() == str(ronda_id) and
+                                 str(p.get("fecha", "")).strip() == str(date.today())]
+            
+            # Build leaderboard data
+            leaderboard_data = []
+            for player in players:
+                apodo_player = player.get("apodo", "")
+                estado = player.get("estado", "?")
+                
+                # Find pick for this player
+                player_pick = next((p for p in all_picks_today 
+                                  if str(p.get("apodo", "")).lower().strip() == apodo_player.lower().strip()), None)
+                pick_desc = player_pick.get("pick_desc", "—") if player_pick else "—"
+                
+                # Status emoji
+                status_emoji = "💚" if estado == "vivo" else "💀" if estado == "eliminado" else "?"
+                
+                leaderboard_data.append({
+                    "Estado": f"{status_emoji} {estado.upper()}",
+                    "Apodo": apodo_player,
+                    "Pick": pick_desc,
+                    "Días": player.get("dias_vivo", 0)
+                })
+            
+            # Display as table
+            if leaderboard_data:
+                df_lb = pd.DataFrame(leaderboard_data)
+                st.dataframe(df_lb, use_container_width=True, hide_index=True)
+            else:
+                st.info("Sin participantes en esta ronda")
+    except Exception as e:
+        pass  # Silently ignore errors
+
     # AUTO-VERIFICAR
     if yo_vivo and my_record:
         g, p = pit_auto_grade(apodo, ronda_id, my_record)
