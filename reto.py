@@ -3173,11 +3173,21 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             unsafe_allow_html=True
                         )
                         
-                        # Botón INVISIBLE que controla la lógica
+                        # Botón INVISIBLE Y OCULTO que controla la lógica
                         if st.button("", key=f"open_{ev_id[:10]}", 
                                      help="Click en la tarjeta para abrir opciones de apuesta"):
                             st.session_state[f"open_pick_{ev_id[:10]}"] = not menu_open
                             st.rerun()
+                        
+                        # CSS para ocultar el botón
+                        st.markdown(
+                            f'<style>'
+                            f'button[key="open_{ev_id[:10]}"] {{'
+                            f'  display: none !important;'
+                            f'}}'
+                            f'</style>',
+                            unsafe_allow_html=True
+                        )
 
                 # Pick panels — full width below each row
                 for ci in range(min(cols_per_row, len(row_evs))):
