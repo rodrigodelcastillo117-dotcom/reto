@@ -59,6 +59,25 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# ✅ POLLING AUTOMÁTICO PARA EN VIVO
+# Si hay partidos EN VIVO, refresca cada 10 segundos
+if "last_refresh" not in st.session_state:
+    st.session_state.last_refresh = datetime.now()
+
+# Checar si hay partidos EN VIVO (si pasaron 10+ segundos, refresca)
+try:
+    now = datetime.now()
+    elapsed = (now - st.session_state.last_refresh).total_seconds()
+    
+    # Refresca cada 10 segundos si hay partidos EN VIVO
+    if elapsed >= 10:
+        st.session_state.last_refresh = now
+        # Limpiar cache para traer datos frescos
+        st.cache_data.clear()
+        st.rerun()
+except:
+    pass
+
 # ─────────────────────────────────────────────────────────────
 #  CONSTANTS
 # ─────────────────────────────────────────────────────────────
@@ -1218,15 +1237,22 @@ def espn_search_events(sport: str, league: str, query: str) -> list:
         status_short = status_type.get("shortDetail", "")
         completed    = (state == "post") or status_type.get("completed", False)
         
-        # ✅ DETECCIÓN MEJORADA DE EN VIVO:
-        # - Si state == "in": EN VIVO
-        # - Si shortDetail tiene minuto (ej: "83'", "2nd", "4th"): EN VIVO
+        # ✅ DETECCIÓN DE EN VIVO POR HORA:
+        # Si el partido empezó hace menos de 3 horas y no está completado = EN VIVO
         is_live = False
-        if state == "in" and not completed:
-            is_live = True
-        elif status_short and any(x in status_short.lower() for x in ["'", "nd", "st", "rd", "th", "inning"]):
-            # Detecta: "83'", "2nd", "3rd", "1st", "4th", "1 inning", etc
-            is_live = True
+        if not completed:
+            try:
+                # Parsear fecha del partido
+                dt = datetime.fromisoformat(date_raw.replace("Z", "+00:00"))
+                dt_mx = dt - timedelta(hours=6)  # UTC → Mexico City
+                now_mx = datetime.now(timezone.utc) - timedelta(hours=6)
+                
+                # Si pasaron menos de 3 horas desde que empezó el partido = EN VIVO
+                time_diff = (now_mx - dt_mx).total_seconds() / 3600  # en horas
+                if 0 <= time_diff <= 3:  # Empezó entre 0 y 3 horas atrás
+                    is_live = True
+            except:
+                pass
 
         # ── Skip completed (past) games — only show live or upcoming ──
         if completed and not is_live:
@@ -2666,14 +2692,8 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             away_disp, home_disp = formatted.split(" vs ")
                         else:
                             away_disp, home_disp = formatted.split("@")
-                        is_live  = ev.get("is_live", False)
-                        # Mostrar minuto si es EN VIVO, si no mostrar fecha
-                        if is_live:
-                            status_detail = ev.get("status_detail", "")
-                            s_txt = f"🔴 {status_detail}" if status_detail else "🔴 EN VIVO"
-                        else:
-                            s_txt = ev.get("date","")
-                        s_col    = "#FF0000" if is_live else "#8888AA"
+                        s_txt = ev.get("date","")
+                        is_live = ev.get("is_live", False)
                         ao = float(ev.get("away_odds",0))
                         ho = float(ev.get("home_odds",0))
                         do = float(ev.get("draw_odds",0))
@@ -2683,32 +2703,26 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         ou_key = f"ou_pending_{ev_id[:10]}"
                         is_open = bool(qv) or bool(st.session_state.get(ou_key))
                         
-                        # ESTILOS PARA EN VIVO (rojo brillante)
+                        # Estilos: EN VIVO rojo, abierto amarillo, normal gris
                         if is_live:
-                            border  = "rgba(255,0,0,.8)"  # Rojo brillante
-                            bg      = "rgba(255,0,0,.15)"  # Fondo rojo oscuro
+                            border  = "rgba(255,0,0,.8)"
+                            bg      = "rgba(255,0,0,.15)"
+                            border_width = "2px"
+                            glow = "box-shadow: 0 0 20px rgba(255,0,0,.6);"
+                            s_txt = "🔴 EN VIVO"
+                            s_col = "#FF0000"
                         elif is_open:
                             border  = "rgba(240,255,0,.5)"
                             bg      = "rgba(240,255,0,.04)"
+                            border_width = "1px"
+                            glow = ""
+                            s_col = "#FFD700"
                         else:
                             border  = "rgba(255,255,255,.06)"
                             bg      = "transparent"
-
-                        # Obtener score si está EN VIVO
-                        score_html = ""
-                        if is_live:
-                            away_score_str = ev.get("away_score", "")
-                            home_score_str = ev.get("home_score", "")
-                            # Convertir a números para validación
-                            try:
-                                away_score = int(away_score_str) if away_score_str else -1
-                                home_score = int(home_score_str) if home_score_str else -1
-                            except:
-                                away_score = -1
-                                home_score = -1
-                            
-                            if away_score >= 0 and home_score >= 0:
-                                score_html = f'<div style="font-size:.7rem;color:#FF0000;font-weight:700;margin:4px 0;">{away_score} - {home_score}</div>'
+                            border_width = "1px"
+                            glow = ""
+                            s_col = "#8888AA"
 
                         odds_html = ""
                         if ao > 1:
@@ -2724,18 +2738,16 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         card_c, btn_c = st.columns([5, 4])
                         with card_c:
                             st.markdown(
-                                f'<div style="background:{bg};border:2px solid {border};border-radius:10px;'
-                                f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:2px;'
-                                f'{"box-shadow: 0 0 20px rgba(255,0,0,.6);" if is_live else ""}">'
+                                f'<div style="background:{bg};border:{border_width} solid {border};border-radius:10px;'
+                                f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:2px;{glow}'
+                                f'{"animation:blinkLive 1s infinite;" if is_live else ""}">'
                                 f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">'
                                 f'{a_lg}'
                                 f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
                                 f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{away_disp}</span>'
                                 f'</div>'
                                 f'<div style="font-size:.55rem;color:#44445A;flex-shrink:0;text-align:center;padding:0 4px">'
-                                f'vs<br><span style="font-size:.42rem;color:{s_col};font-weight:700;'
-                                f'{"animation:blinkLive 1s infinite;" if is_live else ""}">{s_txt}</span>'
-                                f'{score_html}'
+                                f'vs<br><span style="font-size:.42rem;color:{s_col};font-weight:{"700" if is_live else "400"}">{s_txt}</span>'
                                 f'</div>'
                                 f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0;justify-content:flex-end">'
                                 f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
