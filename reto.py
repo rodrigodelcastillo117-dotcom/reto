@@ -3934,8 +3934,42 @@ def tab_the_pit(apodo: str, bank: float):
         return
     
     # Get current lives y estado
-    my_vidas = int(my_record.get("vidas", 3))
+    vidas_raw = my_record.get("vidas", "3")
+    try:
+        my_vidas = int(vidas_raw) if vidas_raw and vidas_raw.strip() else 3
+    except:
+        my_vidas = 3
+    
+    # Si vidas es 0 o negativo, reiniciar a 3
+    if my_vidas <= 0:
+        my_vidas = 3
+    
     my_estado = my_record.get("estado", "vivo")
+    
+    # ═══════════════════════════════════════════════════════════════
+    #  INICIALIZAR VIDAS EN GOOGLE SHEETS SI NO EXISTEN
+    # ═══════════════════════════════════════════════════════════════
+    try:
+        ss = get_ss()
+        if ss and my_vidas == 3:  # Solo si tiene 3 vidas (initialization)
+            ws_players = ensure_tab(ss, "pit_jugadores", PIT_PLAYERS_HEADERS)
+            all_rows = ws_players.get_all_values()
+            
+            # Buscar la fila del usuario y actualizar vidas si están vacías
+            for idx, row in enumerate(all_rows):
+                if (idx > 0 and  # Skip header
+                    len(row) > 1 and
+                    row[0] == str(ronda_id) and 
+                    row[1] == apodo):
+                    # Columna vidas está en posición 3
+                    if idx + 1 > 0:  # Row number
+                        try:
+                            ws_players.update_cell(idx + 1, 4, str(my_vidas))
+                        except:
+                            pass
+                    break
+    except:
+        pass
     
     # ═══════════════════════════════════════════════════════════════
     #  AUTO-GRADING: Detectar resultados y restar vidas
