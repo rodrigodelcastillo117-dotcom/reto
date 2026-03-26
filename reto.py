@@ -2694,6 +2694,9 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             away_disp, home_disp = formatted.split("@")
                         s_txt = ev.get("date","")
                         is_live = ev.get("is_live", False)
+                        away_score = ev.get("away_score", "")
+                        home_score = ev.get("home_score", "")
+                        
                         ao = float(ev.get("away_odds",0))
                         ho = float(ev.get("home_odds",0))
                         do = float(ev.get("draw_odds",0))
@@ -2723,6 +2726,16 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             border_width = "1px"
                             glow = ""
                             s_col = "#8888AA"
+                        
+                        # Mostrar score si existe
+                        score_display = ""
+                        if away_score and home_score:
+                            try:
+                                a_score = int(away_score)
+                                h_score = int(home_score)
+                                score_display = f"<br><span style='font-size:.5rem;color:#FFD700;'>{a_score} - {h_score}</span>"
+                            except:
+                                pass
 
                         odds_html = ""
                         if ao > 1:
@@ -2739,15 +2752,16 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         with card_c:
                             st.markdown(
                                 f'<div style="background:{bg};border:{border_width} solid {border};border-radius:10px;'
-                                f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:2px;{glow}'
-                                f'{"animation:blinkLive 1s infinite;" if is_live else ""}">'
+                                f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:2px;{glow}">'
                                 f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">'
                                 f'{a_lg}'
                                 f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
                                 f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{away_disp}</span>'
                                 f'</div>'
                                 f'<div style="font-size:.55rem;color:#44445A;flex-shrink:0;text-align:center;padding:0 4px">'
-                                f'vs<br><span style="font-size:.42rem;color:{s_col};font-weight:{"700" if is_live else "400"}">{s_txt}</span>'
+                                f'vs<br><span style="font-size:.42rem;color:{s_col};font-weight:{"700" if is_live else "400"};'
+                                f'{"animation:blinkLive 1s infinite;" if is_live else ""}">{s_txt}</span>'
+                                f'{score_display}'
                                 f'</div>'
                                 f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0;justify-content:flex-end">'
                                 f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
