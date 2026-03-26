@@ -4113,16 +4113,39 @@ def tab_the_pit(apodo: str, bank: float):
 
     if yo_vivo:
         st.write("")
-        today_pick = next(
-            (p for p in ronda_picks if p.get("apodo","").lower() == apodo.lower() and str(p.get("fecha","")) == str(date.today())),
-            None
-        )
+        
+        # Debug: Mostrar qué estamos buscando
+        st.markdown(f"**🔍 Buscando pick para:** apodo='{apodo}', fecha={str(date.today())}")
+        st.markdown(f"**📊 Total picks en ronda:** {len(ronda_picks)}")
+        
+        # Mostrar algunos picks para debugging
+        if ronda_picks:
+            st.markdown("**Picks en la ronda:**")
+            for i, p in enumerate(ronda_picks[:3]):  # Show first 3
+                st.caption(f"{i+1}. {p.get('apodo')} - {p.get('fecha')} - {p.get('pick_desc')}")
+        
+        # Buscar pick del usuario de hoy
+        today_pick = None
+        for p in ronda_picks:
+            p_apodo = str(p.get("apodo", "")).lower().strip()
+            p_fecha = str(p.get("fecha", "")).strip()
+            
+            if p_apodo == apodo.lower().strip() and p_fecha == str(date.today()):
+                today_pick = p
+                break
         
         if not today_pick and hour_cdmx >= 15:
             st.error(f"⚠️ ¡SON LAS {hour_cdmx:02d}:{now_cdmx.minute:02d}! Sin pick aún")
         
         if today_pick:
-            st.info(f"✅ Tu pick: {today_pick.get('pick_texto','')}")
+            pick_texto = today_pick.get('pick_desc', today_pick.get('pick_texto', 'N/A'))
+            st.success(f"✅ **Tu pick de hoy:** {pick_texto}")
+            
+            # Show details
+            with st.expander("📋 Detalles del pick"):
+                st.json({k: v for k, v in today_pick.items() if v and k != "comodin_usado"})
+        else:
+            st.info("ℹ️ Aún no has elegido un pick hoy")
 
     st.markdown(f"---\n🔴 RONDA #{ronda_id} · CDMX {now_cdmx.strftime('%H:%M')} · SEED: {daily_seed} · TIPO: {pick_type_hoy}")
 
