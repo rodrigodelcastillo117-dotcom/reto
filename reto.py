@@ -3133,19 +3133,22 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             odds_html += (f'<span style="background:rgba(0,180,255,.12);color:#00B4FF;'
                                           f'padding:1px 6px;border-radius:4px;font-size:.58rem">{ho}</span>')
 
-                        # ✅ PATCH: Logos creados DIRECTAMENTE según deporte (sin h_lg, a_lg)
+                        # ✅ PATCH: Para SOCCER, INVERTIR TODO porque ESPN los devuelve invertidos
                         if sport_ev.lower() == "soccer":
-                            # Soccer: Home a la IZQUIERDA, Away a la DERECHA
-                            logo_left  = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
-                            logo_right = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
-                            team_left, team_right = home_disp, away_disp
+                            # Soccer: ESPN devuelve away/home invertidos, así que invertimos TODO
+                            away, home = home, away  # Invertir nombres de equipos
+                            away_disp, home_disp = home_disp, away_disp  # Invertir displays
+                            
+                            logo_left  = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
+                            logo_right = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
+                            team_left, team_right = away_disp, home_disp
                         else:
-                            # NBA/etc: Away a la IZQUIERDA, Home a la DERECHA
+                            # NBA/etc: no invertir
                             logo_left  = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
                             logo_right = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
                             team_left, team_right = away_disp, home_disp
                         
-                        # ✅ Crear columnas para tarjeta y botón (4:1 ratio)
+                        # ✅ Crear columnas para tarjeta y botón
                         card_c, btn_c = st.columns([4, 1])
                         
                         with card_c:
