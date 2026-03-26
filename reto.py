@@ -1671,7 +1671,28 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
         header = event_data.get("header", {})
         comps  = header.get("competitions", [{}])
         status = comps[0].get("status", {}).get("type", {}) if comps else {}
-        if not status.get("completed", False):
+        completed = status.get("completed", False)
+
+        # DEBUG — store in session_state so we can see it
+        dbg_key = f"grade_debug_{event_id[:8]}"
+        try:
+            comp_data = event_data.get("boxscore", {}).get("teams", [])
+            header_comps = comps[0].get("competitors", []) if comps else []
+            dbg_names = []
+            for t in comp_data:
+                dbg_names.append(f"box:{t.get('homeAway','')}={t.get('team',{}).get('displayName','')}:{t.get('score','?')}")
+            for c in header_comps:
+                dbg_names.append(f"hdr:{c.get('homeAway','')}={c.get('team',{}).get('displayName','')}:{c.get('score','?')}")
+            st.session_state[dbg_key] = {
+                "completed": completed,
+                "pick_desc": pick_d,
+                "mercado": mercado,
+                "names": dbg_names,
+            }
+        except Exception:
+            pass
+
+        if not completed:
             continue
 
         resultado = parse_result_from_event(event_data, pick_d, mercado)
@@ -4434,7 +4455,7 @@ def main():
 
     # ── AUTO-GRADE on every load ──────────────────────────────
     bank = get_bankroll(df)
-    pending_count = (df["resultado"] == "pendiente").sum() if not df.empty else 0
+    pending_count = (df["resultado"].isin(["pendiente","nulo"])).sum() if not df.empty else 0
     if pending_count > 0:
         try:
             df, graded, bank = auto_grade_pending(apodo, df, bank)
@@ -4444,8 +4465,16 @@ def main():
                     f'<div class="autobanner">⚡ Auto-calificador: <strong>{graded} pick(s)</strong> resueltos automáticamente desde ESPN.</div>',
                     unsafe_allow_html=True
                 )
-        except Exception:
-            pass
+            # Show debug info for failed gradings
+            debug_keys = [k for k in st.session_state if k.startswith("grade_debug_")]
+            if debug_keys:
+                with st.expander("🔍 Debug auto-calificador", expanded=False):
+                    for dk in debug_keys:
+                        d = st.session_state[dk]
+                        st.write(f"**Pick:** {d.get('pick_desc')} | **Mercado:** {d.get('mercado')} | **Completado:** {d.get('completed')}")
+                        st.write(f"**ESPN names:** {d.get('names')}")
+        except Exception as e:
+            st.caption(f"Auto-calificador error: {e}")
     else:
         bank = get_bankroll(df)
 
