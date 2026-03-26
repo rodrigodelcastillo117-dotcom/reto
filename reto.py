@@ -1785,12 +1785,16 @@ def auto_grade_all_picks_master():
             return
         
         # ═══════════════════════════════════════════════════════════════
-        # PARTE 1: Calificar picks de REGISTRAR (todas las hojas)
+        # PARTE 1: Calificar picks de REGISTRAR (todas las hojas picks_*)
         # ═══════════════════════════════════════════════════════════════
         try:
             for sheet in ss.worksheets():
-                # Saltar hojas que no son picks de usuarios
-                if sheet.title in ["pit_picks", "pit_jugadores", "pit_rondas", "usuarios"]:
+                # Solo procesar hojas picks_APODO
+                if not sheet.title.startswith("picks_"):
+                    continue
+                
+                # Saltar pit_picks (lo manejamos aparte)
+                if sheet.title == "pit_picks":
                     continue
                 
                 try:
@@ -5470,42 +5474,48 @@ def main():
                         
                         try:
                             records = _safe_get_records(sheet)
-                            # Filtrar por apodo con .lower().strip() para comparación exacta
-                            my_pending = [r for r in records 
-                                         if str(r.get("apodo", "")).lower().strip() == apodo.lower()
-                                         and str(r.get("resultado", "")).strip().lower() == "pendiente"]
                             
-                            if my_pending:
-                                found_any = True
-                                st.write(f"**📝 {sheet.title} (PENDIENTES: {len(my_pending)}):**")
-                                for idx, pick in enumerate(my_pending):
-                                    col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
-                                    with col1:
-                                        st.caption(f"**{pick.get('partido', '?')}**")
-                                    with col2:
-                                        st.caption(f"Pick: {pick.get('pick_desc', '?')}")
-                                    with col3:
-                                        st.caption("⏳ **PENDIENTE**")
-                                    with col4:
-                                        if st.button("🧪", key=f"debug_reg_{sheet.title}_{idx}", use_container_width=True):
-                                            event_id = pick.get('event_id', '')
-                                            
-                                            # Intentar por EVENT_ID primero
-                                            if event_id:
-                                                espn_data = _find_resultado_por_event_id(event_id, pick.get('deporte', 'soccer'))
-                                                if espn_data.get('found'):
-                                                    if espn_data.get('completed'):
-                                                        st.success(f"✅ Resultado encontrado por EVENT_ID: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
-                                                    else:
-                                                        st.info(f"⏳ Partido EN CURSO - Status: {espn_data.get('status', '?')}")
-                                                    return
-                                            
-                                            # Fallback: buscar por NOMBRE
-                                            resultado = _find_resultado_robusto(pick.get('partido', ''), pick.get('deporte', 'soccer'), pick.get('pick_desc', '').lower())
-                                            if resultado:
-                                                st.success(f"✅ Se puede calificar como: **{resultado.upper()}**")
-                                            else:
-                                                st.warning("❌ No se encontró resultado en ESPN")
+                            # El nombre de la hoja ES el apodo (picks_RONGO → RONGO)
+                            sheet_apodo = sheet.title.replace("picks_", "").strip().lower()
+                            
+                            # ¿Es esta hoja para el usuario actual?
+                            if sheet_apodo == apodo.lower():
+                                # Filtrar picks pendientes
+                                # (picks_APODO no tiene columna 'apodo', así que todos son del usuario)
+                                my_pending = [r for r in records 
+                                             if str(r.get("resultado", "")).strip().lower() == "pendiente"]
+                                
+                                if my_pending:
+                                    found_any = True
+                                    st.write(f"**📝 {sheet.title} (PENDIENTES: {len(my_pending)}):**")
+                                    for idx, pick in enumerate(my_pending):
+                                        col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+                                        with col1:
+                                            st.caption(f"**{pick.get('partido', '?')}**")
+                                        with col2:
+                                            st.caption(f"Pick: {pick.get('pick_desc', '?')}")
+                                        with col3:
+                                            st.caption("⏳ **PENDIENTE**")
+                                        with col4:
+                                            if st.button("🧪", key=f"debug_reg_{sheet.title}_{idx}", use_container_width=True):
+                                                event_id = pick.get('event_id', '')
+                                                
+                                                # Intentar por EVENT_ID primero
+                                                if event_id:
+                                                    espn_data = _find_resultado_por_event_id(event_id, pick.get('deporte', 'soccer'))
+                                                    if espn_data.get('found'):
+                                                        if espn_data.get('completed'):
+                                                            st.success(f"✅ Resultado encontrado por EVENT_ID: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
+                                                        else:
+                                                            st.info(f"⏳ Partido EN CURSO - Status: {espn_data.get('status', '?')}")
+                                                        return
+                                                
+                                                # Fallback: buscar por NOMBRE
+                                                resultado = _find_resultado_robusto(pick.get('partido', ''), pick.get('deporte', 'soccer'), pick.get('pick_desc', '').lower())
+                                                if resultado:
+                                                    st.success(f"✅ Se puede calificar como: **{resultado.upper()}**")
+                                                else:
+                                                    st.warning("❌ No se encontró resultado en ESPN")
                         except Exception as e:
                             st.warning(f"Error en {sheet.title}: {str(e)[:30]}")
                 except Exception as e:
