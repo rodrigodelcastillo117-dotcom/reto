@@ -2425,76 +2425,95 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
         default_open = has_live or has_open or n <= 8
 
         with st.expander(label, expanded=default_open):
-            for ev in display_evs:
-                ev_id    = ev["id"]
-                away     = ev["away"]; home = ev["home"]
-                sport_ev = ev.get("sport","soccer")
-                is_live  = ev.get("is_live", False)
-                s_txt    = "⬤ LIVE" if is_live else ev.get("date","")
-                s_col    = "#FF3D00" if is_live else "#8888AA"
-                ao = float(ev.get("away_odds",0))
-                ho = float(ev.get("home_odds",0))
-                do = float(ev.get("draw_odds",0))
-                a_lg = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
-                h_lg = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
-                qv  = st.session_state.get(f"qp_val_{ev_id}", "")
-                ou_key = f"ou_pending_{ev_id[:10]}"
-                is_open = bool(qv) or bool(st.session_state.get(ou_key))
-                border  = "rgba(240,255,0,.5)" if is_open else ("rgba(255,61,0,.4)" if is_live else "rgba(255,255,255,.06)")
-                bg      = "rgba(240,255,0,.04)" if is_open else "transparent"
+            cols_per_row = 3 if n > 12 else 2
+            for row_start in range(0, len(display_evs), cols_per_row):
+                row_evs = display_evs[row_start:row_start+cols_per_row]
+                grid = st.columns(cols_per_row)
+                for ci in range(cols_per_row):
+                    with grid[ci]:
+                        if ci >= len(row_evs):
+                            continue
+                        ev      = row_evs[ci]
+                        ev_id    = ev["id"]
+                        away     = ev["away"]; home = ev["home"]
+                        sport_ev = ev.get("sport","soccer")
+                        is_live  = ev.get("is_live", False)
+                        s_txt    = "⬤ LIVE" if is_live else ev.get("date","")
+                        s_col    = "#FF3D00" if is_live else "#8888AA"
+                        ao = float(ev.get("away_odds",0))
+                        ho = float(ev.get("home_odds",0))
+                        do = float(ev.get("draw_odds",0))
+                        a_lg = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
+                        h_lg = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
+                        qv     = st.session_state.get(f"qp_val_{ev_id}", "")
+                        ou_key = f"ou_pending_{ev_id[:10]}"
+                        is_open = bool(qv) or bool(st.session_state.get(ou_key))
+                        border  = "rgba(240,255,0,.5)" if is_open else ("rgba(255,61,0,.4)" if is_live else "rgba(255,255,255,.06)")
+                        bg      = "rgba(240,255,0,.04)" if is_open else "transparent"
 
-                # Odds chips
-                odds_html = ""
-                if ao > 1:
-                    odds_html = (f'<span style="background:rgba(0,255,136,.12);color:#00FF88;'
-                                 f'padding:1px 6px;border-radius:4px;font-size:.58rem">{ao}</span> ')
-                    if do > 1:
-                        odds_html += (f'<span style="background:rgba(255,184,0,.12);color:#FFB800;'
-                                      f'padding:1px 6px;border-radius:4px;font-size:.58rem">{do}</span> ')
-                    odds_html += (f'<span style="background:rgba(0,180,255,.12);color:#00B4FF;'
-                                  f'padding:1px 6px;border-radius:4px;font-size:.58rem">{ho}</span>')
+                        odds_html = ""
+                        if ao > 1:
+                            odds_html = (f'<span style="background:rgba(0,255,136,.12);color:#00FF88;'
+                                         f'padding:1px 6px;border-radius:4px;font-size:.58rem">{ao}</span> ')
+                            if do > 1:
+                                odds_html += (f'<span style="background:rgba(255,184,0,.12);color:#FFB800;'
+                                              f'padding:1px 6px;border-radius:4px;font-size:.58rem">{do}</span> ')
+                            odds_html += (f'<span style="background:rgba(0,180,255,.12);color:#00B4FF;'
+                                          f'padding:1px 6px;border-radius:4px;font-size:.58rem">{ho}</span>')
 
-                # ── Horizontal card: logo · name · vs · logo · name · time · odds · [APOSTAR]
-                card_col, btn_col = st.columns([8, 2])
-                with card_col:
-                    st.markdown(
-                        f'<div style="background:{bg};border:1px solid {border};border-radius:10px;'
-                        f'padding:8px 14px;display:flex;align-items:center;gap:10px;margin-bottom:2px">'
-                        f'<div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0">'
-                        f'{a_lg}'
-                        f'<span style="font-size:.82rem;font-weight:700;color:#EEEEF5;'
-                        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px">{away}</span>'
-                        f'</div>'
-                        f'<div style="font-size:.6rem;color:#44445A;flex-shrink:0;text-align:center">'
-                        f'vs<br><span style="font-size:.45rem;color:{s_col};'
-                        f'{"animation:blinkLive 1.2s infinite;" if is_live else ""}">{s_txt}</span>'
-                        f'</div>'
-                        f'<div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0;justify-content:flex-end">'
-                        f'<span style="font-size:.82rem;font-weight:700;color:#EEEEF5;'
-                        f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:120px;text-align:right">{home}</span>'
-                        f'{h_lg}'
-                        f'</div>'
-                        f'{"<div style=\\'margin-left:8px;flex-shrink:0\\'>" + odds_html + "</div>" if odds_html else ""}'
-                        f'{"<div style=\\'margin-left:8px;font-size:.6rem;color:#F0FF00;flex-shrink:0\\'>" + qv + "</div>" if qv else ""}'
-                        f'</div>',
-                        unsafe_allow_html=True
-                    )
-                with btn_col:
-                    if st.button("🎯 APOSTAR", key=f"open_{ev_id[:10]}",
-                                  use_container_width=True,
-                                  type="primary" if is_open else "secondary"):
-                        if is_open:
-                            # Toggle off
-                            st.session_state.pop(f"qp_val_{ev_id}", None)
-                            st.session_state.pop(f"qp_merc_{ev_id}", None)
-                            st.session_state.pop(ou_key, None)
-                        else:
-                            st.session_state[f"open_pick_{ev_id[:10]}"] = True
-                        st.rerun()
+                        # Card + APOSTAR button side by side
+                        card_c, btn_c = st.columns([7, 2])
+                        with card_c:
+                            st.markdown(
+                                f'<div style="background:{bg};border:1px solid {border};border-radius:10px;'
+                                f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:2px">'
+                                f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">'
+                                f'{a_lg}'
+                                f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
+                                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{away}</span>'
+                                f'</div>'
+                                f'<div style="font-size:.55rem;color:#44445A;flex-shrink:0;text-align:center;padding:0 4px">'
+                                f'vs<br><span style="font-size:.42rem;color:{s_col};'
+                                f'{"animation:blinkLive 1.2s infinite;" if is_live else ""}">{s_txt}</span>'
+                                f'</div>'
+                                f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0;justify-content:flex-end">'
+                                f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
+                                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right">{home}</span>'
+                                f'{h_lg}'
+                                f'</div>'
+                                f'{"<div style=\\'margin-left:6px;flex-shrink:0\\'>" + odds_html + "</div>" if odds_html else ""}'
+                                f'{"<div style=\\'margin-left:6px;font-size:.6rem;color:#F0FF00;flex-shrink:0\\'>" + qv + "</div>" if qv else ""}'
+                                f'</div>',
+                                unsafe_allow_html=True
+                            )
+                        with btn_c:
+                            if st.button("🎯 APOSTAR", key=f"open_{ev_id[:10]}",
+                                          use_container_width=True,
+                                          type="primary" if is_open else "secondary"):
+                                if is_open:
+                                    st.session_state.pop(f"qp_val_{ev_id}", None)
+                                    st.session_state.pop(f"qp_merc_{ev_id}", None)
+                                    st.session_state.pop(ou_key, None)
+                                else:
+                                    st.session_state[f"open_pick_{ev_id[:10]}"] = True
+                                st.rerun()
 
-                # ── Pick panel (opens when APOSTAR clicked) ──────────
-                if is_open or st.session_state.get(f"open_pick_{ev_id[:10]}"):
-                    st.session_state.pop(f"open_pick_{ev_id[:10]}", None)
+                # Pick panels — full width below each row
+                for ci in range(min(cols_per_row, len(row_evs))):
+                    ev       = row_evs[ci]
+                    ev_id    = ev["id"]
+                    away     = ev["away"]; home = ev["home"]
+                    sport_ev = ev.get("sport","soccer")
+                    ao = float(ev.get("away_odds",0))
+                    ho = float(ev.get("home_odds",0))
+                    do = float(ev.get("draw_odds",0))
+                    ou_key = f"ou_pending_{ev_id[:10]}"
+                    qv = st.session_state.get(f"qp_val_{ev_id}", "")
+                    qm = st.session_state.get(f"qp_merc_{ev_id}", "ML")
+                    open_flag = st.session_state.pop(f"open_pick_{ev_id[:10]}", False)
+
+                    if not qv and not st.session_state.get(ou_key) and not open_flag:
+                        continue  # nothing to show for this event
 
                     if not qv and not st.session_state.get(ou_key):
                         # Show pick options
