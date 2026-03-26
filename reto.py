@@ -1959,9 +1959,10 @@ def _buscar_event_id_por_partido(partido: str, deporte: str = "soccer") -> str:
                         if len(competitors) >= 2:
                             away = competitors[1].get("team", {}).get("name", "")
                             home = competitors[0].get("team", {}).get("name", "")
-                            match_norm = norm(f"{away} vs {home}")
+                            match_norm_1 = norm(f"{away} vs {home}")
+                            match_norm_2 = norm(f"{home} vs {away}")
                             
-                            if partido_norm == match_norm:
+                            if partido_norm == match_norm_1 or partido_norm == match_norm_2:
                                 # ¡ENCONTRADO! Retornar event_id
                                 return evt.get("id", "")
             except:
@@ -2078,11 +2079,12 @@ def _find_resultado_robusto(partido: str, deporte: str, pick_desc: str) -> str:
                                 away_score = competitors[1].get("score", -1)
                                 home_score = competitors[0].get("score", -1)
                                 
-                                # Matchear partido
+                                # Matchear partido - INTENTAR AMBAS DIRECCIONES
                                 partido_norm = norm(partido.replace("@", " vs "))
-                                match_norm = norm(f"{away} vs {home}")
+                                match_norm_1 = norm(f"{away} vs {home}")  # Dirección original
+                                match_norm_2 = norm(f"{home} vs {away}")  # Dirección invertida
                                 
-                                if partido_norm == match_norm and away_score >= 0 and home_score >= 0:
+                                if (partido_norm == match_norm_1 or partido_norm == match_norm_2) and away_score >= 0 and home_score >= 0:
                                     # ¡ENCONTRADO! Calificar
                                     return _calificar_resultado(away, home, away_score, home_score, pick_desc)
                 except:
