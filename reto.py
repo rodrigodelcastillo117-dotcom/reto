@@ -3121,6 +3121,9 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             try:
                                 a_score = int(away_score)
                                 h_score = int(home_score)
+                                # ✅ Para SOCCER, invertir scores (ESPN los devuelve al revés)
+                                if sport_ev.lower() == "soccer":
+                                    a_score, h_score = h_score, a_score
                                 score_display = f"<br><span style='font-size:.5rem;color:#FFD700;'>{a_score} - {h_score}</span>"
                             except:
                                 pass
