@@ -4747,12 +4747,20 @@ def tab_the_pit(apodo: str, bank: float):
         
         for j, (label, value) in enumerate(picks):
             with cols[j]:
-                if st.button(label, key=f"pit_pick_{i}_{j}", use_container_width=True):
+                # Deshabilitar botón si se está guardando un pick
+                is_saving = st.session_state.get("pit_saving", False)
+                disabled = is_saving
+                
+                if st.button(label, key=f"pit_pick_{i}_{j}", use_container_width=True, disabled=disabled):
+                    # MARCAR que se está guardando para evitar doble click
+                    st.session_state["pit_saving"] = True
+                    
                     # Validar que solo pueda registrar 1 pick por día
                     puede, mensaje = puede_registrar_pick_hoy(apodo, ronda_id)
                     
                     if not puede:
                         st.error(mensaje)
+                        st.session_state["pit_saving"] = False
                         st.stop()
                     
                     try:
@@ -4780,9 +4788,11 @@ def tab_the_pit(apodo: str, bank: float):
                         
                         st.success(f"✅ Pick guardado: {format_partido_para_display(f'{away}@{home}', sport)} - {value}")
                         time.sleep(1)
+                        st.session_state["pit_saving"] = False
                         st.rerun()
                     except Exception as e:
                         st.error(f"❌ Error: {str(e)[:150]}")  # Mostrar más detalles del error
+                        st.session_state["pit_saving"] = False
     
     st.write("")
     
