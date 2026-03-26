@@ -4229,6 +4229,24 @@ def tab_the_pit(apodo: str, bank: float):
         else:
             st.info("📭 No hay picks de hoy. Hace un pick primero para testear.")
     
+    # ═══════════════════════════════════════════════════════════════
+    #  EFFECTS SIMULATOR (Previewear WASTED y CONFETTI)
+    # ═══════════════════════════════════════════════════════════════
+    with st.expander("🎬 PREVIEW: Efectos Visuales (WASTED/CONFETTI)"):
+        st.info("Aquí puedes previewear cómo se ven los efectos cuando ganas o pierdes")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            if st.button("💀 Ver WASTED (Pierdes)", use_container_width=True, key="preview_wasted"):
+                st.markdown('<div class="wasted-overlay">W A S T E D</div>', unsafe_allow_html=True)
+                st.caption("👆 Este overlay aparece cuando pierdes un pick")
+        
+        with col2:
+            if st.button("🎉 Ver CONFETTI (Ganas)", use_container_width=True, key="preview_confetti"):
+                st.balloons()
+                st.success("🎊 ¡GANASTE! Aparece confetti y success message")
+    
     # Si no tiene vidas, game over
     if my_vidas <= 0:
         st.error(f"💀 ELIMINADO - GAME OVER")
