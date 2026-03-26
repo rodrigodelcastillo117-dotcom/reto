@@ -4166,9 +4166,17 @@ def tab_the_pit(apodo: str, bank: float):
     </div>
     """, unsafe_allow_html=True)
     
-    # Obtener 1 de cada deporte: Soccer, Basketball, Hockey, Football
+    # Obtener 1 de cada deporte: Soccer, Basketball, Hockey, Baseball
     daily_games = []
-    sports_to_fetch = ["soccer", "basketball", "hockey", "football"]
+    # Map actual sport groups from load_all_today()
+    sports_map = {
+        "⚽ Fútbol — Clubes": "soccer",
+        "🌍 Fútbol — Selecciones": "selecciones",
+        "🏀 Basketball": "basketball",
+        "⚾ Baseball": "baseball",
+        "🏒 Hockey": "hockey",
+    }
+    sports_to_fetch = ["soccer", "basketball", "hockey", "baseball"]
     sports_found = set()
     debug_info = []
     
@@ -4181,9 +4189,14 @@ def tab_the_pit(apodo: str, bank: float):
         for sport_group, leagues_dict in all_today.items():
             debug_info.append(f"Processing {sport_group}: {len(leagues_dict)} leagues")
             
-            if sport_group not in sports_to_fetch:
+            # Map the sport group name
+            mapped_sport = sports_map.get(sport_group, sport_group.lower())
+            
+            if mapped_sport not in sports_to_fetch:
+                debug_info.append(f"  Skipping (not in sports_to_fetch)")
                 continue
-            if sport_group in sports_found:
+            if mapped_sport in sports_found:
+                debug_info.append(f"  Skipping (already have {mapped_sport})")
                 continue
             
             # Get first event from first league in this sport
@@ -4197,12 +4210,12 @@ def tab_the_pit(apodo: str, bank: float):
                         "away": event.get("away", "?"),
                         "home": event.get("home", "?"),
                         "liga": event.get("liga", liga_name),
-                        "sport": sport_group,
+                        "sport": mapped_sport,
                         "date": event.get("date", "")
                     }
                     daily_games.append(game_obj)
-                    sports_found.add(sport_group)
-                    debug_info.append(f"  ✅ Added: {game_obj['home']} vs {game_obj['away']}")
+                    sports_found.add(mapped_sport)
+                    debug_info.append(f"  ✅ Added ({mapped_sport}): {game_obj['home']} vs {game_obj['away']}")
                     break  # Got one from this sport, move to next sport
     except Exception as e:
         debug_info.append(f"ERROR: {str(e)}")
@@ -4213,7 +4226,7 @@ def tab_the_pit(apodo: str, bank: float):
         for info in debug_info:
             st.caption(info)
     
-    # Reorder to ensure: Soccer, Basketball, Hockey, Football
+    # Reorder to ensure: Soccer, Basketball, Hockey, Baseball
     ordered_games = []
     for sport in sports_to_fetch:
         game = next((g for g in daily_games if g["sport"] == sport), None)
@@ -4228,7 +4241,7 @@ def tab_the_pit(apodo: str, bank: float):
             "soccer": 2.5,
             "basketball": 228.5,
             "hockey": 5.5,
-            "football": 49.5,
+            "baseball": 7.5,  # Changed from football to baseball
             "mlb": 7.5,  # Also support old format
             "nba": 228.5,
             "nhl": 5.5,
