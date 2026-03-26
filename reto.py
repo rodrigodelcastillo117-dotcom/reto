@@ -4290,49 +4290,40 @@ def tab_the_pit(apodo: str, bank: float):
             for j, (label, value) in enumerate(picks):
                 with cols[j]:
                     if st.button(label, key=f"pick_{i}_{j}", use_container_width=True):
-                        # Guardar pick en Google Sheets
+                        # Guardar pick en Google Sheets (OPTIMIZADO)
                         try:
                             ws_picks = ensure_tab(get_ss(), "pit_picks", PIT_PICKS_HEADERS)
                             records = _safe_get_records(ws_picks)
                             
-                            # Buscar si ya existe pick hoy
-                            existing = None
+                            # Buscar si ya existe pick hoy (SIN get_all_values)
                             existing_row = None
-                            all_values = ws_picks.get_all_values()
-                            
-                            for row_idx, record in enumerate(records, start=2):  # start=2 porque fila 1 es header
+                            for idx, record in enumerate(records):
                                 if (record.get("apodo","").lower() == apodo.lower() 
                                     and str(record.get("fecha","")) == str(date.today())):
-                                    existing = record
-                                    existing_row = row_idx
+                                    existing_row = idx + 2  # +2: fila 1 es header, idx comienza en 0
                                     break
                             
-                            if existing and existing_row:
-                                # Actualizar fila existente
-                                ws_picks.update_cell(existing_row, ws_picks.find("pick_desc").col, value)
-                                ws_picks.update_cell(existing_row, ws_picks.find("event_id").col, game_id)
+                            if existing_row:
+                                # Actualizar fila existente - BATCH UPDATE
+                                updates = [
+                                    {"range": f"H{existing_row}", "values": [[value]]},  # pick_desc
+                                    {"range": f"G{existing_row}", "values": [[game_id]]},  # event_id
+                                ]
+                                get_ss().batch_update({"data": updates})
                             else:
-                                # Nuevo pick
+                                # Nuevo pick - append_row
                                 new_row = [
-                                    ronda_id, 
-                                    "",  # dia
-                                    str(date.today()), 
-                                    apodo, 
-                                    f"{away} vs {home}",  # partido
-                                    sport_label,  # liga
-                                    game_id,  # event_id
-                                    value,  # pick_desc
-                                    "1.0",  # momio
-                                    "pendiente",  # resultado
-                                    ""  # comodin_usado
+                                    ronda_id, "", str(date.today()), apodo, 
+                                    f"{away} vs {home}", sport_label, game_id, 
+                                    value, "1.0", "pendiente", ""
                                 ]
                                 ws_picks.append_row(new_row)
                             
-                            st.success(f"✅ Pick: {value}")
+                            st.success(f"✅ Pick guardado: {value}")
                             st.session_state.pop("pit_picks", None)
                             st.rerun()
                         except Exception as e:
-                            st.error(f"Error: {str(e)}")
+                            st.error(f"❌ Error guardando: {str(e)[:100]}")
                         except Exception as e:
                             st.error(f"Error: {e}")
 
