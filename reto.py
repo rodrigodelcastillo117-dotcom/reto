@@ -3152,7 +3152,7 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:8px;{glow};'
                             f'cursor:pointer;transition:all 0.2s;'
                             f'hover:opacity:0.9;'
-                            f'" onclick="document.querySelector(\'[key=\\\"open_{ev_id[:10]}\\\"]\').click()">'
+                            f'" onclick="window.location.hash=\'click_{ev_id[:10]}\';window.location.reload()">'
                             f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">'
                             f'{logo_left}'
                             f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
@@ -3173,21 +3173,19 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             unsafe_allow_html=True
                         )
                         
-                        # Botón INVISIBLE Y OCULTO que controla la lógica
-                        if st.button("", key=f"open_{ev_id[:10]}", 
-                                     help="Click en la tarjeta para abrir opciones de apuesta"):
+                        # ✅ Cambiar estado sin mostrar botón
+                        menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
+                        if st.session_state.get(f"click_trigger_{ev_id[:10]}", False):
                             st.session_state[f"open_pick_{ev_id[:10]}"] = not menu_open
+                            st.session_state[f"click_trigger_{ev_id[:10]}"] = False
                             st.rerun()
                         
-                        # CSS para ocultar el botón
-                        st.markdown(
-                            f'<style>'
-                            f'button[key="open_{ev_id[:10]}"] {{'
-                            f'  display: none !important;'
-                            f'}}'
-                            f'</style>',
-                            unsafe_allow_html=True
-                        )
+                        # ✅ Cambiar estado sin mostrar botón
+                        menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
+                        if st.session_state.get(f"click_trigger_{ev_id[:10]}", False):
+                            st.session_state[f"open_pick_{ev_id[:10]}"] = not menu_open
+                            st.session_state[f"click_trigger_{ev_id[:10]}"] = False
+                            st.rerun()
 
                 # Pick panels — full width below each row
                 for ci in range(min(cols_per_row, len(row_evs))):
