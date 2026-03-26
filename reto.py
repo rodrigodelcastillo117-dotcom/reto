@@ -3502,23 +3502,27 @@ def tab_historial(apodo: str, df: pd.DataFrame):
                     pending = [r for r in records if str(r.get("resultado", "")).strip().lower() == "pendiente"]
                     
                     if pending:
-                        st.write(f"**📝 Encontrados {len(pending)} picks pendientes en {ws.title}:**")
+                        st.write(f"**📝 Encontrados {len(pending)} picks pendientes:**")
+                        st.divider()
+                        
                         for idx, pick in enumerate(pending):
-                            col1, col2, col3, col4, col5 = st.columns([2, 2, 1, 1, 1])
+                            st.write(f"**{idx+1}. {pick.get('partido', '?')}**")
+                            col1, col2, col3 = st.columns(3)
+                            
                             with col1:
-                                st.caption(f"**{pick.get('partido', '?')}**")
+                                st.caption(f"🏀 {pick.get('deporte', '?')} - {pick.get('pick_desc', '?')}")
+                            
                             with col2:
-                                st.caption(f"{pick.get('deporte', '?')} - {pick.get('pick_desc', '?')}")
-                            with col3:
-                                st.caption(f"{pick.get('fecha', '?')}")
-                            with col4:
                                 if st.button("🧪 TEST", key=f"hist_check_{idx}", use_container_width=True):
                                     st.session_state[f"test_{idx}"] = True
-                            with col5:
+                                    st.rerun()
+                            
+                            with col3:
                                 if st.button("✅ GRADE", key=f"hist_grade_{idx}", use_container_width=True):
                                     st.session_state[f"grade_{idx}"] = True
-                        
-                        st.divider()
+                                    st.rerun()
+                            
+                            st.divider()
                         
                         # Procesar TEST
                         for idx, pick in enumerate(pending):
