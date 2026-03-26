@@ -1851,7 +1851,7 @@ def _calificar_pick_robusto(sheet, row_idx: int, pick_row: dict):
         
         resultado = None
         
-        # ─── ESTRATEGIA 1: Buscar por EVENT_ID (PRIMERO) ───
+        # ─── ESTRATEGIA 1: Buscar por EVENT_ID (SI EXISTE) ───
         if event_id:
             espn_data = _find_resultado_por_event_id(event_id, deporte)
             if espn_data.get("found"):
@@ -1864,7 +1864,27 @@ def _calificar_pick_robusto(sheet, row_idx: int, pick_row: dict):
                     
                     resultado = _calificar_resultado(away_team, home_team, away_score, home_score, pick_desc)
         
-        # ─── ESTRATEGIA 2: Buscar por NOMBRE (FALLBACK) ───
+        # ─── ESTRATEGIA 2: Si NO hay event_id, BUSCARLO por NOMBRE ───
+        if not resultado and not event_id:
+            # Buscar event_id automáticamente por nombre del partido
+            found_event_id = _buscar_event_id_por_partido(partido, deporte)
+            if found_event_id:
+                # ✅ GUARDAR event_id encontrado en Google Sheets
+                try:
+                    _actualizar_event_id_en_sheets(sheet, row_idx, found_event_id)
+                except:
+                    pass
+                
+                espn_data = _find_resultado_por_event_id(found_event_id, deporte)
+                if espn_data.get("found") and espn_data.get("completed"):
+                    away_team = espn_data.get("away_team", "")
+                    home_team = espn_data.get("home_team", "")
+                    away_score = espn_data.get("away_score", -1)
+                    home_score = espn_data.get("home_score", -1)
+                    
+                    resultado = _calificar_resultado(away_team, home_team, away_score, home_score, pick_desc)
+        
+        # ─── ESTRATEGIA 3: Buscar por NOMBRE (ÚLTIMO FALLBACK) ───
         if not resultado:
             resultado = _find_resultado_robusto(partido, deporte, pick_desc)
         
@@ -1884,6 +1904,73 @@ def _auto_qualify_pit_robust(sheet, row_idx: int, pick_row: dict):
     (Deprecated) Usar _calificar_pick_robusto en su lugar
     """
     _calificar_pick_robusto(sheet, row_idx, pick_row)
+
+
+def _actualizar_event_id_en_sheets(sheet, row_idx: int, event_id: str):
+    """
+    Actualiza el event_id en Google Sheets cuando se encuentra automáticamente
+    """
+    try:
+        if event_id and event_id.strip():
+            col_event_id = 5  # Columna event_id (5 en picks_*, 7 en pit_picks)
+            sheet.update_cell(row_idx, col_event_id, event_id)
+    except:
+        pass
+
+
+def _buscar_event_id_por_partido(partido: str, deporte: str = "soccer") -> str:
+    """
+    Busca el event_id en ESPN usando el nombre del partido
+    
+    Retorna el event_id si lo encuentra, sino retorna ""
+    """
+    import requests
+    
+    try:
+        def norm(s):
+            import unicodedata
+            s = unicodedata.normalize('NFD', s)
+            s = ''.join(char for char in s if unicodedata.category(char) != 'Mn')
+            return s.lower().replace(' ', '').replace('.', '')
+        
+        sports_map = {
+            "soccer": ["eng.1", "esp.1", "ita.1", "ger.1", "fra.1", "mex.1", "usa.1", "bra.1", "international-friendly"],
+            "basketball": ["nba"],
+            "hockey": ["nhl"],
+            "baseball": ["mlb"],
+        }
+        
+        deporte = deporte.lower().strip()
+        leagues = sports_map.get(deporte, [])
+        
+        partido_norm = norm(partido.replace("@", " vs "))
+        
+        for league in leagues:
+            try:
+                url = f"https://site.api.espn.com/apis/site/v2/sports/{deporte}/{league}/events"
+                r = requests.get(url, timeout=3)
+                
+                if r.status_code == 200:
+                    data = r.json()
+                    for evt in data.get("events", []):
+                        comp = evt.get("competitions", [{}])[0]
+                        competitors = comp.get("competitors", [])
+                        
+                        if len(competitors) >= 2:
+                            away = competitors[1].get("team", {}).get("name", "")
+                            home = competitors[0].get("team", {}).get("name", "")
+                            match_norm = norm(f"{away} vs {home}")
+                            
+                            if partido_norm == match_norm:
+                                # ¡ENCONTRADO! Retornar event_id
+                                return evt.get("id", "")
+            except:
+                continue
+        
+        return ""  # No encontrado
+        
+    except Exception as e:
+        return ""
 
 
 def _find_resultado_por_event_id(event_id: str, deporte: str = "soccer") -> dict:
@@ -5441,10 +5528,13 @@ def main():
                             with col4:
                                 if st.button("🧪", key=f"debug_pit_{idx}", use_container_width=True):
                                     event_id = pick.get('event_id', '')
+                                    partido = pick.get('partido', '')
+                                    deporte = pick.get('deporte', 'soccer')
+                                    pick_desc = pick.get('pick_desc', '').lower()
                                     
                                     # Intentar por EVENT_ID primero
                                     if event_id:
-                                        espn_data = _find_resultado_por_event_id(event_id, pick.get('deporte', 'soccer'))
+                                        espn_data = _find_resultado_por_event_id(event_id, deporte)
                                         if espn_data.get('found'):
                                             if espn_data.get('completed'):
                                                 st.success(f"✅ Resultado encontrado por EVENT_ID: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
@@ -5452,8 +5542,23 @@ def main():
                                                 st.info(f"⏳ Partido EN CURSO - Status: {espn_data.get('status', '?')}")
                                             return
                                     
+                                    # Si NO hay event_id, BUSCARLO por NOMBRE
+                                    if not event_id:
+                                        st.info("🔍 Buscando event_id por nombre del partido...")
+                                        found_event_id = _buscar_event_id_por_partido(partido, deporte)
+                                        if found_event_id:
+                                            st.success(f"✅ Event_id encontrado: {found_event_id}")
+                                            espn_data = _find_resultado_por_event_id(found_event_id, deporte)
+                                            if espn_data.get('found') and espn_data.get('completed'):
+                                                st.success(f"✅ Resultado: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
+                                                return
+                                            elif espn_data.get('found'):
+                                                st.info(f"⏳ Partido EN CURSO")
+                                                return
+                                    
                                     # Fallback: buscar por NOMBRE
-                                    resultado = _find_resultado_robusto(pick.get('partido', ''), pick.get('deporte', 'soccer'), pick.get('pick_desc', '').lower())
+                                    st.info("🔍 Buscando por nombre del partido...")
+                                    resultado = _find_resultado_robusto(partido, deporte, pick_desc)
                                     if resultado:
                                         st.success(f"✅ Se puede calificar como: **{resultado.upper()}**")
                                     else:
@@ -5499,10 +5604,13 @@ def main():
                                         with col4:
                                             if st.button("🧪", key=f"debug_reg_{sheet.title}_{idx}", use_container_width=True):
                                                 event_id = pick.get('event_id', '')
+                                                partido = pick.get('partido', '')
+                                                deporte = pick.get('deporte', 'soccer')
+                                                pick_desc = pick.get('pick_desc', '').lower()
                                                 
                                                 # Intentar por EVENT_ID primero
                                                 if event_id:
-                                                    espn_data = _find_resultado_por_event_id(event_id, pick.get('deporte', 'soccer'))
+                                                    espn_data = _find_resultado_por_event_id(event_id, deporte)
                                                     if espn_data.get('found'):
                                                         if espn_data.get('completed'):
                                                             st.success(f"✅ Resultado encontrado por EVENT_ID: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
@@ -5510,8 +5618,23 @@ def main():
                                                             st.info(f"⏳ Partido EN CURSO - Status: {espn_data.get('status', '?')}")
                                                         return
                                                 
+                                                # Si NO hay event_id, BUSCARLO por NOMBRE
+                                                if not event_id:
+                                                    st.info("🔍 Buscando event_id por nombre del partido...")
+                                                    found_event_id = _buscar_event_id_por_partido(partido, deporte)
+                                                    if found_event_id:
+                                                        st.success(f"✅ Event_id encontrado: {found_event_id}")
+                                                        espn_data = _find_resultado_por_event_id(found_event_id, deporte)
+                                                        if espn_data.get('found') and espn_data.get('completed'):
+                                                            st.success(f"✅ Resultado: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
+                                                            return
+                                                        elif espn_data.get('found'):
+                                                            st.info(f"⏳ Partido EN CURSO")
+                                                            return
+                                                
                                                 # Fallback: buscar por NOMBRE
-                                                resultado = _find_resultado_robusto(pick.get('partido', ''), pick.get('deporte', 'soccer'), pick.get('pick_desc', '').lower())
+                                                st.info("🔍 Buscando por nombre del partido...")
+                                                resultado = _find_resultado_robusto(partido, deporte, pick_desc)
                                                 if resultado:
                                                     st.success(f"✅ Se puede calificar como: **{resultado.upper()}**")
                                                 else:
