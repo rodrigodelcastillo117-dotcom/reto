@@ -3515,105 +3515,108 @@ def tab_historial(apodo: str, df: pd.DataFrame):
                             with col2:
                                 if st.button("🧪 TEST", key=f"hist_check_{idx}", use_container_width=True):
                                     st.session_state[f"test_{idx}"] = True
-                                    st.rerun()
                             
                             with col3:
                                 if st.button("✅ GRADE", key=f"hist_grade_{idx}", use_container_width=True):
                                     st.session_state[f"grade_{idx}"] = True
-                                    st.rerun()
+                            
+                            # Mostrar resultado de TEST si está activo
+                            if st.session_state.get(f"test_{idx}"):
+                                with st.container(border=True):
+                                    st.write(f"**🧪 TEST: {pick.get('partido')}**")
+                                    
+                                    event_id = str(pick.get('event_id', '')).strip()
+                                    partido = str(pick.get('partido', '')).strip()
+                                    deporte = str(pick.get('deporte', 'soccer')).strip()
+                                    pick_desc = str(pick.get('pick_desc', '')).lower().strip()
+                                    
+                                    encontrado = False
+                                    
+                                    # Búsqueda 1: Event ID
+                                    if event_id and event_id != "":
+                                        st.caption(f"🔍 Buscando por EVENT_ID: {event_id}")
+                                        espn_data = _find_resultado_por_event_id(event_id, deporte)
+                                        if espn_data.get('debug'):
+                                            st.caption(espn_data.get('debug'))
+                                        
+                                        if espn_data.get('found') and espn_data.get('completed'):
+                                            st.success(f"✅ {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
+                                            encontrado = True
+                                    
+                                    # Búsqueda 2: Por nombre
+                                    if not encontrado:
+                                        st.caption(f"🔍 Buscando por NOMBRE: {partido}")
+                                        found_event_id = _buscar_event_id_por_partido(partido, deporte)
+                                        if found_event_id:
+                                            st.caption(f"✅ Event ID encontrado: {found_event_id}")
+                                            espn_data = _find_resultado_por_event_id(found_event_id, deporte)
+                                            if espn_data.get('debug'):
+                                                st.caption(espn_data.get('debug'))
+                                            if espn_data.get('found') and espn_data.get('completed'):
+                                                st.success(f"✅ {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
+                                                encontrado = True
+                                    
+                                    if not encontrado:
+                                        st.warning("❌ No se encontró resultado en ESPN")
+                                    
+                                    if st.button("✖️ Cerrar TEST", key=f"close_test_{idx}"):
+                                        st.session_state[f"test_{idx}"] = False
                             
                             st.divider()
-                        
-                        # Procesar TEST
-                        for idx, pick in enumerate(pending):
-                            if st.session_state.get(f"test_{idx}"):
-                                st.write(f"**🧪 TEST: {pick.get('partido')}**")
-                                
-                                event_id = str(pick.get('event_id', '')).strip()  # ← CONVERTIR A STRING
-                                partido = str(pick.get('partido', '')).strip()
-                                deporte = str(pick.get('deporte', 'soccer')).strip()
-                                pick_desc = str(pick.get('pick_desc', '')).lower().strip()
-                                
-                                # Búsqueda 1: Event ID
-                                if event_id and event_id != "":
-                                    st.info(f"🔍 Buscando por EVENT_ID: {event_id}")
-                                    espn_data = _find_resultado_por_event_id(event_id, deporte)
-                                    if espn_data.get('debug'):
-                                        st.caption(espn_data.get('debug'))
-                                    
-                                    if espn_data.get('found') and espn_data.get('completed'):
-                                        st.success(f"✅ {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
-                                        st.session_state[f"test_{idx}"] = False
-                                        continue
-                                
-                                # Búsqueda 2: Por nombre
-                                st.info(f"🔍 Buscando por NOMBRE: {partido}")
-                                found_event_id = _buscar_event_id_por_partido(partido, deporte)
-                                if found_event_id:
-                                    st.caption(f"✅ Event ID encontrado: {found_event_id}")
-                                    espn_data = _find_resultado_por_event_id(found_event_id, deporte)
-                                    if espn_data.get('debug'):
-                                        st.caption(espn_data.get('debug'))
-                                    if espn_data.get('found') and espn_data.get('completed'):
-                                        st.success(f"✅ {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
-                                        st.session_state[f"test_{idx}"] = False
-                                        continue
-                                
-                                st.warning("❌ No se encontró resultado en ESPN")
-                                st.session_state[f"test_{idx}"] = False
-                        
-                        # Procesar GRADE
-                        for idx, pick in enumerate(pending):
+                            
+                            # Mostrar resultado de GRADE si está activo
                             if st.session_state.get(f"grade_{idx}"):
-                                st.write(f"**⏳ CALIFICANDO: {pick.get('partido')}**")
-                                
-                                event_id = str(pick.get('event_id', '')).strip()  # ← CONVERTIR A STRING
-                                partido = str(pick.get('partido', '')).strip()
-                                deporte = str(pick.get('deporte', 'soccer')).strip()
-                                pick_desc = str(pick.get('pick_desc', '')).lower().strip()
-                                
-                                resultado = None
-                                
-                                # Intento 1: Event ID
-                                if event_id:
-                                    espn_data = _find_resultado_por_event_id(event_id, deporte)
-                                    if espn_data.get('found') and espn_data.get('completed'):
-                                        away_team = espn_data.get('away_team', '')
-                                        home_team = espn_data.get('home_team', '')
-                                        away_score = espn_data.get('away_score', -1)
-                                        home_score = espn_data.get('home_score', -1)
-                                        resultado = _calificar_resultado(away_team, home_team, away_score, home_score, pick_desc)
-                                
-                                # Intento 2: Por nombre
-                                if not resultado:
-                                    found_event_id = _buscar_event_id_por_partido(partido, deporte)
-                                    if found_event_id:
-                                        espn_data = _find_resultado_por_event_id(found_event_id, deporte)
+                                with st.container(border=True):
+                                    st.write(f"**⏳ CALIFICANDO: {pick.get('partido')}**")
+                                    
+                                    event_id = str(pick.get('event_id', '')).strip()
+                                    partido = str(pick.get('partido', '')).strip()
+                                    deporte = str(pick.get('deporte', 'soccer')).strip()
+                                    pick_desc = str(pick.get('pick_desc', '')).lower().strip()
+                                    
+                                    resultado = None
+                                    
+                                    # Intento 1: Event ID
+                                    if event_id and event_id != "":
+                                        espn_data = _find_resultado_por_event_id(event_id, deporte)
                                         if espn_data.get('found') and espn_data.get('completed'):
                                             away_team = espn_data.get('away_team', '')
                                             home_team = espn_data.get('home_team', '')
                                             away_score = espn_data.get('away_score', -1)
                                             home_score = espn_data.get('home_score', -1)
                                             resultado = _calificar_resultado(away_team, home_team, away_score, home_score, pick_desc)
-                                
-                                # Intento 3: Fallback
-                                if not resultado:
-                                    resultado = _find_resultado_robusto(partido, deporte, pick_desc)
-                                
-                                if resultado:
-                                    try:
-                                        ws.update_cell(idx + 2, 10, resultado)
-                                        st.success(f"✅ Calificado como: {resultado.upper()}")
-                                        st.session_state.pop("df_picks", None)
+                                    
+                                    # Intento 2: Por nombre
+                                    if not resultado:
+                                        found_event_id = _buscar_event_id_por_partido(partido, deporte)
+                                        if found_event_id:
+                                            espn_data = _find_resultado_por_event_id(found_event_id, deporte)
+                                            if espn_data.get('found') and espn_data.get('completed'):
+                                                away_team = espn_data.get('away_team', '')
+                                                home_team = espn_data.get('home_team', '')
+                                                away_score = espn_data.get('away_score', -1)
+                                                home_score = espn_data.get('home_score', -1)
+                                                resultado = _calificar_resultado(away_team, home_team, away_score, home_score, pick_desc)
+                                    
+                                    # Intento 3: Fallback
+                                    if not resultado:
+                                        resultado = _find_resultado_robusto(partido, deporte, pick_desc)
+                                    
+                                    if resultado:
+                                        try:
+                                            ws.update_cell(idx + 2, 10, resultado)
+                                            st.success(f"✅ Calificado como: {resultado.upper()}")
+                                            st.session_state.pop("df_picks", None)
+                                            st.session_state[f"grade_{idx}"] = False
+                                        except Exception as e:
+                                            st.error(f"Error actualizando: {str(e)[:50]}")
+                                            st.session_state[f"grade_{idx}"] = False
+                                    else:
+                                        st.error("❌ No se encontró resultado")
                                         st.session_state[f"grade_{idx}"] = False
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Error actualizando: {str(e)[:50]}")
+                                    
+                                    if st.button("✖️ Cerrar GRADE", key=f"close_grade_{idx}"):
                                         st.session_state[f"grade_{idx}"] = False
-                                else:
-                                    st.error("❌ No se encontró resultado")
-                                    st.session_state[f"grade_{idx}"] = False
-                                    event_id = pick.get('event_id', '')
                                     partido = pick.get('partido', '')
                                     deporte = pick.get('deporte', 'soccer')
                                     pick_desc = pick.get('pick_desc', '').lower()
