@@ -1771,58 +1771,179 @@ def puede_registrar_pick_hoy(apodo: str, ronda_id: str) -> tuple[bool, str]:
 @st.cache_resource(ttl=300)  # Ejecutar cada 5 minutos
 def auto_grade_all_picks_master():
     """
-    ✅ CALIFICACIÓN MAESTRA: 100% automática, 0% fallos
+    ✅ CALIFICACIÓN MAESTRA GLOBAL - FUNCIONA PARA TODOS LOS USUARIOS
+    
     - Corre cada 5 minutos automáticamente
-    - Búsqueda multicapa: NOMBRE → ID → Fallback
-    - Califica REGISTRAR + THE PIT
-    - Maneja errores silenciosamente
-    - GARANTIZADO que funciona
+    - Busca TODOS los picks pendientes (de TODOS los usuarios)
+    - Usa event_id como identificador principal
+    - Califica automáticamente cuando partido termina
+    - Maneja REGISTRAR + THE PIT
     """
     try:
         ss = get_ss()
         if not ss:
             return
         
-        # ─── THE PIT: Calificar picks (más importante) ───
+        # ═══════════════════════════════════════════════════════════════
+        # PARTE 1: Calificar picks de REGISTRAR (todas las hojas)
+        # ═══════════════════════════════════════════════════════════════
         try:
-            ws_pit = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
-            records = _safe_get_records(ws_pit)
-            for idx, row in enumerate(records):
-                if row.get("resultado", "").strip().lower() == "pendiente":
-                    _auto_qualify_pit_robust(ws_pit, idx + 2, row)
+            for sheet in ss.worksheets():
+                # Saltar hojas que no son picks de usuarios
+                if sheet.title in ["pit_picks", "pit_jugadores", "pit_rondas", "usuarios"]:
+                    continue
+                
+                try:
+                    records = _safe_get_records(sheet)
+                    
+                    for idx, row in enumerate(records):
+                        resultado = row.get("resultado", "").strip().lower()
+                        
+                        # Solo procesar picks PENDIENTES
+                        if resultado == "pendiente":
+                            _calificar_pick_robusto(sheet, idx + 2, row)
+                except:
+                    pass
         except:
             pass
+        
+        # ═══════════════════════════════════════════════════════════════
+        # PARTE 2: Calificar picks de THE PIT
+        # ═══════════════════════════════════════════════════════════════
+        try:
+            ws_pit = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
+            pit_records = _safe_get_records(ws_pit)
             
+            for idx, row in enumerate(pit_records):
+                resultado = row.get("resultado", "").strip().lower()
+                
+                # Solo procesar picks PENDIENTES
+                if resultado == "pendiente":
+                    _calificar_pick_robusto(ws_pit, idx + 2, row)
+        except:
+            pass
+        
     except Exception as e:
-        # Silenciar errores - la función no debe fallar nunca
-        pass
+        pass  # Silenciar errores - función no debe fallar nunca
 
 
-
-def _auto_qualify_pit_robust(sheet, row_idx: int, pick_row: dict):
+def _calificar_pick_robusto(sheet, row_idx: int, pick_row: dict):
     """
-    Califica UN pick de THE PIT con máxima robustez
+    Califica UN pick con máxima robustez
+    
+    Estrategia:
+    1. Intentar por EVENT_ID (más preciso y rápido)
+    2. Si falla, buscar por NOMBRE del partido
+    3. Si falla, no hace nada (esperar a siguiente ciclo)
     """
     try:
         partido = pick_row.get("partido", "").strip()
         deporte = pick_row.get("deporte", "soccer").strip().lower()
         pick_desc = pick_row.get("pick_desc", "").strip().lower()
+        event_id = pick_row.get("event_id", "").strip()
         
         if not partido or not pick_desc:
             return
         
-        # Buscar resultado en ESPN
-        resultado = _find_resultado_robusto(partido, deporte, pick_desc)
+        resultado = None
         
+        # ─── ESTRATEGIA 1: Buscar por EVENT_ID (PRIMERO) ───
+        if event_id:
+            espn_data = _find_resultado_por_event_id(event_id, deporte)
+            if espn_data.get("found"):
+                # ¡ENCONTRADO POR EVENT_ID!
+                if espn_data.get("completed"):
+                    away_team = espn_data.get("away_team", "")
+                    home_team = espn_data.get("home_team", "")
+                    away_score = espn_data.get("away_score", -1)
+                    home_score = espn_data.get("home_score", -1)
+                    
+                    resultado = _calificar_resultado(away_team, home_team, away_score, home_score, pick_desc)
+        
+        # ─── ESTRATEGIA 2: Buscar por NOMBRE (FALLBACK) ───
+        if not resultado:
+            resultado = _find_resultado_robusto(partido, deporte, pick_desc)
+        
+        # ─── ACTUALIZAR en Google Sheets ───
         if resultado:  # "ganado" o "perdido"
-            # Actualizar Google Sheets
             try:
-                col_resultado = 10  # resultado column
+                col_resultado = 10  # Columna de resultado
                 sheet.update_cell(row_idx, col_resultado, resultado)
             except:
                 pass
     except:
         pass
+
+
+def _auto_qualify_pit_robust(sheet, row_idx: int, pick_row: dict):
+    """
+    (Deprecated) Usar _calificar_pick_robusto en su lugar
+    """
+    _calificar_pick_robusto(sheet, row_idx, pick_row)
+
+
+def _find_resultado_por_event_id(event_id: str, deporte: str = "soccer") -> dict:
+    """
+    Busca resultado en ESPN usando event_id directamente (MÁS RÁPIDO Y PRECISO)
+    
+    Retorna dict con:
+    - found: bool
+    - away_team: str
+    - home_team: str
+    - away_score: int
+    - home_score: int
+    - status: str (completado, en vivo, etc)
+    """
+    import requests
+    
+    try:
+        if not event_id or event_id.strip() == "":
+            return {"found": False}
+        
+        sports_map = {
+            "soccer": ["eng.1", "esp.1", "ita.1", "ger.1", "fra.1", "mex.1", "usa.1", "bra.1", "international-friendly"],
+            "basketball": ["nba"],
+            "hockey": ["nhl"],
+            "baseball": ["mlb"],
+        }
+        
+        deporte = deporte.lower().strip()
+        leagues = sports_map.get(deporte, ["eng.1"])
+        
+        # Intentar cada liga
+        for league in leagues:
+            try:
+                url = f"https://site.api.espn.com/apis/site/v2/sports/{deporte}/{league}/events/{event_id}"
+                r = requests.get(url, timeout=5)
+                
+                if r.status_code == 200:
+                    evt = r.json()
+                    comp = evt.get("competitions", [{}])[0]
+                    competitors = comp.get("competitors", [])
+                    status = comp.get("status", {}).get("type", "")
+                    
+                    if len(competitors) >= 2:
+                        away_team = competitors[1].get("team", {}).get("name", "")
+                        home_team = competitors[0].get("team", {}).get("name", "")
+                        away_score = int(competitors[1].get("score", -1))
+                        home_score = int(competitors[0].get("score", -1))
+                        
+                        return {
+                            "found": True,
+                            "away_team": away_team,
+                            "home_team": home_team,
+                            "away_score": away_score,
+                            "home_score": home_score,
+                            "status": status,
+                            "completed": status == "STATUS_FINAL"
+                        }
+            except:
+                continue
+        
+        return {"found": False}
+        
+    except Exception as e:
+        return {"found": False}
 
 
 def _find_resultado_robusto(partido: str, deporte: str, pick_desc: str) -> str:
@@ -5315,6 +5436,19 @@ def main():
                                 st.caption("⏳ **PENDIENTE**")
                             with col4:
                                 if st.button("🧪", key=f"debug_pit_{idx}", use_container_width=True):
+                                    event_id = pick.get('event_id', '')
+                                    
+                                    # Intentar por EVENT_ID primero
+                                    if event_id:
+                                        espn_data = _find_resultado_por_event_id(event_id, pick.get('deporte', 'soccer'))
+                                        if espn_data.get('found'):
+                                            if espn_data.get('completed'):
+                                                st.success(f"✅ Resultado encontrado por EVENT_ID: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
+                                            else:
+                                                st.info(f"⏳ Partido EN CURSO - Status: {espn_data.get('status', '?')}")
+                                            return
+                                    
+                                    # Fallback: buscar por NOMBRE
                                     resultado = _find_resultado_robusto(pick.get('partido', ''), pick.get('deporte', 'soccer'), pick.get('pick_desc', '').lower())
                                     if resultado:
                                         st.success(f"✅ Se puede calificar como: **{resultado.upper()}**")
@@ -5354,6 +5488,19 @@ def main():
                                         st.caption("⏳ **PENDIENTE**")
                                     with col4:
                                         if st.button("🧪", key=f"debug_reg_{sheet.title}_{idx}", use_container_width=True):
+                                            event_id = pick.get('event_id', '')
+                                            
+                                            # Intentar por EVENT_ID primero
+                                            if event_id:
+                                                espn_data = _find_resultado_por_event_id(event_id, pick.get('deporte', 'soccer'))
+                                                if espn_data.get('found'):
+                                                    if espn_data.get('completed'):
+                                                        st.success(f"✅ Resultado encontrado por EVENT_ID: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
+                                                    else:
+                                                        st.info(f"⏳ Partido EN CURSO - Status: {espn_data.get('status', '?')}")
+                                                    return
+                                            
+                                            # Fallback: buscar por NOMBRE
                                             resultado = _find_resultado_robusto(pick.get('partido', ''), pick.get('deporte', 'soccer'), pick.get('pick_desc', '').lower())
                                             if resultado:
                                                 st.success(f"✅ Se puede calificar como: **{resultado.upper()}**")
