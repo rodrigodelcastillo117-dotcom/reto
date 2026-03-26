@@ -1304,6 +1304,74 @@ def espn_search_events(sport: str, league: str, query: str) -> list:
 
 
 @st.cache_data(ttl=60, show_spinner=False)
+def load_all_today_events():
+    """
+    ✅ SOLUCIÓN B: Cargar TODOS los partidos de hoy desde ESPN
+    Returns dict: {sport: {league_slug: [events]}}
+    """
+    result = {}
+    
+    sports_map = {
+        "soccer": ["eng.1", "esp.1", "ita.1", "ger.1", "fra.1", "mex.1", "usa.1", "bra.1"],
+        "basketball": ["nba"],
+        "hockey": ["nhl"],
+        "baseball": ["mlb"],
+    }
+    
+    for sport, leagues in sports_map.items():
+        result[sport] = {}
+        for league_slug in leagues:
+            try:
+                url = f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{league_slug}/events"
+                resp = requests.get(url, timeout=5)
+                resp.raise_for_status()
+                
+                data = resp.json()
+                events = data.get("events", [])
+                
+                league_events = []
+                for evt in events:
+                    comp = evt.get("competitions", [{}])[0]
+                    competitors = comp.get("competitors", [])
+                    
+                    if len(competitors) >= 2:
+                        away_team = competitors[1].get("team", {}).get("name", "?")
+                        home_team = competitors[0].get("team", {}).get("name", "?")
+                        away_score = int(competitors[1].get("score", -1)) if competitors[1].get("score") is not None else -1
+                        home_score = int(competitors[0].get("score", -1)) if competitors[0].get("score") is not None else -1
+                        
+                        event_obj = {
+                            "id": evt.get("id", ""),
+                            "away": away_team,
+                            "home": home_team,
+                            "away_score": away_score,
+                            "home_score": home_score,
+                            "status": comp.get("status", {}).get("type", ""),
+                        }
+                        league_events.append(event_obj)
+                
+                result[sport][league_slug] = league_events
+            except Exception as e:
+                result[sport][league_slug] = []
+    
+    return result
+
+
+def find_match_by_name(partition_name: str, all_today: dict) -> tuple:
+    """
+    Buscar un partido por nombre exacto: "Away vs Home"
+    Returns: (found, home_score, away_score) or (False, -1, -1)
+    """
+    for sport_key, leagues_dict in all_today.items():
+        for league_slug, events_list in leagues_dict.items():
+            for event in events_list:
+                event_name = f"{event.get('away', '?')} vs {event.get('home', '?')}"
+                if event_name == partition_name:
+                    return (True, event.get("home_score", -1), event.get("away_score", -1))
+    
+    return (False, -1, -1)
+
+
 def espn_get_event(sport: str, league: str, event_id: str) -> dict:
     """Fetch single event details — used for auto-grading."""
     try:
@@ -1610,9 +1678,7 @@ def upsert_user(apodo: str, bankroll: float, wins: int, losses: int):
 # ─────────────────────────────────────────────────────────────
 def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.DataFrame, int, float]:
     """
-    Check all pending picks against ESPN.
-    Also re-grades picks wrongly marked as 'nulo' (in case of name match failure).
-    Returns updated df, count graded, new bank.
+    ✅ SOLUCIÓN B: Auto-calificar picks pendientes usando match por nombre
     """
     pending = df[df["resultado"].isin(["pendiente", "nulo"])].copy()
     if pending.empty:
@@ -1621,120 +1687,78 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
     graded = 0
     current_bank = bank
 
-    # Sport→slugs fallback — always try the stored deporte first, then all others
-    SPORT_SLUGS = {
-        "soccer":     ["soccer", "eng.1"],
-        "basketball": ["basketball", "nba"],
-        "football":   ["football", "nfl"],
-        "baseball":   ["baseball", "mlb"],
-        "hockey":     ["hockey", "nhl"],
-    }
-    # All sport+league combos to try as last resort
-    ALL_SPORT_SLUGS = [
-        ("basketball", "nba"),
-        ("baseball",   "mlb"),
-        ("hockey",     "nhl"),
-        ("football",   "nfl"),
-        ("soccer",     "eng.1"),
-        ("soccer",     "esp.1"),
-        ("soccer",     "ita.1"),
-        ("soccer",     "ger.1"),
-        ("soccer",     "fra.1"),
-        ("soccer",     "mex.1"),
-        ("soccer",     "usa.1"),
-        ("soccer",     "uefa.champions"),
-        ("soccer",     "conmebol.libertadores"),
-        ("soccer",     "fifa.worldq.6"),
-        ("soccer",     "fifa.worldq.2"),
-        ("soccer",     "fifa.worldq.5"),
-        ("soccer",     "fifa.friendly"),
-        ("soccer",     "fifa.worldq.uefa"),
-    ]
-
-    for idx, row in pending.iterrows():
-        event_id = str(row.get("event_id", "")).strip()
-        if not event_id or event_id.startswith("odds_"):
-            continue
-
-        liga    = str(row.get("liga", ""))
-        deporte = str(row.get("deporte", "")).lower().strip()
-        pick_d  = str(row.get("pick_desc", ""))
-        mercado = str(row.get("mercado", ""))
-
-        event_data = None
-
-        # 1️⃣ Try liga name → ESPN_LEAGUES lookup
-        sport_info = ESPN_LEAGUES.get(liga)
-        if sport_info:
-            sport, league = sport_info
-            event_data = espn_get_event(sport, league, event_id)
-
-        # 2️⃣ Try stored deporte directly
-        if not event_data and deporte:
-            # Normalize deporte field (may have emojis or display names)
-            dep_map = {
-                "basketball": ("basketball", "nba"),
-                "baseball":   ("baseball",   "mlb"),
-                "hockey":     ("hockey",     "nhl"),
-                "football":   ("football",   "nfl"),
-                "soccer":     ("soccer",     "eng.1"),
-                "🏀":         ("basketball", "nba"),
-                "⚾":         ("baseball",   "mlb"),
-                "🏒":         ("hockey",     "nhl"),
-                "🏈":         ("football",   "nfl"),
-                "⚽":         ("soccer",     "eng.1"),
-                "nba":        ("basketball", "nba"),
-                "mlb":        ("baseball",   "mlb"),
-                "nhl":        ("hockey",     "nhl"),
-                "nfl":        ("football",   "nfl"),
-            }
-            for key, (sp, sl) in dep_map.items():
-                if key in deporte:
-                    event_data = espn_get_event(sp, sl, event_id)
-                    if event_data:
-                        break
-
-        # 3️⃣ Brute-force: try every sport+league combo
-        if not event_data:
-            for sp, sl in ALL_SPORT_SLUGS:
-                event_data = espn_get_event(sp, sl, event_id)
-                if event_data:
-                    break
-
-        if not event_data:
-            continue
-
-        # Check if completed
-        header = event_data.get("header", {})
-        comps  = header.get("competitions", [{}])
-        status = comps[0].get("status", {}).get("type", {}) if comps else {}
-        completed = status.get("completed", False)
-
-        if not completed:
-            continue
-
-        resultado = parse_result_from_event(event_data, pick_d, mercado)
-        if resultado is None:
-            continue
-
-        apuesta  = float(row.get("apuesta", 0))
-        momio    = float(row.get("momio", 1))
-        if resultado == "ganado":
-            ganancia = round(apuesta * (momio - 1), 2)
-        elif resultado == "perdido":
-            ganancia = -apuesta
-        else:
-            ganancia = 0.0
-
-        new_bank = round(current_bank + ganancia, 2)
-        update_pick_row(apodo, idx, resultado, ganancia, new_bank)
-        df.at[idx, "resultado"]     = resultado
-        df.at[idx, "ganancia_neta"] = ganancia
-        df.at[idx, "bankroll_post"] = new_bank
-        current_bank = new_bank
-        graded += 1
-
-    return df, graded, current_bank
+    try:
+        # Cargar TODOS los partidos de hoy (una sola vez)
+        all_today = load_all_today_events()
+        
+        for idx, row in pending.iterrows():
+            # Solo calificar pendientes
+            if str(row.get("resultado", "")).lower().strip() not in ["pendiente", "nulo", ""]:
+                continue
+            
+            # Obtener nombre del partido
+            partido = str(row.get("partido", ""))
+            
+            if " vs " not in partido:
+                continue  # No podemos procesar sin "vs"
+            
+            # Buscar en load_all_today_events()
+            found, home_score, away_score = find_match_by_name(partido, all_today)
+            
+            if not found or home_score == -1 or away_score == -1:
+                continue  # Partido no encontrado o sin scores aún
+            
+            # CALIFICAR
+            pick_desc = str(row.get("pick_desc", ""))
+            momio = float(row.get("momio", 1.0)) if row.get("momio") else 1.0
+            apuesta = float(row.get("apuesta", 0)) if row.get("apuesta") else 0
+            
+            # Determinar ganador
+            if home_score > away_score:
+                ganador = "Home"
+            elif away_score > home_score:
+                ganador = "Away"
+            else:
+                ganador = "Tie"
+            
+            # Evaluar pick
+            resultado = ""
+            ganancia_neta = 0
+            
+            if "Home" in pick_desc and ganador == "Home":
+                resultado = "ganado"
+                ganancia_neta = round(apuesta * (momio - 1), 2)
+            elif "Away" in pick_desc and ganador == "Away":
+                resultado = "ganado"
+                ganancia_neta = round(apuesta * (momio - 1), 2)
+            elif ganador == "Tie":
+                resultado = "nulo"
+                ganancia_neta = 0
+            else:
+                resultado = "perdido"
+                ganancia_neta = -apuesta
+            
+            # Actualizar fila
+            new_bank = round(current_bank + ganancia_neta, 2)
+            
+            # Intentar actualizar en Google Sheets
+            try:
+                update_pick_row(apodo, idx, resultado, ganancia_neta, new_bank)
+            except:
+                pass  # Si falla, al menos actualiza localmente
+            
+            # Actualizar DataFrame local
+            df.at[idx, "resultado"] = resultado
+            df.at[idx, "ganancia_neta"] = ganancia_neta
+            df.at[idx, "bankroll_post"] = new_bank
+            
+            current_bank = new_bank
+            graded += 1
+        
+        return df, graded, current_bank
+    
+    except Exception as e:
+        return df, 0, bank
 
 
 # ─────────────────────────────────────────────────────────────
