@@ -4996,7 +4996,10 @@ def main():
     # Manual refresh button
     col_r = st.columns([6,1])[1]
     with col_r:
-        if st.button("🔄", help="Actualizar resultados desde ESPN", key="main_refresh"):
+        if st.button("🔄", help="Actualizar resultados desde ESPN (limpia cache)", key="main_refresh"):
+            # Limpiar todos los caches
+            st.cache_data.clear()
+            st.cache_resource.clear()
             for k in ["df_picks","df_apodo","pit_ronda","pit_players","pit_picks"]:
                 st.session_state.pop(k, None)
             st.rerun()
