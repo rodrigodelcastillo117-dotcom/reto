@@ -3424,6 +3424,46 @@ def pit_load_players(ronda_id: str) -> list:
     except Exception:
         return []
 
+def pit_auto_registrar_usuario(apodo: str, ronda_id: str) -> bool:
+    """
+    ✅ Auto-registrar usuario en la ronda si no existe
+    """
+    try:
+        ss = get_ss()
+        if not ss:
+            return False
+        
+        ws = ensure_tab(ss, "pit_jugadores", PIT_PLAYERS_HEADERS)
+        _rate_limit_gs("pit_jugadores_check", 0.5)
+        
+        # Verificar si ya existe
+        current_players = _safe_get_records(ws)
+        existe = any(str(p.get("ronda_id","")) == str(ronda_id) and 
+                     p.get("apodo","").lower() == apodo.lower() 
+                     for p in current_players)
+        
+        if existe:
+            return True
+        
+        # Si no existe, registrarlo automáticamente
+        new_row = [
+            str(ronda_id),
+            apodo,
+            "vivo",
+            "3",  # 3 vidas
+            "",
+        ]
+        ws.append_row(new_row)
+        _rate_limit_gs("pit_jugadores_append", 1.0)
+        
+        # Limpiar cache
+        if "pit_players" in st.session_state:
+            del st.session_state["pit_players"]
+        
+        return True
+    except Exception as e:
+        return False
+
 @st.cache_data(ttl=30, show_spinner=False)
 def pit_load_picks_ronda(ronda_id: str) -> list:
     ss = get_ss()
@@ -4077,6 +4117,9 @@ def tab_the_pit(apodo: str, bank: float):
         return
 
     ronda_id = str(ronda["ronda_id"])
+    
+    # ✅ AUTO-REGISTRAR USUARIO EN LA RONDA SI NO EXISTE
+    pit_auto_registrar_usuario(apodo, ronda_id)
     
     # Cargar datos SIN CACHEO
     players = pit_load_players(ronda_id)
