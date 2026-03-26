@@ -3230,7 +3230,7 @@ PIT_RONDAS_HEADERS  = ["ronda_id","fecha_inicio","fecha_fin","estado","ganador"]
 PIT_PICKS_HEADERS   = ["ronda_id","dia","fecha","apodo","partido","liga",
                         "event_id","pick_desc","momio","resultado","comodin_usado"]
 PIT_CHAT_HEADERS    = ["ts","apodo","mensaje","es_bot"]
-PIT_PLAYERS_HEADERS = ["ronda_id","apodo","estado","dias_vivo","roi_acum",
+PIT_PLAYERS_HEADERS = ["ronda_id","apodo","estado","vidas","dias_vivo","roi_acum",
                         "pick_asesino","comodin_disponible","equipos_usados"]
 
 def pit_get_ws(tab: str, headers: list):
@@ -3853,7 +3853,7 @@ def pit_auto_grade(apodo: str, ronda_id: str, my_record: dict) -> tuple[int, int
 #  THE PIT — Main tab
 # ─────────────────────────────────────────────────────────────
 def tab_the_pit(apodo: str, bank: float):
-    """THE PIT: 4 partidos, pick type aleatorio por día, auditoría automática"""
+    """THE PIT: 3 VIDAS, AUTO-GRADING, WASTED/CONGRATS EFFECTS"""
     from datetime import datetime, timedelta, date
     import random as _rnd_pit
     
@@ -3868,7 +3868,7 @@ def tab_the_pit(apodo: str, bank: float):
     #  PICK TYPE DEL DÍA (ALEATORIO PERO REPRODUCIBLE)
     # ═══════════════════════════════════════════════════════════════
     _rnd_pit.seed(daily_seed)
-    pick_type_hoy = _rnd_pit.choice(["ML", "O/U"])  # Mismo pick type para todos HOY
+    pick_type_hoy = _rnd_pit.choice(["ML", "O/U"])
     
     # HEADER
     st.markdown("""
@@ -3898,7 +3898,7 @@ def tab_the_pit(apodo: str, bank: float):
         </div>
         <div class="pit-title">THE PIT</div>
         <div style="text-align: center; color: #FF6B6B; font-size: 1.1rem; letter-spacing: 4px; text-transform: uppercase; margin: 15px 0;">
-            🔥 ELIGE TU PICK DE 4 PARTIDOS AL AZAR 🔥
+            🔥 3 VIDAS - GANA O MUERE 🔥
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -3926,87 +3926,198 @@ def tab_the_pit(apodo: str, bank: float):
     players = pit_load_players(ronda_id)
     ronda_picks = pit_load_picks_ronda(ronda_id)
 
-    vivos = [p for p in players if p.get("estado") == "vivo"]
-    total = len(players)
-    n_vivos = len(vivos)
-    n_muertos = total - n_vivos
-
+    # Get user record
     my_record = next((p for p in players if p.get("apodo","").lower() == apodo.lower()), None)
-    yo_vivo = my_record and my_record.get("estado") == "vivo"
-    yo_elim = my_record and my_record.get("estado") == "eliminado"
-
+    
+    if not my_record:
+        st.error(f"⚠️ No estás en esta ronda")
+        return
+    
+    # Get current lives y estado
+    my_vidas = int(my_record.get("vidas", 3))
+    my_estado = my_record.get("estado", "vivo")
+    
+    # ═══════════════════════════════════════════════════════════════
+    #  AUTO-GRADING: Detectar resultados y restar vidas
+    # ═══════════════════════════════════════════════════════════════
+    fx_to_show = None
+    try:
+        ss = get_ss()
+        if ss:
+            ws_picks = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
+            all_picks_sheet = _safe_get_records(ws_picks)
+            
+            # Obtener picks de AYER (para auto-gradarlos HOY)
+            yesterday = today_cdmx - timedelta(days=1)
+            yesterday_picks = [p for p in all_picks_sheet
+                              if str(p.get("ronda_id","")).strip() == str(ronda_id) and
+                                 str(p.get("fecha","")).strip() == str(yesterday) and
+                                 str(p.get("apodo","")).lower().strip() == apodo.lower().strip() and
+                                 str(p.get("resultado","")).lower().strip() == "pendiente"]
+            
+            # Auto-grade cada pick pendiente de ayer
+            for pick in yesterday_picks:
+                event_id = pick.get("event_id", "")
+                pick_desc = pick.get("pick_desc", "")
+                pick_type = "ML" if pick_desc in ["Home", "Away"] else "O/U"
+                
+                if not event_id:
+                    continue
+                
+                # Obtener resultado de ESPN
+                resultado_espn = None
+                try:
+                    r = requests.get(f"http://site.api.espn.com/apis/site/v2/sports/baseball/mlb/events/{event_id}", timeout=5)
+                    if r.status_code == 200:
+                        data = r.json()
+                        competition = data.get("competitions", [{}])[0]
+                        status = competition.get("status", {}).get("type", "")
+                        
+                        if status == "STATUS_FINAL":
+                            # Procesar según pick type
+                            if pick_type == "ML":
+                                # Obtener ganador
+                                competitors = competition.get("competitors", [])
+                                if len(competitors) >= 2:
+                                    home_team = competitors[0].get("displayName", "")
+                                    away_team = competitors[1].get("displayName", "")
+                                    home_score = int(competitors[0].get("score", 0))
+                                    away_score = int(competitors[1].get("score", 0))
+                                    
+                                    winner = "Home" if home_score > away_score else "Away"
+                                    resultado = "ganado" if pick_desc == winner else "perdido"
+                            else:
+                                # O/U
+                                total_score = sum(int(c.get("score", 0)) for c in competition.get("competitors", []))
+                                pick_value = float(pick_desc.replace("O", "").replace("U", ""))
+                                resultado = "ganado" if (pick_desc.startswith("O") and total_score > pick_value) or (pick_desc.startswith("U") and total_score < pick_value) else "perdido"
+                            
+                            resultado_espn = resultado
+                except Exception as e:
+                    pass
+                
+                # Si detectamos resultado, actualizar en Google Sheets
+                if resultado_espn:
+                    # Buscar la fila del pick en Google Sheets
+                    all_rows = ws_picks.get_all_values()
+                    for idx, row in enumerate(all_rows):
+                        if (idx > 0 and  # Skip header
+                            row[0] == str(ronda_id) and  # ronda_id
+                            row[3] == apodo and  # apodo
+                            row[2] == str(yesterday) and  # fecha
+                            row[7] == pick_desc):  # pick_desc
+                            # Actualizar resultado en columna 9 (resultado)
+                            ws_picks.update_cell(idx + 1, 10, resultado_espn)
+                            
+                            # Aplicar efecto
+                            if resultado_espn == "perdido":
+                                fx_to_show = "wasted"
+                                # Restar una vida
+                                my_vidas -= 1
+                                if my_vidas <= 0:
+                                    # Marcar como eliminado
+                                    ws_players = ensure_tab(ss, "pit_jugadores", PIT_PLAYERS_HEADERS)
+                                    for p_idx, p_row in enumerate(ws_players.get_all_values()):
+                                        if (p_idx > 0 and p_row[0] == str(ronda_id) and p_row[1] == apodo):
+                                            ws_players.update_cell(p_idx + 1, 3, "eliminado")  # estado
+                                            ws_players.update_cell(p_idx + 1, 4, str(my_vidas))  # vidas
+                            else:
+                                fx_to_show = "confetti"
+                                # No restar vida
+                            
+                            # Actualizar vidas en Google Sheets
+                            ws_players = ensure_tab(ss, "pit_jugadores", PIT_PLAYERS_HEADERS)
+                            for p_idx, p_row in enumerate(ws_players.get_all_values()):
+                                if (p_idx > 0 and p_row[0] == str(ronda_id) and p_row[1] == apodo):
+                                    ws_players.update_cell(p_idx + 1, 4, str(my_vidas))  # vidas
+                            
+                            break
+    except Exception as e:
+        pass
+    
+    # Mostrar efecto si aplica
+    if fx_to_show == "wasted":
+        st.markdown('<div class="wasted-overlay">W A S T E D</div>', unsafe_allow_html=True)
+    elif fx_to_show == "confetti":
+        st.balloons()
+    
+    # ═══════════════════════════════════════════════════════════════
+    #  DISPLAY VIDAS
+    # ═══════════════════════════════════════════════════════════════
+    vidas_display = "💚 " * my_vidas + "💀 " * (3 - my_vidas)
+    st.markdown(f"<div style='text-align: center; font-size: 2rem; margin: 20px 0;'>{vidas_display}</div>", unsafe_allow_html=True)
+    
+    # Si no tiene vidas, game over
+    if my_vidas <= 0:
+        st.error(f"💀 ELIMINADO - GAME OVER")
+        return
+    
     # STATUS
+    vivos = [p for p in players if p.get("estado") == "vivo"]
+    muertos = [p for p in players if p.get("estado") == "eliminado"]
+    
     col1, col2, col3 = st.columns(3)
     with col1:
-        st.metric("💀 ENTRARON", total)
+        st.metric("💀 ENTRARON", len(players))
     with col2:
-        st.metric("💚 VIVOS", n_vivos)
+        st.metric("💚 VIVOS", len(vivos))
     with col3:
-        st.metric("🩸 CAÍDOS", n_muertos)
+        st.metric("🩸 CAÍDOS", len(muertos))
 
-    if total > 0:
-        st.progress(n_muertos / total)
+    if len(players) > 0:
+        st.progress(len(muertos) / len(players))
 
     st.write("")
     
     # ═══════════════════════════════════════════════════════════════
     #  LEADERBOARD - TODOS LOS PARTICIPANTES Y SUS PICKS
     # ═══════════════════════════════════════════════════════════════
-    st.markdown('<div style="font-family: Bebas Neue; font-size: 1.1rem; color: #FFB800; letter-spacing: 1px; margin: 15px 0 10px;">📊 LEADERBOARD - PICKS DE HOY</div>', unsafe_allow_html=True)
+    st.markdown('<div style="font-family: Bebas Neue; font-size: 1.1rem; color: #FFB800; letter-spacing: 1px; margin: 15px 0 10px;">📊 LEADERBOARD - VIDAS Y PICKS</div>', unsafe_allow_html=True)
     
     try:
-        # Load all picks for today from Google Sheets
         ss = get_ss()
         if ss:
             ws_pit = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
             all_picks_today = [p for p in _safe_get_records(ws_pit) 
                               if str(p.get("ronda_id", "")).strip() == str(ronda_id) and
-                                 str(p.get("fecha", "")).strip() == str(date.today())]
+                                 str(p.get("fecha", "")).strip() == str(today_cdmx.date())]
             
             # Build leaderboard data
             leaderboard_data = []
             for player in players:
                 apodo_player = player.get("apodo", "")
                 estado = player.get("estado", "?")
+                vidas = int(player.get("vidas", 3))
                 
-                # Find pick for this player
+                # Find pick for this player today
                 player_pick = next((p for p in all_picks_today 
                                   if str(p.get("apodo", "")).lower().strip() == apodo_player.lower().strip()), None)
-                pick_desc = player_pick.get("pick_desc", "—") if player_pick else "—"
+                
+                if player_pick:
+                    # Mejorar display: partido - pick
+                    partido = player_pick.get("partido", "")
+                    pick_desc = player_pick.get("pick_desc", "")
+                    pick_display = f"{partido} - {pick_desc}" if partido and pick_desc else pick_desc or "—"
+                else:
+                    pick_display = "—"
                 
                 # Status emoji
                 status_emoji = "💚" if estado == "vivo" else "💀" if estado == "eliminado" else "?"
+                vidas_emoji = "💚" * vidas + "💀" * (3 - vidas)
                 
                 leaderboard_data.append({
-                    "Estado": f"{status_emoji} {estado.upper()}",
+                    "Estado": status_emoji,
                     "Apodo": apodo_player,
-                    "Pick": pick_desc,
-                    "Días": player.get("dias_vivo", 0)
+                    "Vidas": vidas_emoji,
+                    "Pick": pick_display,
                 })
             
             # Display as table
             if leaderboard_data:
                 df_lb = pd.DataFrame(leaderboard_data)
                 st.dataframe(df_lb, use_container_width=True, hide_index=True)
-            else:
-                st.info("Sin participantes en esta ronda")
-    except Exception as e:
-        pass  # Silently ignore errors
-
-    # AUTO-VERIFICAR
-    if yo_vivo and my_record:
-        g, p = pit_auto_grade(apodo, ronda_id, my_record)
-        if g > 0:
-            st.success(f"🎉 **+{g} GANADO(S)!**")
-            st.rerun()
-        elif p > 0:
-            st.error(f"💀 **{p} PERDIDO(S)**")
-            st.rerun()
-
-    # ELIMINADO
-    if yo_elim:
-        st.error(f"💀 ELIMINADO - {my_record.get('dias_vivo',0)} día(s)")
-        return
+    except:
+        pass
 
     st.write("")
 
@@ -4021,170 +4132,126 @@ def tab_the_pit(apodo: str, bank: float):
     </div>
     """, unsafe_allow_html=True)
     
-    st.markdown("<div style='font-family: Bebas Neue; font-size: 1.2rem; color: #FFB800; letter-spacing: 2px; margin: 20px 0 15px;'>🎯 4 PARTIDOS - ELIGE TU PICK</div>", unsafe_allow_html=True)
+    # Obtener 4 partidos para HOY/MAÑANA
+    daily_games = []
+    try:
+        for liga_key, liga_name in [("mlb", "MLB"), ("nba", "NBA"), ("nhl", "NHL"), ("nfl", "NFL")]:
+            date_param = today_cdmx.strftime("%Y%m%d")
+            r = requests.get(f"http://site.api.espn.com/apis/site/v2/sports/baseball/mlb/events" if liga_key == "mlb" else
+                           f"http://site.api.espn.com/apis/site/v2/sports/basketball/nba/events" if liga_key == "nba" else
+                           f"http://site.api.espn.com/apis/site/v2/sports/hockey/nhl/events" if liga_key == "nhl" else
+                           f"http://site.api.espn.com/apis/site/v2/sports/football/nfl/events",
+                        timeout=5)
+            if r.status_code == 200:
+                data = r.json()
+                events = data.get("events", [])
+                for event in events[:2]:  # Tomar hasta 2 por liga
+                    comp = event.get("competitions", [{}])[0]
+                    competitors = comp.get("competitors", [])
+                    if len(competitors) >= 2:
+                        daily_games.append({
+                            "id": event.get("id", ""),
+                            "away": competitors[1].get("displayName", "?"),
+                            "home": competitors[0].get("displayName", "?"),
+                            "liga": liga_name,
+                            "sport": liga_key,
+                            "date": event.get("date", "")[:10]
+                        })
+                if len(daily_games) >= 4:
+                    break
+    except:
+        pass
     
-    # ═══════════════════════════════════════════════════════════════
-    #  PARTIDOS: SOLO DEL MISMO DÍA, SOLO LOS QUE NO HAN EMPEZADO
-    # ═══════════════════════════════════════════════════════════════
-    # Decidir si usar hoy o mañana basado en la hora
-    # Después de las 21:00 (9 PM) = partidos de MAÑANA
-    use_tomorrow = hour_cdmx >= 21
-    target_date = (today_cdmx + timedelta(days=1)) if use_tomorrow else today_cdmx
-    target_date_str = target_date.strftime("%Y%m%d")
+    daily_games = daily_games[:4]  # Solo 4 partidos
     
-    # Obtener partidos ESPECÍFICAMENTE de target_date
-    daily_games = pit_get_games_for_date(target_date_str)
-    
-    # FILTRAR: solo partidos que NO han empezado
-    active_games = []
-    if daily_games:
-        for game in daily_games:
-            try:
-                date_raw = game.get("date_raw","")
-                game_time = datetime.fromisoformat(date_raw.replace("Z","+00:00"))
-                
-                # SOLO si todavía no empieza
-                if game_time > now_utc:
-                    active_games.append(game)
-            except:
-                active_games.append(game)  # Incluir si hay error en parse
-    
-    daily_games = active_games[:4]
-    
-    if daily_games:
-        # Parsear fecha de cada juego y comparar con ahora
-        active_games = []
-        for game in daily_games:
-            try:
-                date_raw = game.get("date_raw","")
-                game_time = datetime.fromisoformat(date_raw.replace("Z","+00:00"))
-                if game_time > now_utc:  # Solo si el partido aún no empieza
-                    active_games.append(game)
-            except:
-                active_games.append(game)  # Si hay error, incluir de todas formas
-        
-        daily_games = active_games[:4]  # Máximo 4 partidos activos
-    
-    def get_picks_for_sport(sport, away, home, ptype):
+    def get_picks_for_sport(sport, ptype):
         if ptype == "ML":
-            return [(away, away), (home, home)]
+            return [("Home", "Home"), ("Away", "Away")]
         else:  # O/U
-            if sport == "soccer":
-                return [("O2.5", "O2.5"), ("U2.5", "U2.5")]
-            elif sport == "hockey":
-                return [("O5.5", "O5.5"), ("U5.5", "U5.5")]
-            elif sport == "baseball":
+            if sport == "mlb":
                 return [("O7.5", "O7.5"), ("U7.5", "U7.5")]
-            elif sport == "basketball":
+            elif sport == "nba":
                 return [("O227.5", "O227.5"), ("U227.5", "U227.5")]
-            elif sport == "football":
+            elif sport == "nhl":
+                return [("O5.5", "O5.5"), ("U5.5", "U5.5")]
+            elif sport == "nfl":
                 return [("O45.5", "O45.5"), ("U45.5", "U45.5")]
             else:
                 return [("OVER", "OVER"), ("UNDER", "UNDER")]
     
-    if daily_games:
-        for i, game in enumerate(daily_games):
-            sport_label = game.get("pit_sport_label","?")
-            away = game.get("away","?")
-            home = game.get("home","?")
-            date_str = game.get("date","")
-            game_id = game.get("id","")
-            sport = game.get("sport","soccer")
-            
-            st.markdown(f"""
-            <div style="background: rgba(220,20,60,0.12); border: 2px solid rgba(220,20,60,0.3);
-                 border-radius: 10px; padding: 16px; margin-bottom: 15px;">
-                <div style="font-weight: 700; color: #FF4500; margin-bottom: 8px;">{sport_label}</div>
-                <div style="font-size: 1.1rem; color: #EEEEF5; font-weight: 700; margin-bottom: 6px;">
-                    {away} vs {home}
-                </div>
-                <div style="font-size: 0.8rem; color: #8888AA;">{date_str}</div>
+    for i, game in enumerate(daily_games):
+        away = game.get("away", "?")
+        home = game.get("home", "?")
+        liga = game.get("liga", "?")
+        game_id = game.get("id", "")
+        sport = game.get("sport", "mlb")
+        
+        st.markdown(f"""
+        <div style="background: rgba(220,20,60,0.12); border: 2px solid rgba(220,20,60,0.3);
+             border-radius: 10px; padding: 16px; margin-bottom: 15px;">
+            <div style="font-weight: 700; color: #FF4500; margin-bottom: 8px;">{liga}</div>
+            <div style="font-size: 1.1rem; color: #EEEEF5; font-weight: 700; margin-bottom: 6px;">
+                {away} vs {home}
             </div>
-            """, unsafe_allow_html=True)
-            
-            picks = get_picks_for_sport(sport, away, home, pick_type_hoy)
-            cols = st.columns(len(picks))
-            
-            for j, (label, value) in enumerate(picks):
-                with cols[j]:
-                    if st.button(label, key=f"pick_{i}_{j}", use_container_width=True):
-                        # Guardar pick en Google Sheets (OPTIMIZADO)
-                        try:
-                            ws_picks = ensure_tab(get_ss(), "pit_picks", PIT_PICKS_HEADERS)
-                            records = _safe_get_records(ws_picks)
-                            
-                            # Buscar si ya existe pick hoy (SIN get_all_values)
-                            existing_row = None
-                            for idx, record in enumerate(records):
-                                if (record.get("apodo","").lower() == apodo.lower() 
-                                    and str(record.get("fecha","")) == str(date.today())):
-                                    existing_row = idx + 2  # +2: fila 1 es header, idx comienza en 0
-                                    break
-                            
-                            if existing_row:
-                                # Actualizar fila existente - BATCH UPDATE
-                                col_pick = ws_picks.find("pick_desc").col
-                                col_event = ws_picks.find("event_id").col
-                                ws_picks.update_cell(existing_row, col_pick, value)
-                                ws_picks.update_cell(existing_row, col_event, game_id)
-                            else:
-                                # Nuevo pick - append_row
-                                # PIT_PICKS_HEADERS: ["ronda_id","dia","fecha","apodo","partido","liga","event_id","pick_desc","momio","resultado","comodin_usado"]
-                                new_row = [
-                                    ronda_id,                    # ronda_id
-                                    str(today_cdmx.weekday()),   # dia (0=Mon, 6=Sun)
-                                    str(date.today()),           # fecha
-                                    apodo,                       # apodo
-                                    f"{away} vs {home}",        # partido
-                                    sport_label,                 # liga
-                                    game_id,                     # event_id
-                                    value,                       # pick_desc
-                                    "1.0",                       # momio
-                                    "pendiente",                 # resultado
-                                    ""                           # comodin_usado
-                                ]
-                                ws_picks.append_row(new_row)
-                            
-                            # Limpiar cache y mostrar éxito
-                            st.session_state.pop("pit_picks", None)
-                            st.session_state.pop("pit_ronda", None)
-                            st.success(f"✅ Pick guardado: {value}")
-                            time.sleep(1)
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"❌ Error guardando pick: {str(e)[:150]}")
-                            with st.expander("📋 Debug Info"):
-                                st.write(f"Error type: {type(e).__name__}")
-                                st.write(f"Error message: {str(e)}")
-
-    # Show pick para TODOS los usuarios (moved AFTER the games)
+        </div>
+        """, unsafe_allow_html=True)
+        
+        picks = get_picks_for_sport(sport, pick_type_hoy)
+        cols = st.columns(len(picks))
+        
+        for j, (label, value) in enumerate(picks):
+            with cols[j]:
+                if st.button(label, key=f"pit_pick_{i}_{j}", use_container_width=True):
+                    try:
+                        ws_picks = ensure_tab(get_ss(), "pit_picks", PIT_PICKS_HEADERS)
+                        new_row = [
+                            ronda_id,
+                            str(today_cdmx.weekday()),
+                            str(today_cdmx.date()),
+                            apodo,
+                            f"{away} vs {home}",
+                            liga,
+                            game_id,
+                            value,
+                            "1.0",
+                            "pendiente",
+                            ""
+                        ]
+                        ws_picks.append_row(new_row)
+                        st.session_state.pop("pit_picks", None)
+                        st.session_state.pop("pit_ronda", None)
+                        st.success(f"✅ Pick guardado: {away} vs {home} - {value}")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)[:100]}")
+    
     st.write("")
-    # Reload picks from Google Sheets directly (not cached)
+    
+    # Show mi pick de hoy
     try:
         ss = get_ss()
         if ss:
             ws_pit = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
             all_pit_picks = _safe_get_records(ws_pit)
             
-            # Find pick for THIS USER TODAY
             today_pick = None
             for pick in all_pit_picks:
                 if (str(pick.get("apodo", "")).lower().strip() == apodo.lower().strip() and
-                    str(pick.get("fecha", "")).strip() == str(date.today()) and
+                    str(pick.get("fecha", "")).strip() == str(today_cdmx.date()) and
                     str(pick.get("ronda_id", "")).strip() == str(ronda_id)):
                     today_pick = pick
                     break
             
             if today_pick:
+                partido = today_pick.get("partido", "")
                 pick_valor = today_pick.get('pick_desc', 'N/A')
-                st.success(f"✅ **Tu pick de hoy: {pick_valor}**")
-            else:
-                if hour_cdmx >= 15 and yo_vivo:
-                    st.error(f"⚠️ ¡SON LAS {hour_cdmx:02d}:{now_cdmx.minute:02d}! Sin pick aún")
-    except Exception as e:
-        pass  # Silently ignore errors loading picks
+                st.success(f"✅ **Tu pick de hoy: {partido} - {pick_valor}**")
+    except:
+        pass
 
-    st.markdown(f"---\n🔴 RONDA #{ronda_id} · CDMX {now_cdmx.strftime('%H:%M')} · SEED: {daily_seed} · TIPO: {pick_type_hoy}")
+    st.markdown(f"---\n🔴 RONDA #{ronda_id} · CDMX {now_cdmx.strftime('%H:%M')} · TIPO: {pick_type_hoy}")
+
 
 
 def main():
