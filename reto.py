@@ -3469,14 +3469,23 @@ def tab_historial(apodo: str, df: pd.DataFrame):
         try:
             ss = get_ss()
             if ss:
-                # Buscar en picks_APODO
+                # Buscar la hoja picks_APODO (case-insensitive)
+                ws = None
+                for sheet in ss.worksheets():
+                    if sheet.title.lower() == f"picks_{apodo}".lower():
+                        ws = sheet
+                        break
+                
+                if not ws:
+                    st.info(f"⚠️ No se encontró hoja picks_{apodo}")
+                    return
+                
                 try:
-                    ws = ss.worksheet(f"picks_{apodo}")
                     records = _safe_get_records(ws)
                     pending = [r for r in records if str(r.get("resultado", "")).strip().lower() == "pendiente"]
                     
                     if pending:
-                        st.write(f"**📝 Encontrados {len(pending)} picks pendientes en picks_{apodo}:**")
+                        st.write(f"**📝 Encontrados {len(pending)} picks pendientes en {ws.title}:**")
                         for idx, pick in enumerate(pending):
                             col1, col2, col3, col4, col5 = st.columns([2, 2, 1, 1, 1])
                             with col1:
@@ -3562,9 +3571,9 @@ def tab_historial(apodo: str, df: pd.DataFrame):
                                     else:
                                         st.error("No se encontró resultado")
                     else:
-                        st.info("✅ No hay picks pendientes en picks_{apodo}")
-                except:
-                    st.info("⚠️ No se encontró hoja picks_{apodo}")
+                        st.info(f"✅ No hay picks pendientes en {ws.title}")
+                except Exception as e:
+                    st.error(f"Error cargando datos: {str(e)[:50]}")
         except:
             st.error("Error cargando datos")
 
