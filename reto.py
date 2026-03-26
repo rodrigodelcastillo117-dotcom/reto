@@ -4193,15 +4193,18 @@ def tab_the_pit(apodo: str, bank: float):
                                     for url in espn_urls:
                                         try:
                                             r = requests.get(url, timeout=5)
+                                            test_debug.append(f"  🔍 Probando: {url.split('/sports/')[1].split('/')[0]}")
+                                            test_debug.append(f"     Status: {r.status_code}")
                                             if r.status_code == 200:
                                                 espn_data = r.json()
                                                 test_debug.append(f"  ✅ ESPN API encontrado")
                                                 break
-                                        except:
+                                        except Exception as e:
+                                            test_debug.append(f"  ⚠️ Error en request: {str(e)[:40]}")
                                             continue
                                     
                                     if not espn_data:
-                                        test_debug.append(f"  ❌ No se encontró en ESPN")
+                                        test_debug.append(f"  ❌ No se encontró en ESPN (probadas 8 ligas)")
                                     else:
                                         try:
                                             competition = espn_data.get("competitions", [{}])[0]
