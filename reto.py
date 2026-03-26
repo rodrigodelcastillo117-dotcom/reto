@@ -4521,12 +4521,6 @@ def tab_the_pit(apodo: str, bank: float):
     except Exception as e:
         pass
     
-    # Show auto-grading debug if there were picks to grade
-    if grading_debug:
-        with st.expander("🔍 Debug: Auto-Calificación (Ayer)"):
-            for debug_line in grading_debug:
-                st.caption(debug_line)
-    
     # ═══════════════════════════════════════════════════════════════
     #  TEST MANUAL DE AUTO-CALIFICACIÓN (para debugging)
     # ═══════════════════════════════════════════════════════════════
@@ -4562,9 +4556,7 @@ def tab_the_pit(apodo: str, bank: float):
                 df_picks_table = pd.DataFrame(table_data)
                 st.dataframe(df_picks_table, use_container_width=True, hide_index=True)
             
-            with st.expander("🧪 TEST: Simular Auto-Calificación"):
-                st.info("Esto te permite probar cómo se califican los picks sin esperar a mañana")
-                
+            with st.expander("📋 Picks de HOY + Prueba de Calificación"):
                 # Get today's picks to test
                 today_picks = [p for p in all_picks_sheet
                               if str(p.get("ronda_id","")).strip() == str(ronda_id) and
@@ -4572,7 +4564,7 @@ def tab_the_pit(apodo: str, bank: float):
                                  str(p.get("apodo","")).lower().strip() == apodo.lower().strip()]
                 
                 if today_picks:
-                    st.write(f"📋 Picks de HOY ({len(today_picks)}):")
+                    st.write(f"**Tus picks de HOY ({len(today_picks)}):**")
                     for idx, pick in enumerate(today_picks):
                         col1, col2, col3 = st.columns([2, 2, 1])
                         
