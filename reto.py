@@ -4290,27 +4290,49 @@ def tab_the_pit(apodo: str, bank: float):
             for j, (label, value) in enumerate(picks):
                 with cols[j]:
                     if st.button(label, key=f"pick_{i}_{j}", use_container_width=True):
+                        # Guardar pick en Google Sheets
                         try:
                             ws_picks = ensure_tab(get_ss(), "pit_picks", PIT_PICKS_HEADERS)
                             records = _safe_get_records(ws_picks)
                             
-                            existing = next(
-                                (r for r in records if r.get("apodo","").lower() == apodo.lower() 
-                                 and str(r.get("fecha","")) == str(date.today())),
-                                None
-                            )
+                            # Buscar si ya existe pick hoy
+                            existing = None
+                            existing_row = None
+                            all_values = ws_picks.get_all_values()
                             
-                            if existing:
-                                ws_picks.update_cell(existing['_row'], ws_picks.find("pick_texto").col, value)
-                                ws_picks.update_cell(existing['_row'], ws_picks.find("event_id").col, game_id)
-                                ws_picks.update_cell(existing['_row'], ws_picks.find("pick_type").col, pick_type_hoy)
+                            for row_idx, record in enumerate(records, start=2):  # start=2 porque fila 1 es header
+                                if (record.get("apodo","").lower() == apodo.lower() 
+                                    and str(record.get("fecha","")) == str(date.today())):
+                                    existing = record
+                                    existing_row = row_idx
+                                    break
+                            
+                            if existing and existing_row:
+                                # Actualizar fila existente
+                                ws_picks.update_cell(existing_row, ws_picks.find("pick_desc").col, value)
+                                ws_picks.update_cell(existing_row, ws_picks.find("event_id").col, game_id)
                             else:
-                                new_row = [ronda_id, apodo, str(date.today()), value, game_id, sport_label, pick_type_hoy, "1.0", "500", "pendiente"]
+                                # Nuevo pick
+                                new_row = [
+                                    ronda_id, 
+                                    "",  # dia
+                                    str(date.today()), 
+                                    apodo, 
+                                    f"{away} vs {home}",  # partido
+                                    sport_label,  # liga
+                                    game_id,  # event_id
+                                    value,  # pick_desc
+                                    "1.0",  # momio
+                                    "pendiente",  # resultado
+                                    ""  # comodin_usado
+                                ]
                                 ws_picks.append_row(new_row)
                             
                             st.success(f"✅ Pick: {value}")
                             st.session_state.pop("pit_picks", None)
                             st.rerun()
+                        except Exception as e:
+                            st.error(f"Error: {str(e)}")
                         except Exception as e:
                             st.error(f"Error: {e}")
 
