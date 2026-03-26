@@ -1277,103 +1277,133 @@ def parse_result_from_event(event_data: dict, pick_desc: str, mercado: str) -> s
     """
     Given a completed ESPN event and the pick description,
     return 'ganado', 'perdido', or None if can't determine.
-    pick_desc examples: "Real Madrid", "Over 2.5", "BTTS Si", "Lakers -5.5"
+    pick_desc examples: "New York Yankees ML", "Over 8.5", "BTTS ambos anotan", "Lakers -5.5"
     """
     if not event_data:
         return None
 
     try:
-        # Get competitors and scores
+        import re as _re
+
+        # ── Extract scores and team names — try multiple paths ──
+        home_score, away_score = 0.0, 0.0
+        home_name,  away_name  = "", ""
+
+        # Path 1: boxscore.teams
         comp_data = event_data.get("boxscore", {}).get("teams", [])
-        if not comp_data:
-            comps = event_data.get("header", {}).get("competitions", [{}])[0].get("competitors", [])
-            scores = {c.get("homeAway", ""): {"score": c.get("score", "0"), "name": c.get("team", {}).get("displayName", "")} for c in comps}
-        else:
-            scores = {}
+        if comp_data:
             for t in comp_data:
-                side = t.get("homeAway", "")
-                name = t.get("team", {}).get("displayName", "")
-                score = t.get("score", "0")
-                scores[side] = {"score": score, "name": name}
+                side  = t.get("homeAway", "")
+                name  = (t.get("team", {}).get("displayName","") or
+                         t.get("team", {}).get("name","") or
+                         t.get("team", {}).get("shortDisplayName",""))
+                score_raw = t.get("score","0") or "0"
+                try: score = float(score_raw)
+                except: score = 0.0
+                if side == "home":   home_score = score; home_name = name.lower()
+                elif side == "away": away_score = score; away_name = name.lower()
 
-        home_score = float(scores.get("home", {}).get("score", 0) or 0)
-        away_score = float(scores.get("away", {}).get("score", 0) or 0)
-        home_name  = scores.get("home", {}).get("name", "").lower()
-        away_name  = scores.get("away", {}).get("name", "").lower()
-        total      = home_score + away_score
-        pick_low   = pick_desc.strip().lower()
-        # Strip common suffixes from pick_desc for matching
-        pick_clean = pick_low.replace(" ml","").replace(" gana","").replace(" wins","").strip()
-        merc_low   = mercado.lower()
+        # Path 2: header.competitions[0].competitors
+        if not home_name and not away_name:
+            comps = (event_data.get("header",{})
+                               .get("competitions",[{}])[0]
+                               .get("competitors",[]))
+            for c in comps:
+                side  = c.get("homeAway","")
+                team  = c.get("team",{})
+                name  = (team.get("displayName","") or team.get("name","") or
+                         team.get("shortDisplayName","") or c.get("name",""))
+                score_raw = c.get("score","0") or "0"
+                try: score = float(score_raw)
+                except: score = 0.0
+                if side == "home":   home_score = score; home_name = name.lower()
+                elif side == "away": away_score = score; away_name = name.lower()
 
-        def name_match(team_name: str, pick_text: str) -> bool:
-            """Fuzzy team name match — handles partial names and word overlap."""
-            if not team_name or not pick_text: return False
-            if team_name in pick_text or pick_text in team_name: return True
-            # Word overlap: any meaningful word (>3 chars) from team in pick
-            team_words = [w for w in team_name.split() if len(w) > 3]
-            pick_words = [w for w in pick_text.split() if len(w) > 3]
-            if team_words and any(w in pick_text for w in team_words): return True
-            if pick_words and any(w in team_name for w in pick_words): return True
+        # Path 3: header directly
+        if not home_name and not away_name:
+            header_comps = event_data.get("header",{}).get("competitions",[])
+            if header_comps:
+                for c in header_comps[0].get("competitors",[]):
+                    side = c.get("homeAway","")
+                    name = c.get("team",{}).get("displayName","") or c.get("athlete",{}).get("displayName","")
+                    score_raw = c.get("score","0") or "0"
+                    try: score = float(score_raw)
+                    except: score = 0.0
+                    if side == "home":   home_score = score; home_name = name.lower()
+                    elif side == "away": away_score = score; away_name = name.lower()
+
+        total     = home_score + away_score
+        pick_low  = pick_desc.strip().lower()
+        pick_clean = (pick_low
+                      .replace(" ml","").replace(" gana","").replace(" wins","")
+                      .replace(" money line","").strip())
+        merc_low  = mercado.strip().lower()
+
+        def name_match(team: str, pick: str) -> bool:
+            if not team or not pick: return False
+            if team == pick: return True
+            if team in pick or pick in team: return True
+            # Word overlap — meaningful words only (>3 chars)
+            t_words = [w for w in team.split() if len(w) > 3]
+            p_words = [w for w in pick.split() if len(w) > 3]
+            if t_words and any(w in pick for w in t_words): return True
+            if p_words and any(w in team for w in p_words): return True
             return False
 
         # ── ML / Ganador ──
-        if "ml" in merc_low or "ganador" in merc_low or "1x2" in merc_low or "resultado" in merc_low or merc_low == "":
+        is_ml = ("ml" in merc_low or "ganador" in merc_low or
+                 "1x2" in merc_low or "resultado" in merc_low or
+                 "money" in merc_low or merc_low == "")
+
+        if is_ml or name_match(home_name, pick_clean) or name_match(away_name, pick_clean):
             if name_match(home_name, pick_clean):
-                return "ganado" if home_score > away_score else ("nulo" if home_score == away_score else "perdido")
+                if home_score > away_score: return "ganado"
+                if home_score < away_score: return "perdido"
+                return "nulo"
             if name_match(away_name, pick_clean):
-                return "ganado" if away_score > home_score else ("nulo" if home_score == away_score else "perdido")
+                if away_score > home_score: return "ganado"
+                if away_score < home_score: return "perdido"
+                return "nulo"
             if "empate" in pick_low or "draw" in pick_low:
                 return "ganado" if home_score == away_score else "perdido"
-            # Last resort: if neither matched by name, try score-based if pick has a team keyword
-            # Just use away team win as default for ML if only one team in game
-            if home_score != away_score:
-                return None  # can't determine which team was picked
 
         # ── Over / Under ──
         if "over" in pick_low or "under" in pick_low or "o/u" in merc_low:
-            import re
-            nums = re.findall(r"[\d.]+", pick_desc)
+            nums = _re.findall(r"[\d]+\.?[\d]*", pick_desc)
             if nums:
                 line = float(nums[0])
                 if "over" in pick_low:
-                    if total > line: return "ganado"
-                    elif total == line: return "nulo"
-                    else: return "perdido"
-                else:  # under
-                    if total < line: return "ganado"
-                    elif total == line: return "nulo"
-                    else: return "perdido"
+                    return "ganado" if total > line else ("nulo" if total == line else "perdido")
+                else:
+                    return "ganado" if total < line else ("nulo" if total == line else "perdido")
 
         # ── BTTS ──
-        if "btts" in merc_low or "ambos" in merc_low or "btts" in pick_low or "ambos" in pick_low:
-            both_scored = home_score > 0 and away_score > 0
-            # "btts (ambos anotan)" = YES/Si bet
+        if ("btts" in merc_low or "ambos" in merc_low or
+            "btts" in pick_low or "ambos" in pick_low):
+            both = home_score > 0 and away_score > 0
             if "no" in pick_low and "anotan" not in pick_low:
-                return "ganado" if not both_scored else "perdido"
-            else:  # Si / Yes / ambos anotan
-                return "ganado" if both_scored else "perdido"
+                return "ganado" if not both else "perdido"
+            return "ganado" if both else "perdido"
 
         # ── Handicap ──
-        if "hándicap" in merc_low or "handicap" in merc_low:
-            import re
-            nums = re.findall(r"[+-]?[\d.]+", pick_desc)
-            if nums and len(nums) >= 1:
+        if "hándicap" in merc_low or "handicap" in merc_low or "spread" in merc_low:
+            nums = _re.findall(r"[+-]?[\d.]+", pick_desc)
+            if nums:
                 hcap = float(nums[-1])
-                if any(w in pick_low for w in home_name.split()):
+                if name_match(home_name, pick_clean):
                     adj = home_score + hcap
                     if adj > away_score: return "ganado"
-                    elif adj == away_score: return "nulo"
-                    else: return "perdido"
-                if any(w in pick_low for w in away_name.split()):
+                    if adj == away_score: return "nulo"
+                    return "perdido"
+                if name_match(away_name, pick_clean):
                     adj = away_score + hcap
                     if adj > home_score: return "ganado"
-                    elif adj == home_score: return "nulo"
-                    else: return "perdido"
+                    if adj == home_score: return "nulo"
+                    return "perdido"
 
     except Exception:
         pass
-    return None  # couldn't auto-determine → leave for manual
+    return None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -1544,9 +1574,10 @@ def upsert_user(apodo: str, bankroll: float, wins: int, losses: int):
 def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.DataFrame, int, float]:
     """
     Check all pending picks against ESPN.
+    Also re-grades picks wrongly marked as 'nulo' (in case of name match failure).
     Returns updated df, count graded, new bank.
     """
-    pending = df[df["resultado"] == "pendiente"].copy()
+    pending = df[df["resultado"].isin(["pendiente", "nulo"])].copy()
     if pending.empty:
         return df, 0, bank
 
