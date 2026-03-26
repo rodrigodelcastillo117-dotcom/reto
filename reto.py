@@ -3088,6 +3088,8 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         ao = float(ev.get("away_odds",0))
                         ho = float(ev.get("home_odds",0))
                         do = float(ev.get("draw_odds",0))
+                        a_lg = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
+                        h_lg = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
                         qv     = st.session_state.get(f"qp_val_{ev_id}", "")
                         ou_key = f"ou_pending_{ev_id[:10]}"
                         is_open = bool(qv) or bool(st.session_state.get(ou_key))
@@ -3134,17 +3136,19 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                                           f'padding:1px 6px;border-radius:4px;font-size:.58rem">{ho}</span>')
 
                         # ✅ PATCH: Logos asignados SEGÚN DEPORTE
-                        # PASO 1: Determinar layout ANTES de asignar logos
                         if sport_ev.lower() == "soccer":
                             # Soccer: Home a la IZQUIERDA, Away a la DERECHA
                             logo_left  = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
                             logo_right = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
                             team_left, team_right = home_disp, away_disp
                         else:
-                            # NBA/NHL/MLB/NFL: Away a la IZQUIERDA, Home a la DERECHA
+                            # NBA/etc: mostrar AWAY a la izquierda, HOME a la derecha
                             logo_left  = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
                             logo_right = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
                             team_left, team_right = away_disp, home_disp
+                        
+                        # ✅ CORRECIÓN: Crear las columnas card_c y btn_c
+                        card_c, btn_c = st.columns([4, 1])
                         
                         with card_c:
                             st.markdown(
