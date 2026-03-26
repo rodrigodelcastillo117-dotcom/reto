@@ -1045,6 +1045,11 @@ def _extract_competitor_info(comp: dict, sport: str) -> dict:
                 logo = link.get("href",""); break
 
     score = comp.get("score", "")
+    # Si score es número (int), convertir a string
+    if isinstance(score, (int, float)):
+        score = str(int(score))
+    elif not score:
+        score = ""
     return {"name": name or "TBD", "logo": logo, "flag": flag, "score": score}
 
 
@@ -2615,8 +2620,16 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         # Obtener score si está EN VIVO
                         score_html = ""
                         if is_live:
-                            away_score = ev.get("away_score", -1)
-                            home_score = ev.get("home_score", -1)
+                            away_score_str = ev.get("away_score", "")
+                            home_score_str = ev.get("home_score", "")
+                            # Convertir a números para validación
+                            try:
+                                away_score = int(away_score_str) if away_score_str else -1
+                                home_score = int(home_score_str) if home_score_str else -1
+                            except:
+                                away_score = -1
+                                home_score = -1
+                            
                             if away_score >= 0 and home_score >= 0:
                                 score_html = f'<div style="font-size:.7rem;color:#FF0000;font-weight:700;margin:4px 0;">{away_score} - {home_score}</div>'
 
