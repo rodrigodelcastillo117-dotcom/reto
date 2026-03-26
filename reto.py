@@ -123,6 +123,31 @@ PICKS_HEADERS = [
     "apuesta", "resultado", "ganancia_neta", "bankroll_post", "notas"
 ]
 
+
+
+# ─────────────────────────────────────────────────────────────
+#  GAME DEDUPLICATOR (FIX #1: Evitar duplicación de ligas)
+# ─────────────────────────────────────────────────────────────
+def filter_duplicate_games(games_list: list) -> list:
+    """
+    Filtra partidos por ID único, evita mostrar lo mismo múltiples veces.
+    Mantiene un set de IDs ya mostrados en session_state.
+    """
+    if "loaded_game_ids" not in st.session_state:
+        st.session_state.loaded_game_ids = set()
+    
+    unique_games = []
+    for game in games_list:
+        game_id = game.get("id", "")
+        if game_id and game_id not in st.session_state.loaded_game_ids:
+            st.session_state.loaded_game_ids.add(game_id)
+            unique_games.append(game)
+        elif not game_id:
+            # Si no tiene ID, incluir de todas formas
+            unique_games.append(game)
+    
+    return unique_games
+
 # ─────────────────────────────────────────────────────────────
 #  CSS
 # ─────────────────────────────────────────────────────────────
@@ -4311,26 +4336,47 @@ def tab_the_pit(apodo: str, bank: float):
                                 ws_picks.update_cell(existing_row, col_pick, value)
                                 ws_picks.update_cell(existing_row, col_event, game_id)
                             else:
-                                # Nuevo pick - append_row
-                                new_row = [
-                                    ronda_id, "", str(date.today()), apodo, 
-                                    f"{away} vs {home}", sport_label, game_id, 
-                                    value, "1.0", "pendiente", ""
-                                ]
-                                ws_picks.append_row(new_row)
-                            
-                            st.success(f"✅ Pick guardado: {value}")
-                            st.session_state.pop("pit_picks", None)
-                            st.rerun()
+                                # Nuevo pick - append_row con validación (FIX #2)
+                                try:
+                                    ws_picks = ensure_tab(get_ss(), "pit_picks", PIT_PICKS_HEADERS)
+                                    
+                                    new_row = [
+                                        ronda_id,                          # ronda
+                                        "",                                # apodo_rival
+                                        str(date.today()),                 # fecha
+                                        apodo,                             # apodo
+                                        f"{away} vs {home}",              # partido
+                                        sport_label,                       # liga
+                                        game_id,                           # event_id
+                                        value,                             # pick_desc
+                                        "1.0",                             # momio
+                                        "pendiente",                       # resultado
+                                        "",                                # ganancia_neta
+                                    ]
+                                    
+                                    ws_picks.append_row(new_row)
+                                    time.sleep(0.5)  # Wait para Google Sheets procese
+                                    
+                                    st.session_state.pop("pit_picks", None)
+                                    st.session_state.pop("pit_ronda", None)
+                                    
+                                    st.success(f"✅ Pick guardado: {value}")
+                                    time.sleep(0.8)
+                                    st.rerun()
+                                except Exception as append_err:
+                                    st.error(f"❌ Error en append_row: {str(append_err)[:150]}")
                         except Exception as e:
-                            st.error(f"❌ Error guardando: {str(e)[:100]}")
-                        except Exception as e:
-                            st.error(f"Error: {e}")
+                            st.error(f"❌ Error guardando pick: {str(e)[:150]}")
 
     if yo_vivo:
         st.write("")
+        
+        # Buscar pick de hoy (FIX #3: Case-insensitive + mejor display)
         today_pick = next(
-            (p for p in ronda_picks if p.get("apodo","").lower() == apodo.lower() and str(p.get("fecha","")) == str(date.today())),
+            (p for p in ronda_picks 
+             if p.get("apodo", "").lower() == apodo.lower() 
+             and str(p.get("fecha", "")) == str(date.today())
+            ),
             None
         )
         
@@ -4338,7 +4384,10 @@ def tab_the_pit(apodo: str, bank: float):
             st.error(f"⚠️ ¡SON LAS {hour_cdmx:02d}:{now_cdmx.minute:02d}! Sin pick aún")
         
         if today_pick:
-            st.info(f"✅ Tu pick: {today_pick.get('pick_texto','')}")
+            pick_texto = today_pick.get('pick_desc', today_pick.get('pick_texto', 'N/A'))
+            st.success(f"✅ Tu pick de hoy: **{pick_texto}**")
+            with st.expander("📋 Detalles"):
+                st.json({k: v for k, v in today_pick.items() if v})
 
     st.markdown(f"---\n🔴 RONDA #{ronda_id} · CDMX {now_cdmx.strftime('%H:%M')} · SEED: {daily_seed} · TIPO: {pick_type_hoy}")
 
