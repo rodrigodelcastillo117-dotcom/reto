@@ -2297,6 +2297,15 @@ def render_all_today(apodo: str):
                                 is_live = ev.get("is_live", False)
                                 is_sel  = selected and selected.get("id") == ev["id"]
                                 away    = ev["away"]; home = ev["home"]
+                                sport   = ev.get("sport", "soccer")  # ← AGREGADO
+                                # Formatear según deporte
+                                formatted = format_partido_para_display(f"{away}@{home}", sport)
+                                if sport.lower() == "soccer":
+                                    # Soccer: "Home vs Away"
+                                    away_disp, home_disp = formatted.split(" vs ")
+                                else:
+                                    # NBA/etc: "Away@Home"
+                                    away_disp, home_disp = formatted.split("@")
                                 s_txt   = "● LIVE" if is_live else ev["date"]
                                 s_col   = "#FF3D00" if is_live else "#00FFD1"
                                 border  = "rgba(240,255,0,.6)" if is_sel else ("rgba(255,61,0,.4)" if is_live else "rgba(255,255,255,.09)")
@@ -2324,20 +2333,30 @@ def render_all_today(apodo: str):
                                         f'</div>'
                                     )
 
+                                # Para soccer, invertir visual para que Home esté a la izquierda
+                                if sport.lower() == "soccer":
+                                    # Soccer: mostrar Home@Away visualmente (local@visitante)
+                                    logo_left, logo_right = h_lg, a_lg
+                                    team_left, team_right = home_disp, away_disp
+                                else:
+                                    # NBA/etc: mostrar Away@Home visualmente (visitante@local)
+                                    logo_left, logo_right = a_lg, h_lg
+                                    team_left, team_right = away_disp, home_disp
+
                                 st.markdown(
                                     f'<div style="background:{bg};border:1px solid {border};'
                                     f'border-radius:12px;padding:10px 8px;text-align:center">'
                                     f'<div style="display:flex;align-items:center;justify-content:center;'
                                     f'gap:5px;margin-bottom:5px">'
                                     f'<div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex:1">'
-                                    f'{a_lg}<div style="font-size:.58rem;font-weight:700;color:#EEEEF5;'
+                                    f'{logo_left}<div style="font-size:.58rem;font-weight:700;color:#EEEEF5;'
                                     f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px">'
-                                    f'{away}</div></div>'
+                                    f'{team_left}</div></div>'
                                     f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:.7rem;color:#44445A">VS</div>'
                                     f'<div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex:1">'
-                                    f'{h_lg}<div style="font-size:.58rem;font-weight:700;color:#EEEEF5;'
+                                    f'{logo_right}<div style="font-size:.58rem;font-weight:700;color:#EEEEF5;'
                                     f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:80px">'
-                                    f'{home}</div></div></div>'
+                                    f'{team_right}</div></div></div>'
                                     f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.48rem;'
                                     f'color:{s_col}">{s_txt}</div>'
                                     f'{odds_html}</div>',
