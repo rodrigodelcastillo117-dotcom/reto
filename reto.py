@@ -2619,24 +2619,22 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
     with st.expander("🔍 DEBUG: Datos de ESPN (para troubleshooting)"):
         if all_evs:
             # Mostrar primeros 3 partidos con TODOS sus datos
-            st.write("**Primeros 3 partidos completos:**")
-            for i, ev in enumerate(all_evs[:3]):
-                with st.expander(f"Partido {i+1}: {ev.get('name', '?')}"):
+            st.write("**Primeros 5 partidos completos:**")
+            for i, ev in enumerate(all_evs[:5]):
+                with st.expander(f"Partido {i+1}: {ev.get('away', '?')} vs {ev.get('home', '?')} - Score: {ev.get('away_score', '?')} - {ev.get('home_score', '?')}"):
                     col1, col2 = st.columns(2)
                     with col1:
                         st.write("**Básico:**")
                         st.write(f"- id: {ev.get('id', '?')}")
-                        # Mostrar name con fallback
-                        name_display = ev.get('name') or f"{ev.get('away', '?')} vs {ev.get('home', '?')}"
-                        st.write(f"- name: {name_display}")
+                        st.write(f"- name: {ev.get('name', '?')}")
                         st.write(f"- sport: {ev.get('sport', '?')}")
                         st.write(f"- is_live: {ev.get('is_live', False)}")
                         st.write(f"- status_state: {ev.get('status_state', '?')}")
                         st.write(f"- status_detail: {ev.get('status_detail', '?')}")
                     with col2:
                         st.write("**Score:**")
-                        st.write(f"- away_score: {ev.get('away_score', '?')}")
-                        st.write(f"- home_score: {ev.get('home_score', '?')}")
+                        st.write(f"- away_score: '{ev.get('away_score', '?')}' (tipo: {type(ev.get('away_score')).__name__})")
+                        st.write(f"- home_score: '{ev.get('home_score', '?')}' (tipo: {type(ev.get('home_score')).__name__})")
                         st.write(f"- away: {ev.get('away', '?')}")
                         st.write(f"- home: {ev.get('home', '?')}")
                         st.write(f"- date: {ev.get('date', '?')}")
