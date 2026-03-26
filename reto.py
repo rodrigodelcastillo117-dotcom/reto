@@ -1252,7 +1252,7 @@ def espn_search_events(sport: str, league: str, query: str) -> list:
 
         return {
             "id":            ev.get("id", ""),
-            "name":          name,
+            "name":          name or f"{away_info['name']} vs {home_info['name']}",
             "short":         short,
             "home":          home_info["name"],
             "away":          away_info["name"],
