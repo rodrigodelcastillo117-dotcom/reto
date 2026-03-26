@@ -100,18 +100,6 @@ ESPN_LEAGUES_GROUPED = {
         "Mundial de Clubes":             ("soccer", "fifa.cwc"),
         "Apostar":                       ("soccer", "fifa.worldq"),
     },
-    "🏀 Basketball": {
-        "NBA":                   ("basketball", "nba"),
-    },
-    "🏈 American Football": {
-        "NFL":                   ("football", "nfl"),
-    },
-    "⚾ Baseball": {
-        "MLB":                   ("baseball", "mlb"),
-    },
-    "🏒 Hockey": {
-        "NHL":                   ("hockey", "nhl"),
-    },
 }
 
 # Flat lookup by liga name
@@ -1992,7 +1980,7 @@ ALL_TODAY_LEAGUES = [
     ("🌍 Fútbol — Selecciones", "Eliminatorias CONCACAF", "soccer", "fifa.worldq.5"),
     ("🌍 Fútbol — Selecciones", "Nations League UEFA",    "soccer", "uefa.nations"),
     ("🌍 Fútbol — Selecciones", "Amistosos Internac.",    "soccer", "fifa.friendly"),
-    ("🌍 Fútbol — Selecciones", "Fútbol Internacional",   "soccer", "fifa.worldq"),
+    ("🌍 Fútbol — Selecciones", "Apostar",                 "soccer", "fifa.worldq"),
     # Basketball
     ("🏀 Basketball", "NBA",  "basketball", "nba"),
     # Baseball
