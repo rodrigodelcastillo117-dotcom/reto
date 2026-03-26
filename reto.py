@@ -4330,7 +4330,7 @@ def tab_the_pit(apodo: str, bank: float):
                         new_row = [
                             ronda_id,
                             str(today_cdmx.weekday()),
-                            str(today_cdmx.date()),
+                            str(today_cdmx),  # today_cdmx is already a date object
                             apodo,
                             f"{away} vs {home}",
                             liga,
