@@ -4113,7 +4113,27 @@ def tab_the_pit(apodo: str, bank: float):
     
     st.markdown("<div style='font-family: Bebas Neue; font-size: 1.2rem; color: #FFB800; letter-spacing: 2px; margin: 20px 0 15px;'>🎯 4 PARTIDOS - ELIGE TU PICK</div>", unsafe_allow_html=True)
     
-    daily_games = pit_get_daily_games(str(today_cdmx))
+    # Decidir si usar hoy o mañana basado en la hora
+    # Si ya pasaron las 10 PM (22:00), mostrar partidos de MAÑANA
+    use_tomorrow = hour_cdmx >= 22
+    games_date = (today_cdmx + timedelta(days=1)) if use_tomorrow else today_cdmx
+    
+    daily_games = pit_get_daily_games(str(games_date))
+    
+    # FILTRAR: solo partidos que aún no empiezan
+    if daily_games:
+        # Parsear fecha de cada juego y comparar con ahora
+        active_games = []
+        for game in daily_games:
+            try:
+                date_raw = game.get("date_raw","")
+                game_time = datetime.fromisoformat(date_raw.replace("Z","+00:00"))
+                if game_time > now_utc:  # Solo si el partido aún no empieza
+                    active_games.append(game)
+            except:
+                active_games.append(game)  # Si hay error, incluir de todas formas
+        
+        daily_games = active_games[:4]  # Máximo 4 partidos activos
     
     def get_picks_for_sport(sport, away, home, ptype):
         if ptype == "ML":
