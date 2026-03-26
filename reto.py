@@ -3074,7 +3074,7 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         away     = ev["away"]; home = ev["home"]
                         sport_ev = ev.get("sport","soccer")
                         
-                        # ✅ PATCH: Para SOCCER, invertir away/home desde el principio (ESPN los devuelve invertidos)
+                        # ✅ PATCH: Para SOCCER, invertir away/home PORQUE ESPN los devuelve invertidos
                         if sport_ev.lower() == "soccer":
                             away, home = home, away
                         
@@ -3138,17 +3138,10 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             odds_html += (f'<span style="background:rgba(0,180,255,.12);color:#00B4FF;'
                                           f'padding:1px 6px;border-radius:4px;font-size:.58rem">{ho}</span>')
 
-                        # ✅ Logos normales (away/home ya están invertidos para soccer)
-                        if sport_ev.lower() == "soccer":
-                            # Soccer: Away a la IZQUIERDA, Home a la DERECHA
-                            logo_left  = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
-                            logo_right = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
-                            team_left, team_right = away_disp, home_disp
-                        else:
-                            # NBA/etc: Away a la IZQUIERDA, Home a la DERECHA
-                            logo_left  = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
-                            logo_right = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
-                            team_left, team_right = away_disp, home_disp
+                        # ✅ Logos normales (away/home YA están invertidos para soccer)
+                        logo_left  = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
+                        logo_right = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
+                        team_left, team_right = away_disp, home_disp
                         
                         # ✅ Crear columnas para tarjeta y botón
                         card_c, btn_c = st.columns([4, 1])
