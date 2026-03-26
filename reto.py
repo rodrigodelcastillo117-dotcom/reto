@@ -1044,12 +1044,38 @@ def _extract_competitor_info(comp: dict, sport: str) -> dict:
             if "headshot" in link.get("rel", []) or "headshot" in link.get("href",""):
                 logo = link.get("href",""); break
 
+    # ✅ MEJORADA: Buscar score en MÚLTIPLES LUGARES
+    score = ""
+    
+    # Intento 1: score directo (más común)
     score = comp.get("score", "")
-    # Si score es número (int), convertir a string
+    
+    # Intento 2: score en statistics
+    if not score:
+        stats = comp.get("statistics", [])
+        if stats and isinstance(stats, list):
+            for stat in stats:
+                if stat.get("name") == "runs" or stat.get("name") == "goals":
+                    score = stat.get("displayValue", "")
+                    break
+        # Si aún no hay score, toma el primer valor de statistics
+        if not score and stats:
+            score = stats[0].get("displayValue", "") if isinstance(stats[0], dict) else ""
+    
+    # Intento 3: busca en events o plays
+    if not score:
+        events = comp.get("events", [])
+        if isinstance(events, list) and events:
+            score = events[0].get("score", "")
+    
+    # Conversión final: si es número, convertir a string
     if isinstance(score, (int, float)):
         score = str(int(score))
-    elif not score:
+    elif isinstance(score, str):
+        score = score.strip()
+    else:
         score = ""
+    
     return {"name": name or "TBD", "logo": logo, "flag": flag, "score": score}
 
 
