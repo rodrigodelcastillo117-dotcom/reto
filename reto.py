@@ -2450,7 +2450,7 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                                           f'padding:1px 6px;border-radius:4px;font-size:.58rem">{ho}</span>')
 
                         # Card + APOSTAR button side by side
-                        card_c, btn_c = st.columns([6, 3])
+                        card_c, btn_c = st.columns([5, 4])
                         with card_c:
                             st.markdown(
                                 f'<div style="background:{bg};border:1px solid {border};border-radius:10px;'
