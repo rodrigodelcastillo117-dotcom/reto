@@ -2576,8 +2576,8 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         else:
                             away_disp, home_disp = formatted.split("@")
                         is_live  = ev.get("is_live", False)
-                        s_txt    = "⬤ LIVE" if is_live else ev.get("date","")
-                        s_col    = "#FF3D00" if is_live else "#8888AA"
+                        s_txt    = "🔴 EN VIVO" if is_live else ev.get("date","")
+                        s_col    = "#FF0000" if is_live else "#8888AA"
                         ao = float(ev.get("away_odds",0))
                         ho = float(ev.get("home_odds",0))
                         do = float(ev.get("draw_odds",0))
@@ -2586,8 +2586,25 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         qv     = st.session_state.get(f"qp_val_{ev_id}", "")
                         ou_key = f"ou_pending_{ev_id[:10]}"
                         is_open = bool(qv) or bool(st.session_state.get(ou_key))
-                        border  = "rgba(240,255,0,.5)" if is_open else ("rgba(255,61,0,.4)" if is_live else "rgba(255,255,255,.06)")
-                        bg      = "rgba(240,255,0,.04)" if is_open else "transparent"
+                        
+                        # ESTILOS PARA EN VIVO (rojo brillante)
+                        if is_live:
+                            border  = "rgba(255,0,0,.8)"  # Rojo brillante
+                            bg      = "rgba(255,0,0,.15)"  # Fondo rojo oscuro
+                        elif is_open:
+                            border  = "rgba(240,255,0,.5)"
+                            bg      = "rgba(240,255,0,.04)"
+                        else:
+                            border  = "rgba(255,255,255,.06)"
+                            bg      = "transparent"
+
+                        # Obtener score si está EN VIVO
+                        score_html = ""
+                        if is_live:
+                            away_score = ev.get("away_score", -1)
+                            home_score = ev.get("home_score", -1)
+                            if away_score >= 0 and home_score >= 0:
+                                score_html = f'<div style="font-size:.7rem;color:#FF0000;font-weight:700;margin:4px 0;">{away_score} - {home_score}</div>'
 
                         odds_html = ""
                         if ao > 1:
@@ -2603,16 +2620,18 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         card_c, btn_c = st.columns([5, 4])
                         with card_c:
                             st.markdown(
-                                f'<div style="background:{bg};border:1px solid {border};border-radius:10px;'
-                                f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:2px">'
+                                f'<div style="background:{bg};border:2px solid {border};border-radius:10px;'
+                                f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:2px;'
+                                f'{"box-shadow: 0 0 20px rgba(255,0,0,.6);" if is_live else ""}">'
                                 f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">'
                                 f'{a_lg}'
                                 f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
                                 f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{away_disp}</span>'
                                 f'</div>'
                                 f'<div style="font-size:.55rem;color:#44445A;flex-shrink:0;text-align:center;padding:0 4px">'
-                                f'vs<br><span style="font-size:.42rem;color:{s_col};'
-                                f'{"animation:blinkLive 1.2s infinite;" if is_live else ""}">{s_txt}</span>'
+                                f'vs<br><span style="font-size:.42rem;color:{s_col};font-weight:700;'
+                                f'{"animation:blinkLive 1s infinite;" if is_live else ""}">{s_txt}</span>'
+                                f'{score_html}'
                                 f'</div>'
                                 f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0;justify-content:flex-end">'
                                 f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
