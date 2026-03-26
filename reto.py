@@ -3144,14 +3144,15 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             logo_left, logo_right = a_lg, h_lg
                             team_left, team_right = away_disp, home_disp
                         
-                        # ✅ Tarjeta CLICKEABLE - toda es el botón (JavaScript puro)
+                        # ✅ Tarjeta CLICKEABLE - es el único botón
                         menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
                         
                         st.markdown(
-                            f'<div id="card_{ev_id[:10]}" style="background:{bg};border:{border_width} solid {border};border-radius:10px;'
-                            f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:2px;{glow};'
+                            f'<div style="background:{bg};border:{border_width} solid {border};border-radius:10px;'
+                            f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:8px;{glow};'
                             f'cursor:pointer;transition:all 0.2s;'
-                            f'" onclick="document.querySelector(\'button[key=\\\"open_{ev_id[:10]}\\\"]\').click()">'
+                            f'hover:opacity:0.9;'
+                            f'" onclick="document.querySelector(\'[key=\\\"open_{ev_id[:10]}\\\"]\').click()">'
                             f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">'
                             f'{logo_left}'
                             f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
@@ -3172,8 +3173,9 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             unsafe_allow_html=True
                         )
                         
-                        # Botón invisible que se gatilla desde el HTML
-                        if st.button("APOSTAR", key=f"open_{ev_id[:10]}"):
+                        # Botón INVISIBLE que controla la lógica
+                        if st.button("", key=f"open_{ev_id[:10]}", 
+                                     help="Click en la tarjeta para abrir opciones de apuesta"):
                             st.session_state[f"open_pick_{ev_id[:10]}"] = not menu_open
                             st.rerun()
 
