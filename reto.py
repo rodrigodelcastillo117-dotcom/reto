@@ -59,21 +59,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ✅ POLLING AUTOMÁTICO PARA EN VIVO (DESACTIVADO POR AHORA)
-# El polling causa demasiadas recargas
-# if "last_refresh" not in st.session_state:
-#     st.session_state.last_refresh = datetime.now()
-# 
-# try:
-#     now = datetime.now()
-#     elapsed = (now - st.session_state.last_refresh).total_seconds()
-#     
-#     if elapsed >= 10:
-#         st.session_state.last_refresh = now
-#         st.rerun()
-# except:
-#     pass
-
 # ─────────────────────────────────────────────────────────────
 #  CONSTANTS
 # ─────────────────────────────────────────────────────────────
