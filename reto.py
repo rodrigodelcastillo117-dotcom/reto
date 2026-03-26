@@ -4166,15 +4166,25 @@ def tab_the_pit(apodo: str, bank: float):
     </div>
     """, unsafe_allow_html=True)
     
-    # Obtener 4 partidos para HOY/MAÑANA usando load_all_today()
+    # Obtener 1 de cada deporte: Soccer, Basketball, Hockey, Football
     daily_games = []
+    sports_to_fetch = ["soccer", "basketball", "hockey", "football"]
+    sports_found = {sport: False for sport in sports_to_fetch}
+    
     try:
         all_today = load_all_today()
         
-        # Flatten all leagues y deportes
+        # Iterate through each sport group
         for sport_group, leagues_dict in all_today.items():
+            if sport_group not in sports_to_fetch:
+                continue
+            if sports_found[sport_group]:
+                continue
+            
+            # Get first event from this sport
             for liga_name, events in leagues_dict.items():
-                for event in events:
+                if events and len(events) > 0:
+                    event = events[0]  # Take first event from this league
                     game_obj = {
                         "id": event.get("id", ""),
                         "away": event.get("away", "?"),
@@ -4184,16 +4194,19 @@ def tab_the_pit(apodo: str, bank: float):
                         "date": event.get("date", "")
                     }
                     daily_games.append(game_obj)
-                    if len(daily_games) >= 4:
-                        break
-                if len(daily_games) >= 4:
-                    break
-            if len(daily_games) >= 4:
-                break
+                    sports_found[sport_group] = True
+                    break  # Got one from this sport, move to next sport
     except Exception as e:
         pass
     
-    daily_games = daily_games[:4]  # Solo 4 partidos
+    # Reorder to: Soccer, Basketball, Hockey, Football
+    ordered_games = []
+    for sport in sports_to_fetch:
+        game = next((g for g in daily_games if g["sport"] == sport), None)
+        if game:
+            ordered_games.append(game)
+    
+    daily_games = ordered_games
     
     def get_picks_for_sport(sport, ptype):
         # Map sport groups to pick values - REALISTIC LINES
