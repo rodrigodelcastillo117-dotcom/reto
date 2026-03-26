@@ -112,10 +112,6 @@ ESPN_LEAGUES_GROUPED = {
     "🏒 Hockey": {
         "NHL":                   ("hockey", "nhl"),
     },
-    "🎾 Tenis": {
-        "ATP (incl. Miami Open)":  ("tennis", "atp"),
-        "WTA (incl. Miami Open)":  ("tennis", "wta"),
-    },
 }
 
 # Flat lookup by liga name
@@ -570,6 +566,34 @@ details summary {
 [data-testid="stExpander"] [data-testid="stExpander"] > div:last-child {
   background: var(--bg3) !important;
 }
+
+/* ── MOBILE RESPONSIVE ── */
+@media (max-width: 768px) {
+  /* Bigger touch targets */
+  .stButton > button {
+    min-height: 44px !important;
+    font-size: .78rem !important;
+  }
+  /* Nav tabs full width */
+  [data-testid="stHorizontalBlock"] { gap: 4px !important; }
+  /* KPI grid 2 columns on mobile */
+  .kpi-grid { grid-template-columns: repeat(2, 1fr) !important; gap: 8px !important; }
+  .kpi-val  { font-size: 1.4rem !important; }
+  /* Bankroll header smaller */
+  .bank-val { font-size: 2rem !important; }
+  /* Pick cards stack */
+  [data-testid="column"] { min-width: 0 !important; }
+  /* Number inputs larger */
+  input[type="number"] { font-size: 1rem !important; min-height: 44px !important; }
+  /* Hide sidebar padding */
+  .block-container { padding: 0.5rem 0.75rem !important; }
+}
+@media (max-width: 480px) {
+  .kpi-grid { grid-template-columns: repeat(2, 1fr) !important; }
+  .bank-val { font-size: 1.6rem !important; }
+  /* Stack save form columns */
+  .stNumberInput input { font-size: .9rem !important; }
+}
 </style>
 <script>
 (function(){
@@ -636,8 +660,6 @@ ODDS_SPORT_MAP = {
     "nfl":                 "americanfootball_nfl",
     "mlb":                 "baseball_mlb",
     "nhl":                 "icehockey_nhl",
-    "atp":                 "tennis_atp_french_open",
-    "wta":                 "tennis_wta_french_open",
 }
 
 # All WC qualifier sport keys to try — covers all paths/confederations
@@ -1513,18 +1535,44 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
     graded = 0
     current_bank = bank
 
+    # Sport→slugs fallback map for when liga name doesn't match ESPN_LEAGUES
+    SPORT_SLUGS = {
+        "soccer":     ["eng.1","esp.1","ita.1","ger.1","fra.1","mex.1","usa.1",
+                       "uefa.champions","conmebol.libertadores","fifa.worldq.6",
+                       "fifa.worldq.2","fifa.worldq.5","fifa.friendly","fifa.worldq.uefa"],
+        "basketball": ["nba"],
+        "football":   ["nfl"],
+        "baseball":   ["mlb"],
+        "hockey":     ["nhl"],
+    }
+
     for idx, row in pending.iterrows():
         event_id = str(row.get("event_id", "")).strip()
-        if not event_id:
+        if not event_id or event_id.startswith("odds_"):
             continue
 
-        liga  = str(row.get("liga", ""))
+        liga     = str(row.get("liga", ""))
+        deporte  = str(row.get("deporte", "soccer")).lower()
+        pick_d   = str(row.get("pick_desc", ""))
+        mercado  = str(row.get("mercado", ""))
+
+        # Try to find sport/league from liga name
         sport_info = ESPN_LEAGUES.get(liga)
-        if not sport_info:
-            continue
-        sport, league = sport_info
+        event_data = None
 
-        event_data = espn_get_event(sport, league, event_id)
+        if sport_info:
+            sport, league = sport_info
+            event_data = espn_get_event(sport, league, event_id)
+
+        # Fallback: try all slugs for the stored deporte
+        if not event_data:
+            slugs = SPORT_SLUGS.get(deporte, SPORT_SLUGS["soccer"])
+            for sl in slugs:
+                sp = deporte if deporte in ("basketball","football","baseball","hockey") else "soccer"
+                event_data = espn_get_event(sp, sl, event_id)
+                if event_data:
+                    break
+
         if not event_data:
             continue
 
@@ -1535,12 +1583,7 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
         if not status.get("completed", False):
             continue
 
-        # Try to determine result
-        resultado = parse_result_from_event(
-            event_data,
-            str(row.get("pick_desc", "")),
-            str(row.get("mercado", ""))
-        )
+        resultado = parse_result_from_event(event_data, pick_d, mercado)
         if resultado is None:
             continue
 
@@ -1550,12 +1593,12 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
             ganancia = round(apuesta * (momio - 1), 2)
         elif resultado == "perdido":
             ganancia = -apuesta
-        else:  # nulo
+        else:
             ganancia = 0.0
 
         new_bank = round(current_bank + ganancia, 2)
         update_pick_row(apodo, idx, resultado, ganancia, new_bank)
-        df.at[idx, "resultado"]    = resultado
+        df.at[idx, "resultado"]     = resultado
         df.at[idx, "ganancia_neta"] = ganancia
         df.at[idx, "bankroll_post"] = new_bank
         current_bank = new_bank
@@ -1815,8 +1858,6 @@ ALL_TODAY_LEAGUES = [
     # Hockey
     ("🏒 Hockey",     "NHL",  "hockey",     "nhl"),
     # Tennis — atp and wta cover all active tournaments including Miami Open
-    ("🎾 Tenis", "ATP Tour",  "tennis", "atp"),
-    ("🎾 Tenis", "WTA Tour",  "tennis", "wta"),
 ]
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -2352,23 +2393,64 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
 
             # ── Save form — show when pick is selected ──────────────
             if qv:
-                def_momio = 1.85
-                aho = float(ev.get("home_odds",0)); aao = float(ev.get("away_odds",0)); ado = float(ev.get("draw_odds",0))
+                # Get odds — try event first, then Odds API
+                aho = float(ev.get("home_odds",0))
+                aao = float(ev.get("away_odds",0))
+                ado = float(ev.get("draw_odds",0))
                 if aho == 0 and aao == 0:
                     try:
-                        for sk in list(ODDS_SPORT_MAP.values())[:6]:
-                            if not sk: continue
-                            cached = odds_fetch_sport(sk)
+                        # Map sport to Odds API key
+                        odds_key_map = {
+                            "basketball": "basketball_nba",
+                            "baseball":   "baseball_mlb",
+                            "hockey":     "icehockey_nhl",
+                            "football":   "americanfootball_nfl",
+                            "soccer":     None,  # handled by ODDS_SPORT_MAP
+                        }
+                        ok = odds_key_map.get(sport_ev)
+                        if ok:
+                            cached = odds_fetch_sport(ok)
                             for cev in cached:
-                                if (ev["home"].lower()[:5] in cev["home"].lower() or cev["home"].lower()[:5] in ev["home"].lower()):
-                                    aho = cev.get("home_odds",0); aao = cev.get("away_odds",0); ado = cev.get("draw_odds",0); break
-                            if aho > 0: break
+                                h_match = ev["home"].lower()[:6] in cev.get("home","").lower()
+                                a_match = ev["away"].lower()[:6] in cev.get("away","").lower()
+                                if h_match or a_match:
+                                    aho = cev.get("home_odds",0)
+                                    aao = cev.get("away_odds",0)
+                                    ado = cev.get("draw_odds",0)
+                                    break
+                        else:
+                            # Soccer — try all mapped keys
+                            for sk in list(ODDS_SPORT_MAP.values())[:8]:
+                                if not sk: continue
+                                cached = odds_fetch_sport(sk)
+                                for cev in cached:
+                                    if ev["home"].lower()[:5] in cev.get("home","").lower():
+                                        aho = cev.get("home_odds",0)
+                                        aao = cev.get("away_odds",0)
+                                        ado = cev.get("draw_odds",0)
+                                        break
+                                if aho > 0: break
                     except Exception:
                         pass
-                if "empate" in qv.lower() and ado > 1:            def_momio = round(ado,2)
-                elif qv.lower()[:5] in home.lower()[:5] and aho>1: def_momio = round(aho,2)
-                elif qv.lower()[:5] in away.lower()[:5] and aao>1: def_momio = round(aao,2)
-                elif aao > 1: def_momio = round(aao,2)
+
+                # Pick momio
+                def_momio = 1.85
+                ql = qv.lower()
+                if "empate" in ql and ado > 1:             def_momio = round(ado, 2)
+                elif home.lower()[:5] in ql and aho > 1:   def_momio = round(aho, 2)
+                elif away.lower()[:5] in ql and aao > 1:   def_momio = round(aao, 2)
+                elif aao > 1:                               def_momio = round(aao, 2)
+
+                # Kelly Criterion: f* = (p*(b+1) - 1) / b  where b = momio-1
+                # Assumes p = implied prob from momio (conservative)
+                def kelly_suggested(momio: float, bankroll: float, fraction: float = 0.25) -> float:
+                    """Quarter-Kelly for safety."""
+                    if momio <= 1: return 0
+                    b = momio - 1
+                    p = 1 / momio          # implied probability
+                    f = (p * (b + 1) - 1) / b
+                    f = max(0, f)
+                    return round(bankroll * f * fraction, 0)
 
                 st.markdown(
                     f'<div style="background:rgba(240,255,0,.06);border:1px solid rgba(240,255,0,.3);'
@@ -2383,9 +2465,25 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                                                value=def_momio, step=0.05,
                                                key=f"qmomio_{ev_id[:10]}")
                 with fc2:
-                    apuesta_v = st.number_input("Apuesta ($MXN)", min_value=1.0,
-                                                 max_value=float(bank), value=100.0, step=50.0,
-                                                 key=f"qapuesta_{ev_id[:10]}")
+                    kelly_val = kelly_suggested(momio_v, bank)
+                    kelly_val = max(50.0, min(kelly_val, bank))
+                    apuesta_v = st.number_input(
+                        f"Apuesta ($MXN)  · Kelly: ${kelly_val:,.0f}",
+                        min_value=1.0, max_value=float(bank),
+                        value=float(kelly_val), step=50.0,
+                        key=f"qapuesta_{ev_id[:10]}"
+                    )
+                    # Kelly warning
+                    pct = apuesta_v / bank * 100
+                    bar_c = "#00FF88" if pct <= 5 else "#FFB800" if pct <= 10 else "#FF2D55"
+                    st.markdown(
+                        f'<div style="display:flex;align-items:center;gap:8px;margin-top:2px">'
+                        f'<div style="flex:1;background:rgba(255,255,255,.05);border-radius:99px;height:4px">'
+                        f'<div style="width:{min(100,pct*4):.0f}%;height:100%;background:{bar_c};border-radius:99px"></div>'
+                        f'</div><span style="font-size:.55rem;color:{bar_c};white-space:nowrap">'
+                        f'{pct:.1f}% bankroll</span></div>',
+                        unsafe_allow_html=True
+                    )
                 with fc3:
                     st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
                     if st.button("💾 OK", key=f"qsave_{ev_id[:10]}", type="primary", use_container_width=True):
@@ -2836,25 +2934,83 @@ def tab_analytics(df: pd.DataFrame, bank: float):
     wr     = wins/total*100 if total else 0
     roi    = resolved["ganancia_neta"].sum()/resolved["apuesta"].sum()*100 if resolved["apuesta"].sum() else 0
     neto   = resolved["ganancia_neta"].sum()
-    racha_list = resolved.sort_values("fecha")["resultado"].tolist()
+    sorted_res = resolved.sort_values("fecha")
+    racha_list = sorted_res["resultado"].tolist()
+
+    # ── Racha calculations ──
+    def max_streak(lst, val):
+        best = cur = 0
+        for r in lst:
+            cur = cur + 1 if r == val else 0
+            best = max(best, cur)
+        return best
+
+    def current_streak(lst):
+        if not lst: return 0, ""
+        last = lst[-1]; cnt = 0
+        for r in reversed(lst):
+            if r == last: cnt += 1
+            else: break
+        return cnt, last
+
+    max_win_streak  = max_streak(racha_list, "ganado")
+    max_loss_streak = max_streak(racha_list, "perdido")
+    cur_streak_n, cur_streak_t = current_streak(racha_list)
+
+    # Days green vs red
+    dias = sorted_res.groupby("fecha")["ganancia_neta"].sum()
+    dias_verde = (dias > 0).sum()
+    dias_rojo  = (dias < 0).sum()
 
     # Tilt alert
-    consec = 0
+    consec_losses = 0
     for r in reversed(racha_list[-6:]):
-        if r=="perdido": consec+=1
+        if r == "perdido": consec_losses += 1
         else: break
-    if consec >= 3:
-        st.markdown(f'<div class="tilt-alert">🧠 <strong>ALERTA DE TILT</strong> — Llevas {consec} pérdidas consecutivas. Considera pausar y revisar tu estrategia antes del próximo pick.</div>', unsafe_allow_html=True)
+    if consec_losses >= 3:
+        st.markdown(
+            f'<div class="tilt-alert">🧠 <strong>ALERTA DE TILT</strong> — '
+            f'Llevas {consec_losses} pérdidas seguidas. Considera pausar.</div>',
+            unsafe_allow_html=True
+        )
 
-    # KPIs
+    # KPIs — Row 1
     st.markdown('<div class="sec-head">Resumen general</div>', unsafe_allow_html=True)
-    gc = "#00FF88" if roi>=0 else "#FF2D55"
+    gc = "#00FF88" if roi >= 0 else "#FF2D55"
     st.markdown(f"""
 <div class="kpi-grid">
   <div class="kpi-box"><div class="kpi-val">{total}</div><div class="kpi-lbl">Total Picks</div></div>
   <div class="kpi-box" style="border-color:rgba(0,255,136,.2)"><div class="kpi-val" style="color:#00FF88">{wr:.1f}%</div><div class="kpi-lbl">Win Rate</div></div>
   <div class="kpi-box" style="border-color:rgba({'0,255,136' if roi>=0 else '255,45,85'},.2)"><div class="kpi-val" style="color:{gc}">{'+' if roi>=0 else ''}{roi:.1f}%</div><div class="kpi-lbl">ROI</div></div>
-  <div class="kpi-box" style="border-color:rgba({'0,255,136' if neto>=0 else '255,45,85'},.2)"><div class="kpi-val" style="color:{gc}">${neto:,.0f}</div><div class="kpi-lbl">Neto</div></div>
+  <div class="kpi-box" style="border-color:rgba({'0,255,136' if neto>=0 else '255,45,85'},.2)"><div class="kpi-val" style="color:{gc}">${neto:,.0f}</div><div class="kpi-lbl">Neto MXN</div></div>
+</div>""", unsafe_allow_html=True)
+
+    # KPIs — Row 2: racha stats
+    st.markdown('<div class="sec-head">Estadísticas de racha</div>', unsafe_allow_html=True)
+    cur_c = "#00FF88" if cur_streak_t == "ganado" else "#FF2D55" if cur_streak_t == "perdido" else "#8888AA"
+    cur_lbl = f"{'🔥' if cur_streak_t=='ganado' else '❄️'} {cur_streak_n} {'ganados' if cur_streak_t=='ganado' else 'perdidos'}" if cur_streak_t else "—"
+    st.markdown(f"""
+<div class="kpi-grid">
+  <div class="kpi-box" style="border-color:rgba(0,255,136,.2)">
+    <div class="kpi-val" style="color:#00FF88">{max_win_streak}</div>
+    <div class="kpi-lbl">Mejor racha ganadora</div>
+  </div>
+  <div class="kpi-box" style="border-color:rgba(255,45,85,.2)">
+    <div class="kpi-val" style="color:#FF2D55">{max_loss_streak}</div>
+    <div class="kpi-lbl">Peor racha perdedora</div>
+  </div>
+  <div class="kpi-box" style="border-color:rgba(0,255,136,.15)">
+    <div class="kpi-val" style="color:#00FF88">{dias_verde}</div>
+    <div class="kpi-lbl">Días verdes 📈</div>
+  </div>
+  <div class="kpi-box" style="border-color:rgba(255,45,85,.15)">
+    <div class="kpi-val" style="color:#FF2D55">{dias_rojo}</div>
+    <div class="kpi-lbl">Días rojos 📉</div>
+  </div>
+  <div class="kpi-box" style="border-color:rgba({cur_c.replace('#','').lstrip('0') or '888888'},.2)">
+    <div class="kpi-val" style="color:{cur_c};font-size:1rem">{cur_lbl}</div>
+    <div class="kpi-lbl">Racha actual</div>
+  </div>
 </div>""", unsafe_allow_html=True)
 
     st.markdown('<div class="sec-head">Racha reciente</div>', unsafe_allow_html=True)
@@ -3379,7 +3535,6 @@ PIT_DAILY_SPORTS = [
     ("🏈 NFL",         "football",   ["nfl"]),
     ("⚾ Baseball",    "baseball",   ["mlb"]),
     ("🏒 Hockey",      "hockey",     ["nhl"]),
-    ("🎾 Tenis",       "tennis",     ["atp","wta"]),
 ]
 
 @st.cache_data(ttl=3600, show_spinner=False)  # refresh every hour
@@ -3540,8 +3695,7 @@ def pit_auto_grade(apodo: str, ronda_id: str, my_record: dict) -> tuple[int, int
             # Fallback: try common slugs
             if not event_data:
                 for sp2, sl2 in [("soccer","eng.1"),("soccer","esp.1"),("basketball","nba"),
-                                  ("football","nfl"),("baseball","mlb"),("hockey","nhl"),
-                                  ("tennis","atp"),("tennis","wta")]:
+                                  ("football","nfl"),("baseball","mlb"),("hockey","nhl")]:
                     event_data = espn_get_event(sp2, sl2, event_id)
                     if event_data:
                         sport = sp2; break
