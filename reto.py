@@ -1302,16 +1302,33 @@ def parse_result_from_event(event_data: dict, pick_desc: str, mercado: str) -> s
         away_name  = scores.get("away", {}).get("name", "").lower()
         total      = home_score + away_score
         pick_low   = pick_desc.strip().lower()
+        # Strip common suffixes from pick_desc for matching
+        pick_clean = pick_low.replace(" ml","").replace(" gana","").replace(" wins","").strip()
         merc_low   = mercado.lower()
 
+        def name_match(team_name: str, pick_text: str) -> bool:
+            """Fuzzy team name match — handles partial names and word overlap."""
+            if not team_name or not pick_text: return False
+            if team_name in pick_text or pick_text in team_name: return True
+            # Word overlap: any meaningful word (>3 chars) from team in pick
+            team_words = [w for w in team_name.split() if len(w) > 3]
+            pick_words = [w for w in pick_text.split() if len(w) > 3]
+            if team_words and any(w in pick_text for w in team_words): return True
+            if pick_words and any(w in team_name for w in pick_words): return True
+            return False
+
         # ── ML / Ganador ──
-        if "ml" in merc_low or "ganador" in merc_low or "1x2" in merc_low or "resultado" in merc_low:
-            if any(w in pick_low for w in home_name.split()) or home_name in pick_low:
+        if "ml" in merc_low or "ganador" in merc_low or "1x2" in merc_low or "resultado" in merc_low or merc_low == "":
+            if name_match(home_name, pick_clean):
                 return "ganado" if home_score > away_score else ("nulo" if home_score == away_score else "perdido")
-            if any(w in pick_low for w in away_name.split()) or away_name in pick_low:
+            if name_match(away_name, pick_clean):
                 return "ganado" if away_score > home_score else ("nulo" if home_score == away_score else "perdido")
-            if "empate" in pick_low or "draw" in pick_low or " x " in pick_low:
+            if "empate" in pick_low or "draw" in pick_low:
                 return "ganado" if home_score == away_score else "perdido"
+            # Last resort: if neither matched by name, try score-based if pick has a team keyword
+            # Just use away team win as default for ML if only one team in game
+            if home_score != away_score:
+                return None  # can't determine which team was picked
 
         # ── Over / Under ──
         if "over" in pick_low or "under" in pick_low or "o/u" in merc_low:
@@ -1329,12 +1346,13 @@ def parse_result_from_event(event_data: dict, pick_desc: str, mercado: str) -> s
                     else: return "perdido"
 
         # ── BTTS ──
-        if "btts" in merc_low or "ambos" in merc_low:
+        if "btts" in merc_low or "ambos" in merc_low or "btts" in pick_low or "ambos" in pick_low:
             both_scored = home_score > 0 and away_score > 0
-            if "si" in pick_low or "yes" in pick_low:
-                return "ganado" if both_scored else "perdido"
-            else:
+            # "btts (ambos anotan)" = YES/Si bet
+            if "no" in pick_low and "anotan" not in pick_low:
                 return "ganado" if not both_scored else "perdido"
+            else:  # Si / Yes / ambos anotan
+                return "ganado" if both_scored else "perdido"
 
         # ── Handicap ──
         if "hándicap" in merc_low or "handicap" in merc_low:
@@ -1535,40 +1553,82 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
     graded = 0
     current_bank = bank
 
-    # Sport→slugs fallback map for when liga name doesn't match ESPN_LEAGUES
+    # Sport→slugs fallback — always try the stored deporte first, then all others
     SPORT_SLUGS = {
-        "soccer":     ["eng.1","esp.1","ita.1","ger.1","fra.1","mex.1","usa.1",
-                       "uefa.champions","conmebol.libertadores","fifa.worldq.6",
-                       "fifa.worldq.2","fifa.worldq.5","fifa.friendly","fifa.worldq.uefa"],
-        "basketball": ["nba"],
-        "football":   ["nfl"],
-        "baseball":   ["mlb"],
-        "hockey":     ["nhl"],
+        "soccer":     ["soccer", "eng.1"],
+        "basketball": ["basketball", "nba"],
+        "football":   ["football", "nfl"],
+        "baseball":   ["baseball", "mlb"],
+        "hockey":     ["hockey", "nhl"],
     }
+    # All sport+league combos to try as last resort
+    ALL_SPORT_SLUGS = [
+        ("basketball", "nba"),
+        ("baseball",   "mlb"),
+        ("hockey",     "nhl"),
+        ("football",   "nfl"),
+        ("soccer",     "eng.1"),
+        ("soccer",     "esp.1"),
+        ("soccer",     "ita.1"),
+        ("soccer",     "ger.1"),
+        ("soccer",     "fra.1"),
+        ("soccer",     "mex.1"),
+        ("soccer",     "usa.1"),
+        ("soccer",     "uefa.champions"),
+        ("soccer",     "conmebol.libertadores"),
+        ("soccer",     "fifa.worldq.6"),
+        ("soccer",     "fifa.worldq.2"),
+        ("soccer",     "fifa.worldq.5"),
+        ("soccer",     "fifa.friendly"),
+        ("soccer",     "fifa.worldq.uefa"),
+    ]
 
     for idx, row in pending.iterrows():
         event_id = str(row.get("event_id", "")).strip()
         if not event_id or event_id.startswith("odds_"):
             continue
 
-        liga     = str(row.get("liga", ""))
-        deporte  = str(row.get("deporte", "soccer")).lower()
-        pick_d   = str(row.get("pick_desc", ""))
-        mercado  = str(row.get("mercado", ""))
+        liga    = str(row.get("liga", ""))
+        deporte = str(row.get("deporte", "")).lower().strip()
+        pick_d  = str(row.get("pick_desc", ""))
+        mercado = str(row.get("mercado", ""))
 
-        # Try to find sport/league from liga name
-        sport_info = ESPN_LEAGUES.get(liga)
         event_data = None
 
+        # 1️⃣ Try liga name → ESPN_LEAGUES lookup
+        sport_info = ESPN_LEAGUES.get(liga)
         if sport_info:
             sport, league = sport_info
             event_data = espn_get_event(sport, league, event_id)
 
-        # Fallback: try all slugs for the stored deporte
+        # 2️⃣ Try stored deporte directly
+        if not event_data and deporte:
+            # Normalize deporte field (may have emojis or display names)
+            dep_map = {
+                "basketball": ("basketball", "nba"),
+                "baseball":   ("baseball",   "mlb"),
+                "hockey":     ("hockey",     "nhl"),
+                "football":   ("football",   "nfl"),
+                "soccer":     ("soccer",     "eng.1"),
+                "🏀":         ("basketball", "nba"),
+                "⚾":         ("baseball",   "mlb"),
+                "🏒":         ("hockey",     "nhl"),
+                "🏈":         ("football",   "nfl"),
+                "⚽":         ("soccer",     "eng.1"),
+                "nba":        ("basketball", "nba"),
+                "mlb":        ("baseball",   "mlb"),
+                "nhl":        ("hockey",     "nhl"),
+                "nfl":        ("football",   "nfl"),
+            }
+            for key, (sp, sl) in dep_map.items():
+                if key in deporte:
+                    event_data = espn_get_event(sp, sl, event_id)
+                    if event_data:
+                        break
+
+        # 3️⃣ Brute-force: try every sport+league combo
         if not event_data:
-            slugs = SPORT_SLUGS.get(deporte, SPORT_SLUGS["soccer"])
-            for sl in slugs:
-                sp = deporte if deporte in ("basketball","football","baseball","hockey") else "soccer"
+            for sp, sl in ALL_SPORT_SLUGS:
                 event_data = espn_get_event(sp, sl, event_id)
                 if event_data:
                     break
@@ -2487,10 +2547,16 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                 with fc3:
                     st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
                     if st.button("💾 OK", key=f"qsave_{ev_id[:10]}", type="primary", use_container_width=True):
+                        # Never save "Cargar todo" as liga — use the real liga from event or fall back to deporte
+                        raw_liga = ev.get("liga", liga_sel) or liga_sel or ""
+                        SPORT_DISPLAY = {"soccer":"⚽ Fútbol","basketball":"🏀 NBA",
+                                         "baseball":"⚾ MLB","hockey":"🏒 NHL","football":"🏈 NFL"}
+                        if not raw_liga or "cargar" in raw_liga.lower() or raw_liga.strip() == "":
+                            raw_liga = SPORT_DISPLAY.get(sport_ev, sport_ev.upper())
                         row = {
                             "fecha":         str(date.today()),
                             "deporte":       sport_ev,
-                            "liga":          ev.get("liga", liga_sel),
+                            "liga":          raw_liga,
                             "partido":       f"{away} vs {home}",
                             "event_id":      ev_id,
                             "mercado":       qm,
