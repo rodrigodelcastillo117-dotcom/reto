@@ -3975,6 +3975,8 @@ def tab_the_pit(apodo: str, bank: float):
     #  AUTO-GRADING: Detectar resultados y restar vidas
     # ═══════════════════════════════════════════════════════════════
     fx_to_show = None
+    grading_debug = []
+    
     try:
         ss = get_ss()
         if ss:
@@ -3989,46 +3991,83 @@ def tab_the_pit(apodo: str, bank: float):
                                  str(p.get("apodo","")).lower().strip() == apodo.lower().strip() and
                                  str(p.get("resultado","")).lower().strip() == "pendiente"]
             
+            grading_debug.append(f"🔍 Picks pendientes de {yesterday}: {len(yesterday_picks)}")
+            
             # Auto-grade cada pick pendiente de ayer
             for pick in yesterday_picks:
                 event_id = pick.get("event_id", "")
                 pick_desc = pick.get("pick_desc", "")
                 pick_type = "ML" if pick_desc in ["Home", "Away"] else "O/U"
+                partido = pick.get("partido", "")
+                
+                grading_debug.append(f"  📋 {partido} - Pick: {pick_desc} (Type: {pick_type})")
                 
                 if not event_id:
+                    grading_debug.append(f"    ❌ Sin event_id")
                     continue
                 
-                # Obtener resultado de ESPN
+                # Obtener resultado de ESPN - Try multiple endpoints
                 resultado_espn = None
-                try:
-                    r = requests.get(f"http://site.api.espn.com/apis/site/v2/sports/baseball/mlb/events/{event_id}", timeout=5)
-                    if r.status_code == 200:
-                        data = r.json()
-                        competition = data.get("competitions", [{}])[0]
+                espn_data = None
+                home_score = None
+                away_score = None
+                
+                # Try common ESPN sports endpoints
+                espn_urls = [
+                    f"http://site.api.espn.com/apis/site/v2/sports/baseball/mlb/events/{event_id}",
+                    f"http://site.api.espn.com/apis/site/v2/sports/basketball/nba/events/{event_id}",
+                    f"http://site.api.espn.com/apis/site/v2/sports/hockey/nhl/events/{event_id}",
+                    f"http://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/events/{event_id}",
+                ]
+                
+                for espn_url in espn_urls:
+                    try:
+                        r = requests.get(espn_url, timeout=5)
+                        if r.status_code == 200:
+                            espn_data = r.json()
+                            grading_debug.append(f"    ✅ ESPN API encontrado")
+                            break
+                    except:
+                        continue
+                
+                if espn_data:
+                    try:
+                        competition = espn_data.get("competitions", [{}])[0]
                         status = competition.get("status", {}).get("type", "")
                         
+                        grading_debug.append(f"    Status: {status}")
+                        
                         if status == "STATUS_FINAL":
-                            # Procesar según pick type
-                            if pick_type == "ML":
-                                # Obtener ganador
-                                competitors = competition.get("competitors", [])
-                                if len(competitors) >= 2:
-                                    home_team = competitors[0].get("displayName", "")
-                                    away_team = competitors[1].get("displayName", "")
-                                    home_score = int(competitors[0].get("score", 0))
-                                    away_score = int(competitors[1].get("score", 0))
-                                    
+                            competitors = competition.get("competitors", [])
+                            if len(competitors) >= 2:
+                                home_score = int(competitors[0].get("score", 0))
+                                away_score = int(competitors[1].get("score", 0))
+                                total_score = home_score + away_score
+                                
+                                grading_debug.append(f"    Resultado: {away_score} - {home_score} (Total: {total_score})")
+                                
+                                # Procesar según pick type
+                                if pick_type == "ML":
                                     winner = "Home" if home_score > away_score else "Away"
                                     resultado = "ganado" if pick_desc == winner else "perdido"
-                            else:
-                                # O/U
-                                total_score = sum(int(c.get("score", 0)) for c in competition.get("competitors", []))
-                                pick_value = float(pick_desc.replace("O", "").replace("U", ""))
-                                resultado = "ganado" if (pick_desc.startswith("O") and total_score > pick_value) or (pick_desc.startswith("U") and total_score < pick_value) else "perdido"
-                            
-                            resultado_espn = resultado
-                except Exception as e:
-                    pass
+                                    grading_debug.append(f"    ML: Ganador={winner}, Tu pick={pick_desc} → {resultado.upper()}")
+                                else:
+                                    # O/U
+                                    pick_value = float(pick_desc.replace("O", "").replace("U", ""))
+                                    if pick_desc.startswith("O"):
+                                        resultado = "ganado" if total_score > pick_value else "perdido"
+                                        grading_debug.append(f"    O/U: {total_score} {'>' if total_score > pick_value else '<'} {pick_value} (O{pick_value}) → {resultado.upper()}")
+                                    else:
+                                        resultado = "ganado" if total_score < pick_value else "perdido"
+                                        grading_debug.append(f"    O/U: {total_score} {'<' if total_score < pick_value else '>'} {pick_value} (U{pick_value}) → {resultado.upper()}")
+                                
+                                resultado_espn = resultado
+                        else:
+                            grading_debug.append(f"    ⏳ Partido aún no finalizado")
+                    except Exception as e:
+                        grading_debug.append(f"    ❌ Error procesando: {str(e)[:50]}")
+                else:
+                    grading_debug.append(f"    ❌ No se encontró en ESPN")
                 
                 # Si detectamos resultado, actualizar en Google Sheets
                 if resultado_espn:
@@ -4042,6 +4081,7 @@ def tab_the_pit(apodo: str, bank: float):
                             row[7] == pick_desc):  # pick_desc
                             # Actualizar resultado en columna 9 (resultado)
                             ws_picks.update_cell(idx + 1, 10, resultado_espn)
+                            grading_debug.append(f"    💾 Actualizado en GSheets: {resultado_espn}")
                             
                             # Aplicar efecto
                             if resultado_espn == "perdido":
@@ -4080,6 +4120,12 @@ def tab_the_pit(apodo: str, bank: float):
     # ═══════════════════════════════════════════════════════════════
     vidas_display = "💚 " * my_vidas + "💀 " * (3 - my_vidas)
     st.markdown(f"<div style='text-align: center; font-size: 2rem; margin: 20px 0;'>{vidas_display}</div>", unsafe_allow_html=True)
+    
+    # Show auto-grading debug if there were picks to grade
+    if grading_debug:
+        with st.expander("🔍 Debug: Auto-Calificación (Ayer)"):
+            for debug_line in grading_debug:
+                st.caption(debug_line)
     
     # Si no tiene vidas, game over
     if my_vidas <= 0:
@@ -4260,6 +4306,7 @@ def tab_the_pit(apodo: str, bank: float):
         liga = game.get("liga", "?")
         game_id = game.get("id", "")
         sport = game.get("sport", "mlb")
+        game_date = game.get("date", "")  # Date/time string
         
         st.markdown(f"""
         <div style="background: rgba(220,20,60,0.12); border: 2px solid rgba(220,20,60,0.3);
@@ -4268,6 +4315,7 @@ def tab_the_pit(apodo: str, bank: float):
             <div style="font-size: 1.1rem; color: #EEEEF5; font-weight: 700; margin-bottom: 6px;">
                 {away} vs {home}
             </div>
+            <div style="font-size: 0.85rem; color: #AAA; margin-top: 8px;">🕐 {game_date}</div>
         </div>
         """, unsafe_allow_html=True)
         
