@@ -3745,21 +3745,19 @@ def pit_auto_grade(apodo: str, ronda_id: str, my_record: dict) -> tuple[int, int
 #  THE PIT — Main tab
 # ─────────────────────────────────────────────────────────────
 def tab_the_pit(apodo: str, bank: float):
-    """THE PIT: Arena de picks diarios - BRUTAL Y ÉPICO"""
+    """THE PIT: 4 partidos al azar cada día. Elige tu pick."""
     from datetime import datetime, timedelta, date
     import random
     
-    # ═══════════════════════════════════════════════════════════════
-    #  CDMX TIME & SEED
-    # ═══════════════════════════════════════════════════════════════
+    # Hora CDMX
     now_utc = datetime.utcnow()
     now_cdmx = now_utc + timedelta(hours=-6)
     today_cdmx = now_cdmx.date()
+    hour_cdmx = now_cdmx.hour
     daily_seed = int(today_cdmx.strftime("%Y%m%d"))
-    random.seed(daily_seed)
     
     # ═══════════════════════════════════════════════════════════════
-    #  HEADER ÉPICO BRUTAL
+    #  HEADER ÉPICO
     # ═══════════════════════════════════════════════════════════════
     st.markdown("""
     <style>
@@ -3780,34 +3778,6 @@ def tab_the_pit(apodo: str, bank: float):
             text-shadow: 0 0 30px #DC143C, 0 0 60px #FF4500;
             margin: 20px 0;
         }
-        .pit-subtitle {
-            text-align: center;
-            color: #FF6B6B;
-            font-size: 1.1rem;
-            letter-spacing: 4px;
-            text-transform: uppercase;
-            margin: 15px 0;
-        }
-        .stat-box {
-            background: rgba(220,20,60,0.15);
-            border: 2px solid rgba(220,20,60,0.4);
-            border-radius: 10px;
-            padding: 20px;
-            margin: 10px 0;
-            text-align: center;
-        }
-        .stat-val {
-            font-size: 3rem;
-            font-weight: 900;
-            color: #FF4500;
-            margin: 10px 0;
-        }
-        .stat-lbl {
-            font-size: 0.9rem;
-            color: #8888AA;
-            text-transform: uppercase;
-            letter-spacing: 2px;
-        }
     </style>
     
     <div class="pit-container">
@@ -3815,37 +3785,35 @@ def tab_the_pit(apodo: str, bank: float):
             ☠️ 🗡️ ⚔️ 🩸 💀
         </div>
         <div class="pit-title">THE PIT</div>
-        <div class="pit-subtitle">🔥 ARENA DE SANGRE Y GLORIA 🔥</div>
-        <div class="pit-subtitle" style="color: #FFB800; font-size: 0.9rem;">MIL ENTRAN · SOLO UNO SALE CON BOLSILLOS LLENOS</div>
+        <div style="text-align: center; color: #FF6B6B; font-size: 1.1rem; letter-spacing: 4px; text-transform: uppercase; margin: 15px 0;">
+            🔥 ELIGE TU PICK DE 4 PARTIDOS AL AZAR 🔥
+        </div>
     </div>
     """, unsafe_allow_html=True)
     
     # ═══════════════════════════════════════════════════════════════
-    #  CARGAR RONDA
+    #  CARGAR RONDA Y DATOS
     # ═══════════════════════════════════════════════════════════════
     if "pit_ronda" not in st.session_state:
         st.session_state["pit_ronda"] = pit_load_ronda_activa()
     ronda = st.session_state["pit_ronda"]
 
     if not ronda:
-        st.markdown("<div style='text-align:center;padding:50px;background:rgba(139,0,0,0.2);border:2px solid #DC143C;border-radius:10px'><div style='font-size:2.5rem;color:#FF2D55;margin-bottom:15px'>⚠️ EL FOSO ESTÁ VACÍO</div><div style='color:#8888AA;font-size:1rem'>No hay ronda activa. El Foso necesita víctimas.</div></div>", unsafe_allow_html=True)
-        st.write("")
+        st.error("⚠️ El Foso está vacío - No hay ronda activa")
         c = st.columns([2,1,2])[1]
         with c:
-            if st.button("⚔ ABRIR EL FOSO", type="primary", use_container_width=True, key="crear_ronda"):
+            if st.button("⚔ ABRIR EL FOSO", type="primary", use_container_width=True):
                 rid = pit_crear_ronda()
                 if rid:
                     st.balloons()
-                    st.success(f"🩸 ¡RONDA #{rid} CREADA! El Foso está hambriento...")
+                    st.success(f"🩸 ¡RONDA #{rid} CREADA!")
                     st.session_state.pop("pit_ronda", None)
                     st.rerun()
         return
 
     ronda_id = str(ronda["ronda_id"])
     
-    # ═══════════════════════════════════════════════════════════════
-    #  CARGAR DATOS (SIN CACHEO)
-    # ═══════════════════════════════════════════════════════════════
+    # Cargar datos SIN CACHEO
     players = pit_load_players(ronda_id)
     ronda_picks = pit_load_picks_ronda(ronda_id)
 
@@ -3860,92 +3828,72 @@ def tab_the_pit(apodo: str, bank: float):
     yo_elim = my_record and my_record.get("estado") == "eliminado"
 
     # ═══════════════════════════════════════════════════════════════
-    #  STATUS BRUTAL
+    #  STATUS RONDA
     # ═══════════════════════════════════════════════════════════════
     col1, col2, col3 = st.columns(3)
-    
     with col1:
-        st.markdown("""
-        <div class="stat-box">
-            <div class="stat-lbl">💀 Entraron</div>
-            <div class="stat-val">""" + str(total) + """</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
+        st.metric("💀 ENTRARON", total)
     with col2:
-        st.markdown("""
-        <div class="stat-box">
-            <div class="stat-lbl">💚 Vivos</div>
-            <div class="stat-val">""" + str(n_vivos) + """</div>
-        </div>
-        """, unsafe_allow_html=True)
-    
+        st.metric("💚 VIVOS", n_vivos)
     with col3:
-        st.markdown("""
-        <div class="stat-box">
-            <div class="stat-lbl">🩸 Caídos</div>
-            <div class="stat-val">""" + str(n_muertos) + """</div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.metric("🩸 CAÍDOS", n_muertos)
 
-    # Progress bar épica
     if total > 0:
         pct = n_muertos / total * 100
-        st.markdown(f"""
-        <div style="background: rgba(255,255,255,0.05); border-radius: 99px; height: 15px; 
-             overflow: hidden; border: 1px solid rgba(220,20,60,0.3); margin: 20px 0;">
-            <div style="width: {pct}%; height: 100%; 
-                 background: linear-gradient(90deg, #DC143C, #FF4500, #8B0000);
-                 border-radius: 99px;
-                 box-shadow: 0 0 20px rgba(220,20,60,0.8)"></div>
-        </div>
-        <div style="text-align: center; color: #FF6B6B; font-size: 0.9rem; letter-spacing: 2px;">
-            {pct:.0f}% CAÍDOS · {100-pct:.0f}% RESPIRAN
-        </div>
-        """, unsafe_allow_html=True)
+        st.progress(pct/100)
+        st.caption(f"{pct:.0f}% CAÍDOS · {100-pct:.0f}% RESPIRAN")
 
     st.write("")
-    
+
     # ═══════════════════════════════════════════════════════════════
-    #  AUTO-VERIFICAR PICKS (SIN CACHEO)
+    #  AUTO-VERIFICAR PICKS
     # ═══════════════════════════════════════════════════════════════
     if yo_vivo and my_record:
         g, p = pit_auto_grade(apodo, ronda_id, my_record)
         if g > 0:
-            st.success(f"🎉 **¡+{g} PICK(S) GANADO(S)!** ¡SOBREVIVISTE OTRO DÍA!")
+            st.success(f"🎉 **¡+{g} PICK(S) GANADO(S)!** ¡SOBREVIVISTE!")
             st.balloons()
             st.rerun()
         elif p > 0:
-            st.error(f"💀 **{p} PICK(S) PERDIDO(S)** - El Foso cobra su precio...")
+            st.error(f"💀 **{p} PICK(S) PERDIDO(S)** - El Foso cobra...")
             st.rerun()
 
     # ═══════════════════════════════════════════════════════════════
-    #  TU STATUS
+    #  ELIMINADO
     # ═══════════════════════════════════════════════════════════════
     if yo_elim:
-        st.markdown(f"""
-        <div style="background: rgba(220,20,60,0.2); border: 3px solid #DC143C;
-             border-radius: 10px; padding: 40px; text-align: center; margin: 20px 0;">
-            <div style="font-size: 5rem; color: #FF2D55; font-weight: 900; letter-spacing: 6px;">
-                💀 ELIMINADO 💀
-            </div>
-            <div style="font-size: 1.2rem; color: #FF6B6B; margin-top: 15px;">
-                Tu pick <strong>'{my_record.get('pick_asesino','?')}'</strong> fue tu perdición
-            </div>
-            <div style="font-size: 1rem; color: #8888AA; margin-top: 15px;">
-                Sobreviviste <strong style="color: #FFB800; font-size: 1.2rem;">{my_record.get('dias_vivo',0)}</strong> día(s) en el Foso
-            </div>
-            <div style="font-size: 0.9rem; color: #44445A; margin-top: 20px; line-height: 1.8;">
-                🔥 La próxima ronda empieza pronto<br>
-                🎯 Prepárate para la venganza<br>
-                💪 El Foso siempre necesita más víctimas
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        st.error(f"💀 ELIMINADO - Pick: '{my_record.get('pick_asesino','?')}' | Duración: {my_record.get('dias_vivo',0)} día(s)")
         return
 
     # ═══════════════════════════════════════════════════════════════
-    #  PICK DEL DÍA
+    #  4 PARTIDOS DEL DÍA
+    # ═══════════════════════════════════════════════════════════════
+    st.markdown("<div style='font-family: Bebas Neue; font-size: 1.2rem; color: #FFB800; letter-spacing: 2px; margin: 20px 0 15px;'>🎯 4 PARTIDOS DEL DÍA</div>", unsafe_allow_html=True)
+    
+    daily_games = pit_get_daily_games(str(today_cdmx))
+    
+    if daily_games:
+        for game in daily_games:
+            sport_label = game.get("pit_sport_label","?")
+            away = game.get("away_name","?")
+            home = game.get("home_name","?")
+            
+            st.markdown(f"""
+            <div style="background: rgba(220,20,60,0.08); border: 1px solid rgba(220,20,60,0.25);
+                 border-radius: 8px; padding: 12px 16px; margin-bottom: 8px;">
+                <div style="font-weight: 700; color: #EEEEF5;">{sport_label}</div>
+                <div style="font-size: 0.9rem; color: #8888AA; margin-top: 5px;">
+                    {away} vs {home}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.warning("⚠️ No hay partidos disponibles hoy")
+
+    st.write("")
+
+    # ═══════════════════════════════════════════════════════════════
+    #  TU PICK HOY
     # ═══════════════════════════════════════════════════════════════
     if yo_vivo:
         today_pick = next(
@@ -3953,108 +3901,85 @@ def tab_the_pit(apodo: str, bank: float):
             None
         )
         
+        # ALERTA SI ES DESPUÉS DE LAS 3 PM Y NO ELEGISTE
+        if not today_pick and hour_cdmx >= 15:
+            st.error(f"⚠️ **¡SON LAS {hour_cdmx:02d}:{now_cdmx.minute:02d} CDMX!** Aún no elegiste pick. Vuelve a REGISTRAR.")
+        
         if today_pick:
             st.markdown(f"""
-            <div style="background: linear-gradient(135deg, rgba(0,255,136,0.15), rgba(0,200,100,0.08));
-                 border: 2px solid rgba(0,255,136,0.4); border-radius: 10px; padding: 20px; margin: 20px 0;">
-                <div style="font-size: 1.1rem; color: #00FF88; font-weight: 700; margin-bottom: 12px; letter-spacing: 2px;">
-                    ✅ PICK DE HOY REGISTRADO
-                </div>
+            <div style="background: rgba(0,255,136,0.15); border: 3px solid #00FF88; border-radius: 10px;
+                 padding: 20px; margin: 20px 0; box-shadow: 0 0 30px rgba(0,255,136,0.4);">
+                <div style="font-size: 1.1rem; color: #00FF88; font-weight: 700; margin-bottom: 10px;">✅ TU PICK HOY</div>
                 <div style="font-size: 1.2rem; color: #EEEEF5; font-weight: 700;">
-                    {today_pick.get('pick_texto','')} @ {today_pick.get('momio',1.5):.2f}x
-                </div>
-                <div style="font-size: 0.9rem; color: #8888AA; margin-top: 10px;">
-                    Apuesta: ${today_pick.get('apuesta',0)} MXN
+                    {today_pick.get('pick_texto','')}
                 </div>
             </div>
             """, unsafe_allow_html=True)
         else:
-            st.markdown("""
-            <div style="background: rgba(255,180,0,0.1); border: 2px dashed rgba(255,180,0,0.4);
-                 border-radius: 10px; padding: 30px; text-align: center; margin: 20px 0;">
-                <div style="font-size: 1.1rem; color: #FFB800; font-weight: 700; letter-spacing: 2px;">
-                    📌 AÚN NO ELEGISTE PICK PARA HOY
-                </div>
-                <div style="font-size: 0.9rem; color: #8888AA; margin-top: 10px;">
-                    Vuelve a REGISTRAR y elige tu pick antes de medianoche CDMX
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
+            st.info("📌 Vuelve a REGISTRAR y elige tu pick de los 4 partidos")
 
     st.write("")
+
+    # ═══════════════════════════════════════════════════════════════
+    #  PICKS DE HOY - TODOS
+    # ═══════════════════════════════════════════════════════════════
+    st.markdown("<div style='font-family: Bebas Neue; font-size: 1.1rem; color: #FFB800; letter-spacing: 2px; margin: 20px 0 10px;'>📊 PICKS REGISTRADOS HOY</div>", unsafe_allow_html=True)
     
+    today_picks = [p for p in ronda_picks if str(p.get("fecha","")) == str(date.today())]
+    
+    if today_picks:
+        for pick in sorted(today_picks, key=lambda x: x.get("apodo","").lower()):
+            apodo_p = pick.get("apodo","?")
+            pick_txt = pick.get("pick_texto","?")
+            resultado = pick.get("resultado","pendiente").upper()
+            
+            if resultado == "GANADO":
+                emoji = "✅"
+                color = "#00FF88"
+            elif resultado == "PERDIDO":
+                emoji = "❌"
+                color = "#FF6B6B"
+            else:
+                emoji = "⏳"
+                color = "#FFB800"
+            
+            es_mio = apodo_p.lower() == apodo.lower()
+            borde = " border: 3px solid #00FF88;" if es_mio else ""
+            
+            st.markdown(f"""
+            <div style="background: rgba(220,20,60,0.08); border: 1px solid rgba(220,20,60,0.25);{borde}
+                 border-radius: 8px; padding: 10px 14px; margin-bottom: 6px; display: grid;
+                 grid-template-columns: 2fr 1fr 0.5fr; gap: 12px; align-items: center; font-size: 0.9rem;">
+                <div style="color: #EEEEF5; font-weight: 700;">
+                    {apodo_p}{"  👑" if es_mio else ""}
+                </div>
+                <div style="color: #8888AA;">{pick_txt}</div>
+                <div style="text-align: center; color: {color}; font-size: 1rem;">{emoji}</div>
+            </div>
+            """, unsafe_allow_html=True)
+    else:
+        st.caption("⚠️ Sin picks aún")
+
+    st.write("")
+
     # ═══════════════════════════════════════════════════════════════
-    #  STANDINGS ÉPICO
+    #  STANDINGS
     # ═══════════════════════════════════════════════════════════════
-    st.markdown("""
-    <div style="font-family: 'Bebas Neue', sans-serif; font-size: 1.4rem; color: #FFB800;
-         letter-spacing: 3px; margin: 30px 0 20px; text-transform: uppercase;">
-        🏆 TABLA DE SANGRE - STANDINGS
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("<div style='font-family: Bebas Neue; font-size: 1.1rem; color: #FFB800; letter-spacing: 2px; margin: 20px 0 10px;'>🏆 STANDINGS</div>", unsafe_allow_html=True)
     
     if vivos:
-        vivos_sorted = sorted(vivos, key=lambda x: x.get("picks_ganados", 0), reverse=True)
-        
-        for rank, p in enumerate(vivos_sorted[:15], 1):
+        vivos_sorted = sorted(vivos, key=lambda x: x.get("picks_ganados", 0), reverse=True)[:10]
+        for rank, p in enumerate(vivos_sorted, 1):
             apodo_p = p.get('apodo','?')
             ganados = p.get('picks_ganados', 0)
             perdidos = p.get('picks_perdidos', 0)
             vidas = max(0, 3 - perdidos)
             vidas_visual = "💚" * vidas + "🖤" * (3 - vidas)
-            record = ganados - perdidos
+            emoji = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"][rank-1]
             
-            # Color según vidas
-            if vidas == 3:
-                border_color = "rgba(0,255,136,0.4)"
-                bg_color = "rgba(0,255,136,0.08)"
-            elif vidas == 2:
-                border_color = "rgba(255,180,0,0.4)"
-                bg_color = "rgba(255,180,0,0.08)"
-            elif vidas == 1:
-                border_color = "rgba(255,107,0,0.4)"
-                bg_color = "rgba(255,107,0,0.08)"
-            else:
-                border_color = "rgba(220,20,60,0.4)"
-                bg_color = "rgba(220,20,60,0.08)"
-            
-            emoji = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟", "1️⃣1️⃣", "1️⃣2️⃣", "1️⃣3️⃣", "1️⃣4️⃣", "1️⃣5️⃣"][rank-1]
-            
-            record_color = "#00FF88" if record > 0 else "#FF6B6B" if record < 0 else "#8888AA"
-            
-            st.markdown(f"""
-            <div style="background: {bg_color}; border: 2px solid {border_color}; border-radius: 10px;
-                 padding: 15px 20px; margin-bottom: 10px; display: flex; justify-content: space-between;
-                 align-items: center;">
-                <div style="flex: 1;">
-                    <div style="font-size: 1.1rem; font-weight: 700; color: #EEEEF5;">
-                        {emoji} <strong>{apodo_p}</strong>
-                    </div>
-                    <div style="font-size: 0.85rem; color: #8888AA; margin-top: 5px;">
-                        Record: <span style="color: {record_color}; font-weight: 700; font-size: 1rem;">{record:+d}</span>
-                        ({ganados}W - {perdidos}L)
-                    </div>
-                </div>
-                <div style="font-size: 1.3rem; letter-spacing: 3px; text-align: right;">
-                    {vidas_visual}
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-    else:
-        st.info("⚠️ El Foso está vacío - No hay gladiadores")
+            st.write(f"{emoji} **{apodo_p}** • {ganados}W-{perdidos}L • {vidas_visual}")
 
-    st.write("")
-    
-    # ═══════════════════════════════════════════════════════════════
-    #  FOOTER ÉPICO
-    # ═══════════════════════════════════════════════════════════════
-    st.markdown(f"""
-    <div style="text-align: center; font-family: 'JetBrains Mono', monospace;
-         font-size: 0.8rem; color: #FF6B6B; letter-spacing: 3px;
-         margin-top: 40px; padding-top: 20px; border-top: 2px solid rgba(220,20,60,0.3);">
-        ⚔️ RONDA #{ronda_id} · CDMX {now_cdmx.strftime('%H:%M')} · SEED: {daily_seed} ⚔️
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown(f"---\n🔴 RONDA #{ronda_id} · CDMX {now_cdmx.strftime('%H:%M')} · SEED: {daily_seed}")
 
 
 def main():
