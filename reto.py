@@ -3144,7 +3144,7 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             logo_left, logo_right = a_lg, h_lg
                             team_left, team_right = away_disp, home_disp
                         
-                        # ✅ Tarjeta CLICKEABLE - es el único botón
+                        # ✅ Tarjeta CLICKEABLE que abre el panel de apuestas
                         menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
                         
                         st.markdown(
@@ -3152,7 +3152,13 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:8px;{glow};'
                             f'cursor:pointer;transition:all 0.2s;'
                             f'hover:opacity:0.9;'
-                            f'" onclick="window.location.hash=\'click_{ev_id[:10]}\';window.location.reload()">'
+                            f'" onclick="'
+                            f'var state = JSON.parse(sessionStorage.getItem(\'st_state\') || \'{{}}\');'
+                            f'state[\'open_pick_{ev_id[:10]}\'] = !state[\'open_pick_{ev_id[:10]}\'];'
+                            f'sessionStorage.setItem(\'st_state\', JSON.stringify(state));'
+                            f'window.location.hash = \'click_{ev_id[:10]}\';'
+                            f'location.reload();'
+                            f'">'
                             f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">'
                             f'{logo_left}'
                             f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
@@ -3172,13 +3178,6 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             f'</div>',
                             unsafe_allow_html=True
                         )
-                        
-                        # ✅ Cambiar estado sin mostrar botón
-                        menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
-                        if st.session_state.get(f"click_trigger_{ev_id[:10]}", False):
-                            st.session_state[f"open_pick_{ev_id[:10]}"] = not menu_open
-                            st.session_state[f"click_trigger_{ev_id[:10]}"] = False
-                            st.rerun()
                         
                         # ✅ Cambiar estado sin mostrar botón
                         menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
