@@ -1164,7 +1164,16 @@ def espn_search_events(sport: str, league: str, query: str) -> list:
         status_name  = status_type.get("name", "STATUS_SCHEDULED")
         status_short = status_type.get("shortDetail", "")
         completed    = (state == "post") or status_type.get("completed", False)
-        is_live      = (state == "in") and not completed
+        
+        # ✅ DETECCIÓN MEJORADA DE EN VIVO:
+        # - Si state == "in": EN VIVO
+        # - Si shortDetail tiene minuto (ej: "83'", "2nd", "4th"): EN VIVO
+        is_live = False
+        if state == "in" and not completed:
+            is_live = True
+        elif status_short and any(x in status_short.lower() for x in ["'", "nd", "st", "rd", "th", "inning"]):
+            # Detecta: "83'", "2nd", "3rd", "1st", "4th", "1 inning", etc
+            is_live = True
 
         # ── Skip completed (past) games — only show live or upcoming ──
         if completed and not is_live:
@@ -2576,7 +2585,12 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         else:
                             away_disp, home_disp = formatted.split("@")
                         is_live  = ev.get("is_live", False)
-                        s_txt    = "🔴 EN VIVO" if is_live else ev.get("date","")
+                        # Mostrar minuto si es EN VIVO, si no mostrar fecha
+                        if is_live:
+                            status_detail = ev.get("status_detail", "")
+                            s_txt = f"🔴 {status_detail}" if status_detail else "🔴 EN VIVO"
+                        else:
+                            s_txt = ev.get("date","")
                         s_col    = "#FF0000" if is_live else "#8888AA"
                         ao = float(ev.get("away_odds",0))
                         ho = float(ev.get("home_odds",0))
