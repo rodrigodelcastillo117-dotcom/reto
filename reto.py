@@ -2835,7 +2835,7 @@ def tab_historial(apodo: str, df: pd.DataFrame):
                              unsafe_allow_html=True)
             with r2:
                 st.markdown(
-                    f'<div style="font-size:.95rem;font-weight:700;color:#EEEEF5">{partido}</div>'
+                    f'<div style="font-size:.95rem;font-weight:700;color:#EEEEF5">{format_partido_para_display(partido, deporte)}</div>'
                     f'<div style="font-size:.62rem;color:#8888AA;margin-top:1px">{liga}'
                     f'{"  ·  " + mercado if mercado else ""}</div>',
                     unsafe_allow_html=True)
@@ -4531,7 +4531,7 @@ def tab_the_pit(apodo: str, bank: float):
              border-radius: 10px; padding: 16px; margin-bottom: 15px;">
             <div style="font-weight: 700; color: #FF4500; margin-bottom: 8px;">{liga}</div>
             <div style="font-size: 1.1rem; color: #EEEEF5; font-weight: 700; margin-bottom: 6px;">
-                {away} vs {home}
+                {format_partido_para_display(f"{away}@{home}", sport)}
             </div>
             <div style="font-size: 0.85rem; color: #AAA; margin-top: 8px;">🕐 {game_date}</div>
         </div>
@@ -4550,7 +4550,7 @@ def tab_the_pit(apodo: str, bank: float):
                             str(today_cdmx.weekday()),
                             str(today_cdmx),  # today_cdmx is already a date object
                             apodo,
-                            f"{away} vs {home}",
+                            f"{away}@{home}",  # Guardar como Away@Home
                             liga,
                             game_id,
                             value,
@@ -4561,7 +4561,7 @@ def tab_the_pit(apodo: str, bank: float):
                         ws_picks.append_row(new_row)
                         st.session_state.pop("pit_picks", None)
                         st.session_state.pop("pit_ronda", None)
-                        st.success(f"✅ Pick guardado: {away} vs {home} - {value}")
+                        st.success(f"✅ Pick guardado: {format_partido_para_display(f'{away}@{home}', sport)} - {value}")
                         time.sleep(1)
                         st.rerun()
                     except Exception as e:
