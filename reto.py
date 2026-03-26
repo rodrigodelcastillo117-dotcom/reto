@@ -3121,59 +3121,83 @@ def tab_analytics(df: pd.DataFrame, bank: float):
     st.markdown('<div class="sec-head">Racha reciente</div>', unsafe_allow_html=True)
     st.markdown(racha_html(racha_list), unsafe_allow_html=True)
 
-    # ── Bankroll chart — logarithmic
-    st.markdown('<div class="sec-head">Evolución del bankroll (escala logarítmica)</div>', unsafe_allow_html=True)
+    # ── Bankroll chart
+    st.markdown('<div class="sec-head">Evolución del bankroll</div>', unsafe_allow_html=True)
     bank_df = resolved.sort_values("fecha").copy()
 
-    # Reconstruct bankroll from ganancia_neta if bankroll_post is flat/wrong
-    bp_vals = bank_df["bankroll_post"].tolist()
-    gn_vals = bank_df["ganancia_neta"].tolist()
-    # Detect if bankroll_post is all the same value (flat = broken)
-    if len(set(round(v,0) for v in bp_vals)) <= 1:
-        # Rebuild from START_BANK + cumulative ganancia_neta
-        running = START_BANK
-        bank_vals = [START_BANK]
-        for g in gn_vals:
-            running = round(running + float(g), 2)
-            bank_vals.append(max(running, 1))
-    else:
-        bank_vals = [START_BANK] + [max(v, 1) for v in bp_vals]
+    # Always reconstruct from ganancia_neta for accuracy
+    running = START_BANK
+    bank_vals = [START_BANK]
+    labels = ["Inicio"]
+    for _, r in bank_df.iterrows():
+        running = round(running + float(r.get("ganancia_neta", 0)), 2)
+        bank_vals.append(max(running, 0.01))
+        partido = str(r.get("partido",""))
+        pick_d  = str(r.get("pick_desc",""))
+        res     = str(r.get("resultado",""))
+        labels.append(f"{partido[:20]}<br>{pick_d[:15]} → {res}")
 
-    # Dynamic log ticks based on max
-    max_val  = max(bank_vals + [bank])
-    log_ticks = [10_000, 25_000, 50_000, 100_000, 250_000, 500_000,
-                 1_000_000, 2_500_000, 5_000_000, 13_000_000]
-    log_ticks = [t for t in log_ticks if t <= max_val * 3]
+    max_val = max(bank_vals)
+    min_val = min(bank_vals)
+
+    # Use log scale only if range spans more than 10x
+    use_log = (max_val / max(min_val, 1)) > 10
 
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        y=bank_vals, mode="lines+markers",
+        x=list(range(len(bank_vals))),
+        y=bank_vals,
+        mode="lines+markers",
+        text=labels,
+        hovertemplate="%{text}<br><b>$%{y:,.0f}</b><extra></extra>",
         line=dict(color="#FF3D00", width=2.5),
-        marker=dict(size=6, color="#FFB800",
-                    line=dict(color="#FF3D00", width=1)),
+        marker=dict(
+            size=8, color=["#F0FF00"] + ["#00FF88" if v >= bank_vals[i] else "#FF2D55"
+                           for i, v in enumerate(bank_vals[1:])],
+            line=dict(color="#FF3D00", width=1)
+        ),
         fill="tozeroy",
         fillcolor="rgba(255,61,0,0.06)",
         name="Bankroll",
     ))
-    fig.add_hline(y=RETO_GOAL, line_dash="dot", line_color="#BF5FFF", line_width=1.5,
-                  annotation_text="META $13M", annotation_font_color="#BF5FFF",
-                  annotation_font_size=10)
+    # Reference lines
     fig.add_hline(y=START_BANK, line_dash="dash", line_color="#F0FF00", line_width=1,
-                  annotation_text="INICIO", annotation_font_color="#F0FF00",
-                  annotation_font_size=9)
+                  annotation_text=f"INICIO ${START_BANK:,.0f}",
+                  annotation_font_color="#F0FF00", annotation_font_size=9)
+    if use_log:
+        fig.add_hline(y=RETO_GOAL, line_dash="dot", line_color="#BF5FFF", line_width=1.5,
+                      annotation_text="META $13M", annotation_font_color="#BF5FFF",
+                      annotation_font_size=10)
+
+    # Y axis — show actual $ values around current range
+    y_min = max(0.01, min_val * 0.95)
+    y_max = max_val * 1.05
+
+    if use_log:
+        log_ticks = [1_000, 5_000, 10_000, 50_000, 100_000, 500_000,
+                     1_000_000, 5_000_000, 13_000_000]
+        log_ticks = [t for t in log_ticks if y_min <= t <= y_max * 2]
+        yaxis_cfg = dict(type="log", tickvals=log_ticks,
+                         ticktext=[f"${v:,.0f}" for v in log_ticks],
+                         showgrid=True, gridcolor="rgba(255,255,255,0.05)", zeroline=False)
+    else:
+        # Linear — show actual range with nice ticks
+        tick_step = max(10, round((y_max - y_min) / 5, -1))
+        import math
+        tick_step = 10 ** math.floor(math.log10(max(1, y_max - y_min))) // 2
+        tick_step = max(10, tick_step)
+        yaxis_cfg = dict(type="linear", range=[y_min, y_max],
+                         tickformat="$,.0f",
+                         showgrid=True, gridcolor="rgba(255,255,255,0.05)", zeroline=False)
+
     fig.update_layout(
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
         font=dict(color="#8888AA", family="JetBrains Mono"),
-        margin=dict(l=10, r=10, t=10, b=10), height=260,
+        margin=dict(l=10, r=10, t=10, b=10), height=280,
         showlegend=False,
-        xaxis=dict(showgrid=False, zeroline=False),
-        yaxis=dict(
-            type="log",
-            tickvals=log_ticks,
-            ticktext=[f"${v:,.0f}" for v in log_ticks],
-            showgrid=True, gridcolor="rgba(255,255,255,0.05)",
-            zeroline=False,
-        ),
+        xaxis=dict(showgrid=False, zeroline=False, showticklabels=False,
+                   title="Picks →"),
+        yaxis=yaxis_cfg,
     )
     st.plotly_chart(fig, use_container_width=True)
 
