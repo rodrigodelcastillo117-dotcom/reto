@@ -1285,59 +1285,53 @@ def parse_result_from_event(event_data: dict, pick_desc: str, mercado: str) -> s
     try:
         import re as _re
 
-        # ── Extract scores and team names — try multiple paths ──
+        # ── Extract scores and team names — header is the reliable source ──
         home_score, away_score = 0.0, 0.0
         home_name,  away_name  = "", ""
 
-        # Path 1: boxscore.teams
-        comp_data = event_data.get("boxscore", {}).get("teams", [])
-        if comp_data:
-            for t in comp_data:
-                side  = t.get("homeAway", "")
-                name  = (t.get("team", {}).get("displayName","") or
-                         t.get("team", {}).get("name","") or
-                         t.get("team", {}).get("shortDisplayName",""))
-                score_raw = t.get("score","0") or "0"
-                try: score = float(score_raw)
+        # Primary: header.competitions[0].competitors — scores are HERE
+        comps_list = (event_data.get("header",{})
+                                .get("competitions",[{}])[0]
+                                .get("competitors",[]))
+        for c in comps_list:
+            side  = c.get("homeAway","")
+            team  = c.get("team",{})
+            name  = (team.get("displayName","") or team.get("name","") or
+                     team.get("shortDisplayName","") or c.get("name",""))
+            score_raw = str(c.get("score","") or "")
+            try: score = float(score_raw) if score_raw.strip() else 0.0
+            except: score = 0.0
+            if side == "home":   home_score = score; home_name = name.lower()
+            elif side == "away": away_score = score; away_name = name.lower()
+
+        # Fallback: boxscore.teams for names if header didn't have them
+        if not home_name or not away_name:
+            for t in event_data.get("boxscore",{}).get("teams",[]):
+                side  = t.get("homeAway","")
+                name  = (t.get("team",{}).get("displayName","") or
+                         t.get("team",{}).get("name",""))
+                score_raw = str(t.get("score","") or "")
+                try: score = float(score_raw) if score_raw.strip() else 0.0
                 except: score = 0.0
-                if side == "home":   home_score = score; home_name = name.lower()
-                elif side == "away": away_score = score; away_name = name.lower()
+                if side == "home" and not home_name:
+                    home_score = score; home_name = name.lower()
+                elif side == "away" and not away_name:
+                    away_score = score; away_name = name.lower()
 
-        # Path 2: header.competitions[0].competitors
-        if not home_name and not away_name:
-            comps = (event_data.get("header",{})
-                               .get("competitions",[{}])[0]
-                               .get("competitors",[]))
-            for c in comps:
-                side  = c.get("homeAway","")
-                team  = c.get("team",{})
-                name  = (team.get("displayName","") or team.get("name","") or
-                         team.get("shortDisplayName","") or c.get("name",""))
-                score_raw = c.get("score","0") or "0"
-                try: score = float(score_raw)
-                except: score = 0.0
-                if side == "home":   home_score = score; home_name = name.lower()
-                elif side == "away": away_score = score; away_name = name.lower()
+        total = home_score + away_score
 
-        # Path 3: header directly
-        if not home_name and not away_name:
-            header_comps = event_data.get("header",{}).get("competitions",[])
-            if header_comps:
-                for c in header_comps[0].get("competitors",[]):
-                    side = c.get("homeAway","")
-                    name = c.get("team",{}).get("displayName","") or c.get("athlete",{}).get("displayName","")
-                    score_raw = c.get("score","0") or "0"
-                    try: score = float(score_raw)
-                    except: score = 0.0
-                    if side == "home":   home_score = score; home_name = name.lower()
-                    elif side == "away": away_score = score; away_name = name.lower()
+        # Clean pick_desc — strip emojis and suffixes
+        import unicodedata
+        def strip_emojis(s: str) -> str:
+            return "".join(c for c in s if unicodedata.category(c) not in ("So","Sk","Sm") and ord(c) < 0x10000).strip()
 
-        total     = home_score + away_score
-        pick_low  = pick_desc.strip().lower()
+        pick_low   = strip_emojis(pick_desc.strip()).lower()
         pick_clean = (pick_low
                       .replace(" ml","").replace(" gana","").replace(" wins","")
-                      .replace(" money line","").strip())
-        merc_low  = mercado.strip().lower()
+                      .replace(" money line","").replace("🏆","").replace("🎯","")
+                      .replace("⚽","").replace("🏀","").replace("⚾","").replace("🏒","")
+                      .strip())
+        merc_low   = mercado.strip().lower()
 
         def name_match(team: str, pick: str) -> bool:
             if not team or not pick: return False
@@ -1672,25 +1666,6 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
         comps  = header.get("competitions", [{}])
         status = comps[0].get("status", {}).get("type", {}) if comps else {}
         completed = status.get("completed", False)
-
-        # DEBUG — store in session_state so we can see it
-        dbg_key = f"grade_debug_{event_id[:8]}"
-        try:
-            comp_data = event_data.get("boxscore", {}).get("teams", [])
-            header_comps = comps[0].get("competitors", []) if comps else []
-            dbg_names = []
-            for t in comp_data:
-                dbg_names.append(f"box:{t.get('homeAway','')}={t.get('team',{}).get('displayName','')}:{t.get('score','?')}")
-            for c in header_comps:
-                dbg_names.append(f"hdr:{c.get('homeAway','')}={c.get('team',{}).get('displayName','')}:{c.get('score','?')}")
-            st.session_state[dbg_key] = {
-                "completed": completed,
-                "pick_desc": pick_d,
-                "mercado": mercado,
-                "names": dbg_names,
-            }
-        except Exception:
-            pass
 
         if not completed:
             continue
@@ -4465,16 +4440,8 @@ def main():
                     f'<div class="autobanner">⚡ Auto-calificador: <strong>{graded} pick(s)</strong> resueltos automáticamente desde ESPN.</div>',
                     unsafe_allow_html=True
                 )
-            # Show debug info for failed gradings
-            debug_keys = [k for k in st.session_state if k.startswith("grade_debug_")]
-            if debug_keys:
-                with st.expander("🔍 Debug auto-calificador", expanded=False):
-                    for dk in debug_keys:
-                        d = st.session_state[dk]
-                        st.write(f"**Pick:** {d.get('pick_desc')} | **Mercado:** {d.get('mercado')} | **Completado:** {d.get('completed')}")
-                        st.write(f"**ESPN names:** {d.get('names')}")
-        except Exception as e:
-            st.caption(f"Auto-calificador error: {e}")
+        except Exception:
+            pass
     else:
         bank = get_bankroll(df)
 
