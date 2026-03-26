@@ -2521,6 +2521,12 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         ev_id    = ev["id"]
                         away     = ev["away"]; home = ev["home"]
                         sport_ev = ev.get("sport","soccer")
+                        # Formatear según deporte
+                        formatted = format_partido_para_display(f"{away}@{home}", sport_ev)
+                        if sport_ev.lower() == "soccer":
+                            away_disp, home_disp = formatted.split(" vs ")
+                        else:
+                            away_disp, home_disp = formatted.split("@")
                         is_live  = ev.get("is_live", False)
                         s_txt    = "⬤ LIVE" if is_live else ev.get("date","")
                         s_col    = "#FF3D00" if is_live else "#8888AA"
@@ -2554,7 +2560,7 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                                 f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">'
                                 f'{a_lg}'
                                 f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
-                                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{away}</span>'
+                                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis">{away_disp}</span>'
                                 f'</div>'
                                 f'<div style="font-size:.55rem;color:#44445A;flex-shrink:0;text-align:center;padding:0 4px">'
                                 f'vs<br><span style="font-size:.42rem;color:{s_col};'
@@ -2562,7 +2568,7 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                                 f'</div>'
                                 f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0;justify-content:flex-end">'
                                 f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
-                                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right">{home}</span>'
+                                f'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-align:right">{home_disp}</span>'
                                 f'{h_lg}'
                                 f'</div>'
                                 f'{"<div style=\\'margin-left:6px;flex-shrink:0\\'>" + odds_html + "</div>" if odds_html else ""}'
