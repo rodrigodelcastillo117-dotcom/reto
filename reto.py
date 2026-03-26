@@ -2808,8 +2808,9 @@ def render_all_today(apodo: str):
                                 # Formatear según deporte
                                 formatted = format_partido_para_display(f"{away}@{home}", sport)
                                 if sport.lower() == "soccer":
-                                    # Soccer: "Home vs Away"
-                                    away_disp, home_disp = formatted.split(" vs ")
+                                    # Soccer: formatted devuelve "Home vs Away"
+                                    parts = formatted.split(" vs ")
+                                    home_disp, away_disp = parts[0], parts[1]  # ← INVERTIR
                                 else:
                                     # NBA/etc: "Away@Home"
                                     away_disp, home_disp = formatted.split("@")
@@ -2850,6 +2851,13 @@ def render_all_today(apodo: str):
                                     logo_left, logo_right = a_lg, h_lg
                                     team_left, team_right = away_disp, home_disp
 
+                                # Build score text if live
+                                score_text = ""
+                                if is_live and ev.get("away_score") is not None and ev.get("home_score") is not None:
+                                    away_score = ev.get("away_score", "")
+                                    home_score = ev.get("home_score", "")
+                                    score_text = f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.65rem;font-weight:700;color:#FFD700;margin-top:2px">{away_score} - {home_score}</div>'
+                                
                                 st.markdown(
                                     f'<div style="background:{bg};border:1px solid {border};'
                                     f'border-radius:12px;padding:10px 8px;text-align:center">'
@@ -2866,6 +2874,7 @@ def render_all_today(apodo: str):
                                     f'{team_right}</div></div></div>'
                                     f'<div style="font-family:\'JetBrains Mono\',monospace;font-size:.48rem;'
                                     f'color:{s_col}">{s_txt}</div>'
+                                    f'{score_text}'
                                     f'{odds_html}</div>',
                                     unsafe_allow_html=True
                                 )
