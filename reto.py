@@ -98,7 +98,7 @@ ESPN_LEAGUES_GROUPED = {
         "Gold Cup":                      ("soccer", "concacaf.gold"),
         "Amistosos Internac.":           ("soccer", "fifa.friendly"),
         "Mundial de Clubes":             ("soccer", "fifa.cwc"),
-        "Fútbol Internacional":          ("soccer", "fifa.worldq"),
+        "Apostar":                       ("soccer", "fifa.worldq"),
     },
     "🏀 Basketball": {
         "NBA":                   ("basketball", "nba"),
