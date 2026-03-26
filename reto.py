@@ -4196,24 +4196,23 @@ def tab_the_pit(apodo: str, bank: float):
     daily_games = daily_games[:4]  # Solo 4 partidos
     
     def get_picks_for_sport(sport, ptype):
-        # Map sport groups to pick values
-        sport_map = {
-            "soccer": "O2.5",
-            "basketball": "O227.5",
-            "hockey": "O5.5",
-            "football": "O45.5",
-            "mlb": "O7.5",
-            "nba": "O227.5",
-            "nhl": "O5.5",
-            "nfl": "O45.5",
+        # Map sport groups to pick values - REALISTIC LINES
+        sport_lines = {
+            "soccer": 2.5,
+            "basketball": 228.5,
+            "hockey": 5.5,
+            "football": 49.5,
+            "mlb": 7.5,  # Also support old format
+            "nba": 228.5,
+            "nhl": 5.5,
+            "nfl": 49.5,
         }
         
         if ptype == "ML":
             return [("Home", "Home"), ("Away", "Away")]
         else:  # O/U
-            default_o = sport_map.get(sport, "OVER")
-            default_u = default_o.replace("O", "U") if "O" in default_o else "UNDER"
-            return [(default_o, default_o), (default_u, default_u)]
+            line = sport_lines.get(sport, 2.5)
+            return [(f"O{line}", f"O{line}"), (f"U{line}", f"U{line}")]
     
     for i, game in enumerate(daily_games):
         away = game.get("away", "?")
