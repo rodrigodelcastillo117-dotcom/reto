@@ -59,24 +59,20 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# ✅ POLLING AUTOMÁTICO PARA EN VIVO
-# Si hay partidos EN VIVO, refresca cada 10 segundos
-if "last_refresh" not in st.session_state:
-    st.session_state.last_refresh = datetime.now()
-
-# Checar si hay partidos EN VIVO (si pasaron 10+ segundos, refresca)
-try:
-    now = datetime.now()
-    elapsed = (now - st.session_state.last_refresh).total_seconds()
-    
-    # Refresca cada 10 segundos si hay partidos EN VIVO
-    if elapsed >= 10:
-        st.session_state.last_refresh = now
-        # Limpiar cache para traer datos frescos
-        st.cache_data.clear()
-        st.rerun()
-except:
-    pass
+# ✅ POLLING AUTOMÁTICO PARA EN VIVO (DESACTIVADO POR AHORA)
+# El polling causa demasiadas recargas
+# if "last_refresh" not in st.session_state:
+#     st.session_state.last_refresh = datetime.now()
+# 
+# try:
+#     now = datetime.now()
+#     elapsed = (now - st.session_state.last_refresh).total_seconds()
+#     
+#     if elapsed >= 10:
+#         st.session_state.last_refresh = now
+#         st.rerun()
+# except:
+#     pass
 
 # ─────────────────────────────────────────────────────────────
 #  CONSTANTS
