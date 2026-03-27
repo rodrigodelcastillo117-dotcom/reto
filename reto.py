@@ -4782,8 +4782,8 @@ def pit_auto_grade(apodo: str, ronda_id: str, my_record: dict) -> tuple[int, int
 # ─────────────────────────────────────────────────────────────
 #  THE PIT — Main tab
 # ─────────────────────────────────────────────────────────────
-def tab_the_pit(apodo: str, bank: float):
-    """THE PIT: Sistema separado con picks y calificación manual"""
+def tab_the_pit(apodo: str, df: pd.DataFrame):
+    """THE PIT: Calificación manual de picks con efectos CONFETTI/WASTED"""
     from datetime import datetime, timedelta
     
     # Hora CDMX
@@ -4819,42 +4819,27 @@ def tab_the_pit(apodo: str, bank: float):
         </div>
         <div class="pit-title">THE PIT</div>
         <div style="text-align: center; color: #FF6B6B; font-size: 1.1rem; letter-spacing: 4px; text-transform: uppercase; margin: 15px 0;">
-            🔥 RONDA ESPECIAL - CALIFICA MANUALMENTE 🔥
+            🔥 CALIFICA TUS PICKS 🔥
         </div>
     </div>
     """, unsafe_allow_html=True)
     
-    # Cargar ronda activa de THE PIT
-    ronda = pit_load_ronda_activa()
-    
-    if not ronda:
-        st.info("📭 No hay ronda abierta en THE PIT")
-        st.write("Abre una ronda en Google Sheets para comenzar.")
+    if df.empty:
+        st.info("📭 Sin picks aún. Haz tu primer pick en REGISTRAR.")
         return
     
-    ronda_id = str(ronda["ronda_id"])
+    # Picks de hoy del usuario
+    today_picks = df[df["fecha"].astype(str).str[:10] == str(today_cdmx)]
     
-    # Cargar picks de THE PIT (no los del usuario regular)
-    all_picks_sheet = pit_load_picks_ronda(ronda_id)
-    
-    if not all_picks_sheet:
-        st.info("📭 No hay picks en esta ronda de THE PIT")
+    if today_picks.empty:
+        st.info("📭 No hay picks de hoy.")
         return
     
-    # Filtrar picks de HOY
-    today_picks = [p for p in all_picks_sheet
-                   if str(p.get("fecha", ""))[:10] == str(today_cdmx) and
-                      str(p.get("apodo", "")).lower() == apodo.lower()]
+    st.write(f"### 📋 Tus picks de HOY ({len(today_picks)})")
     
-    if not today_picks:
-        st.info(f"📭 No tienes picks de hoy en THE PIT (Ronda #{ronda_id})")
-        return
-    
-    st.write(f"### 📋 The Pit - Tus picks de HOY ({len(today_picks)})")
-    
-    # Tabla de picks de THE PIT
+    # Tabla
     table_data = []
-    for pick in today_picks:
+    for _, pick in today_picks.iterrows():
         resultado = str(pick.get("resultado", "pendiente")).lower()
         table_data.append({
             "Partido": str(pick.get("partido", "?"))[:40],
@@ -4869,123 +4854,87 @@ def tab_the_pit(apodo: str, bank: float):
     st.divider()
     
     # Botones de calificación para picks PENDIENTES
-    pending = [p for p in today_picks if str(p.get("resultado", "pendiente")).lower() == "pendiente"]
+    pending = today_picks[today_picks["resultado"] == "pendiente"]
     
-    if not pending:
-        st.info("✅ Todos tus picks de THE PIT ya están calificados")
-        return
-    
-    st.write("### ✅ Calificar Picks Pendientes")
-    
-    for idx, pick in enumerate(pending):
-        partido = str(pick.get("partido", "?"))
-        pick_desc = str(pick.get("pick_desc", "?"))
-        apuesta = float(pick.get("apuesta", 0) or 0)
-        momio = float(pick.get("momio", 0) or 0)
+    if not pending.empty:
+        st.write("### ✅ Calificar Picks Pendientes")
         
-        st.caption(f"**{partido[:50]}** | {pick_desc}")
-        
-        c1, c2, c3 = st.columns([2, 2, 2])
-        
-        with c1:
-            if st.button("✅ GANADO", key=f"pit_win_{idx}", use_container_width=True):
-                ganancia = round(apuesta * (momio - 1), 2) if apuesta and momio else 0
-                
-                st.info(f"🔄 Actualizando: {partido} | {pick_desc}")
-                
-                try:
-                    # Actualizar en Google Sheets (tabla pit_picks)
-                    ss = get_ss()
-                    ws = ensure_tab(ss, "pit_picks", ["ronda_id", "fecha", "partido", "pick_desc", "momio", "apuesta", "apodo", "resultado", "ganancia"])
+        for idx, (df_idx, pick) in enumerate(pending.iterrows()):
+            partido = str(pick.get("partido", "?"))
+            pick_desc = str(pick.get("pick_desc", "?"))
+            apuesta = float(pick.get("apuesta", 0) or 0)
+            momio = float(pick.get("momio", 0) or 0)
+            
+            st.caption(f"**{partido[:50]}** | {pick_desc}")
+            
+            c1, c2, c3 = st.columns([2, 2, 2])
+            
+            with c1:
+                if st.button("✅ GANADO", key=f"pit_win_{idx}", use_container_width=True):
+                    ganancia = round(apuesta * (momio - 1), 2) if apuesta and momio else 0
                     
-                    # Buscar fila - DEBUG
-                    records = _safe_get_records(ws)
-                    st.write(f"DEBUG: Buscando en {len(records)} records")
-                    
-                    encontrado = False
-                    for r_idx, record in enumerate(records):
-                        rec_partido = str(record.get("partido", "")).strip()
-                        rec_pick = str(record.get("pick_desc", "")).strip()
-                        rec_apodo = str(record.get("apodo", "")).lower().strip()
+                    try:
+                        # Actualizar DF
+                        df.at[df_idx, "resultado"] = "ganado"
+                        df.at[df_idx, "ganancia_neta"] = ganancia
+                        st.session_state["df_picks"] = df
                         
-                        if (rec_partido == str(partido).strip() and
-                            rec_pick == str(pick_desc).strip() and
-                            rec_apodo == apodo.lower()):
-                            
-                            gs_row = r_idx + 2
-                            st.write(f"DEBUG: Encontrado en fila {gs_row}")
-                            
-                            ws.update_cell(gs_row, 8, "ganado")  # resultado
-                            ws.update_cell(gs_row, 9, ganancia)  # ganancia
-                            
-                            encontrado = True
-                            st.session_state.pop("pit_picks", None)
-                            break
-                    
-                    if encontrado:
+                        # Actualizar Google Sheets
+                        ws = ensure_tab(get_ss(), f"picks_{apodo.lower()}", PICKS_HEADERS)
+                        ws.update_cell(df_idx + 2, 10, "ganado")
+                        ws.update_cell(df_idx + 2, 11, ganancia)
+                        
                         # EFECTOS
                         st.balloons()
                         st.markdown(confetti_html(), unsafe_allow_html=True)
                         st.success(f"🎉 ¡¡¡GANASTE!!! +${ganancia:,.0f}")
                         st.rerun()
-                    else:
-                        st.warning(f"⚠️ No se encontró el pick en Google Sheets")
-                        st.write(f"Buscando: Partido='{partido}' | Pick='{pick_desc}' | Apodo='{apodo}'")
+                    except Exception as e:
+                        st.error(f"Error: {str(e)[:50]}")
+            
+            with c2:
+                if st.button("❌ PERDIDO", key=f"pit_loss_{idx}", use_container_width=True):
+                    ganancia = -apuesta if apuesta else 0
+                    
+                    try:
+                        # Actualizar DF
+                        df.at[df_idx, "resultado"] = "perdido"
+                        df.at[df_idx, "ganancia_neta"] = ganancia
+                        st.session_state["df_picks"] = df
                         
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
-                    import traceback
-                    st.error(traceback.format_exc())
-        
-        with c2:
-            if st.button("❌ PERDIDO", key=f"pit_loss_{idx}", use_container_width=True):
-                ganancia = -apuesta if apuesta else 0
-                
-                try:
-                    ss = get_ss()
-                    ws = ensure_tab(ss, "pit_picks", ["ronda_id", "fecha", "partido", "pick_desc", "momio", "apuesta", "apodo", "resultado", "ganancia"])
-                    
-                    records = _safe_get_records(ws)
-                    for r_idx, record in enumerate(records):
-                        if (str(record.get("partido", "")).strip() == str(partido).strip() and
-                            str(record.get("pick_desc", "")).strip() == str(pick_desc).strip() and
-                            str(record.get("apodo", "")).lower() == apodo.lower()):
-                            gs_row = r_idx + 2
-                            ws.update_cell(gs_row, 8, "perdido")
-                            ws.update_cell(gs_row, 9, ganancia)
-                            
-                            # EFECTOS INMEDIATOS
-                            st.markdown('<div class="wasted-overlay">W A S T E D</div>', unsafe_allow_html=True)
-                            st.error(f"💀 WASTED - ${ganancia:,.0f}")
-                            st.session_state.pop("pit_picks", None)
-                            st.rerun()
-                            break
-                except Exception as e:
-                    st.error(f"Error: {str(e)[:50]}")
-        
-        with c3:
-            if st.button("➖ NULO", key=f"pit_null_{idx}", use_container_width=True):
-                try:
-                    ss = get_ss()
-                    ws = ensure_tab(ss, "pit_picks", ["ronda_id", "fecha", "partido", "pick_desc", "momio", "apuesta", "apodo", "resultado", "ganancia"])
-                    
-                    records = _safe_get_records(ws)
-                    for r_idx, record in enumerate(records):
-                        if (str(record.get("partido", "")).strip() == str(partido).strip() and
-                            str(record.get("pick_desc", "")).strip() == str(pick_desc).strip() and
-                            str(record.get("apodo", "")).lower() == apodo.lower()):
-                            gs_row = r_idx + 2
-                            ws.update_cell(gs_row, 8, "nulo")
-                            ws.update_cell(gs_row, 9, 0)
-                            
-                            st.info("➖ Pick anulado")
-                            st.session_state.pop("pit_picks", None)
-                            st.rerun()
-                            break
-                except Exception as e:
-                    st.error(f"Error: {str(e)[:50]}")
-        
-        st.divider()
+                        # Actualizar Google Sheets
+                        ws = ensure_tab(get_ss(), f"picks_{apodo.lower()}", PICKS_HEADERS)
+                        ws.update_cell(df_idx + 2, 10, "perdido")
+                        ws.update_cell(df_idx + 2, 11, ganancia)
+                        
+                        # EFECTOS
+                        st.markdown('<div class="wasted-overlay">W A S T E D</div>', unsafe_allow_html=True)
+                        st.error(f"💀 WASTED - ${ganancia:,.0f}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {str(e)[:50]}")
+            
+            with c3:
+                if st.button("➖ NULO", key=f"pit_null_{idx}", use_container_width=True):
+                    try:
+                        # Actualizar DF
+                        df.at[df_idx, "resultado"] = "nulo"
+                        df.at[df_idx, "ganancia_neta"] = 0
+                        st.session_state["df_picks"] = df
+                        
+                        # Actualizar Google Sheets
+                        ws = ensure_tab(get_ss(), f"picks_{apodo.lower()}", PICKS_HEADERS)
+                        ws.update_cell(df_idx + 2, 10, "nulo")
+                        ws.update_cell(df_idx + 2, 11, 0)
+                        
+                        st.info("➖ Pick anulado")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Error: {str(e)[:50]}")
+            
+            st.divider()
+    else:
+        st.info("✅ Todos tus picks de hoy ya están calificados")
 
 # ═══════════════════════════════════════════════════════════════
 def main():
@@ -5069,7 +5018,7 @@ def main():
     with t5: tab_simulador(df, bank)
     with t6:
         try:
-            tab_the_pit(apodo, bank)
+            tab_the_pit(apodo, df)
         except Exception as _pit_err:
             st.error(f"THE PIT error: {type(_pit_err).__name__}: {_pit_err}")
 
