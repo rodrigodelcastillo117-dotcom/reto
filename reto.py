@@ -3412,31 +3412,43 @@ def tab_historial(apodo: str, df: pd.DataFrame):
     pending = filt[filt["resultado"] == "pendiente"]
     resolved = filt[filt["resultado"] != "pendiente"]
     
-    # PENDIENTES (PEQUEÑO, LINEAL)
+    # PENDIENTES (COLAPSADO POR DEPORTE)
     if not pending.empty:
         st.write("### ⏳ PENDIENTES")
+        
+        # Agrupar por deporte
+        by_sport_pending = {}
         for idx, row in pending.iterrows():
             deporte = str(row.get("deporte","soccer")).lower()
+            if deporte not in by_sport_pending:
+                by_sport_pending[deporte] = []
+            by_sport_pending[deporte].append((idx, row))
+        
+        # Mostrar expanders colapsados
+        for deporte in sorted(by_sport_pending.keys()):
             sp_ico = SPORT_ICON.get(deporte,"🎯")
-            partido = str(row.get("partido","")) or "?"
-            pick = str(row.get("pick_desc","")) or "—"
-            apuesta = float(row.get("apuesta",0) or 0)
-            momio = float(row.get("momio",0) or 0)
+            picks_list = by_sport_pending[deporte]
             
-            c1, c2, c3, c4, c5 = st.columns([0.4, 3, 1.5, 1, 0.2])
-            with c1:
-                st.caption(sp_ico)
-            with c2:
-                st.caption(f"{partido[:40]}")
-            with c3:
-                st.caption(f"{pick[:18]}")
-            with c4:
-                st.caption(f"${apuesta:,.0f}@{momio}x")
-            with c5:
-                if st.button("🗑", key=f"del_p_{idx}", use_container_width=True):
-                    delete_pick(apodo, idx)
-                    st.session_state.pop("df_picks", None)
-                    st.rerun()
+            with st.expander(f"{sp_ico} {deporte.upper()} · {len(picks_list)} pendientes", expanded=False):
+                for idx, row in picks_list:
+                    partido = str(row.get("partido","")) or "?"
+                    pick = str(row.get("pick_desc","")) or "—"
+                    apuesta = float(row.get("apuesta",0) or 0)
+                    momio = float(row.get("momio",0) or 0)
+                    
+                    c1, c2, c3, c4 = st.columns([3, 1.5, 1.2, 0.2])
+                    with c1:
+                        st.caption(f"{partido[:45]}")
+                    with c2:
+                        st.caption(f"{pick[:18]}")
+                    with c3:
+                        st.caption(f"${apuesta:,.0f}@{momio}x")
+                    with c4:
+                        if st.button("🗑", key=f"del_p_{idx}", use_container_width=True):
+                            delete_pick(apodo, idx)
+                            st.session_state.pop("df_picks", None)
+                            st.rerun()
+        
         st.divider()
     
     # RESUELTOS (COLAPSADOS POR DEPORTE)
@@ -3481,6 +3493,7 @@ def tab_historial(apodo: str, df: pd.DataFrame):
                             delete_pick(apodo, idx)
                             st.session_state.pop("df_picks", None)
                             st.rerun()
+
 
     # 🔍 PANEL: Calificar picks pendientes manualmente
     # ═══════════════════════════════════════════════════════════════
