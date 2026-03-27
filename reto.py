@@ -4891,30 +4891,51 @@ def tab_the_pit(apodo: str, bank: float):
             if st.button("✅ GANADO", key=f"pit_win_{idx}", use_container_width=True):
                 ganancia = round(apuesta * (momio - 1), 2) if apuesta and momio else 0
                 
+                st.info(f"🔄 Actualizando: {partido} | {pick_desc}")
+                
                 try:
                     # Actualizar en Google Sheets (tabla pit_picks)
                     ss = get_ss()
                     ws = ensure_tab(ss, "pit_picks", ["ronda_id", "fecha", "partido", "pick_desc", "momio", "apuesta", "apodo", "resultado", "ganancia"])
                     
-                    # Buscar fila
+                    # Buscar fila - DEBUG
                     records = _safe_get_records(ws)
+                    st.write(f"DEBUG: Buscando en {len(records)} records")
+                    
+                    encontrado = False
                     for r_idx, record in enumerate(records):
-                        if (str(record.get("partido", "")).strip() == str(partido).strip() and
-                            str(record.get("pick_desc", "")).strip() == str(pick_desc).strip() and
-                            str(record.get("apodo", "")).lower() == apodo.lower()):
+                        rec_partido = str(record.get("partido", "")).strip()
+                        rec_pick = str(record.get("pick_desc", "")).strip()
+                        rec_apodo = str(record.get("apodo", "")).lower().strip()
+                        
+                        if (rec_partido == str(partido).strip() and
+                            rec_pick == str(pick_desc).strip() and
+                            rec_apodo == apodo.lower()):
+                            
                             gs_row = r_idx + 2
+                            st.write(f"DEBUG: Encontrado en fila {gs_row}")
+                            
                             ws.update_cell(gs_row, 8, "ganado")  # resultado
                             ws.update_cell(gs_row, 9, ganancia)  # ganancia
                             
-                            # EFECTOS INMEDIATOS
-                            st.balloons()
-                            st.markdown(confetti_html(), unsafe_allow_html=True)
-                            st.success(f"🎉 ¡¡¡GANASTE!!! +${ganancia:,.0f}")
+                            encontrado = True
                             st.session_state.pop("pit_picks", None)
-                            st.rerun()
                             break
+                    
+                    if encontrado:
+                        # EFECTOS
+                        st.balloons()
+                        st.markdown(confetti_html(), unsafe_allow_html=True)
+                        st.success(f"🎉 ¡¡¡GANASTE!!! +${ganancia:,.0f}")
+                        st.rerun()
+                    else:
+                        st.warning(f"⚠️ No se encontró el pick en Google Sheets")
+                        st.write(f"Buscando: Partido='{partido}' | Pick='{pick_desc}' | Apodo='{apodo}'")
+                        
                 except Exception as e:
-                    st.error(f"Error: {str(e)[:50]}")
+                    st.error(f"❌ Error: {str(e)}")
+                    import traceback
+                    st.error(traceback.format_exc())
         
         with c2:
             if st.button("❌ PERDIDO", key=f"pit_loss_{idx}", use_container_width=True):
