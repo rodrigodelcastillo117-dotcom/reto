@@ -5167,126 +5167,35 @@ def tab_the_pit(apodo: str, bank: float):
                 if today_picks:
                     st.write(f"**Tus picks de HOY ({len(today_picks)}):**")
                     for idx, pick in enumerate(today_picks):
-                        col1, col2, col3 = st.columns([2, 2, 1])
+                        partido = pick.get("partido", "?")
+                        pick_desc = pick.get("pick_desc", "?")
+                        resultado = pick.get("resultado", "pendiente").lower()
+                        ganancia = pick.get("ganancia_neta", 0)
                         
-                        with col1:
-                            st.caption(f"**{format_partido_para_display(pick.get('partido', '?'), pick.get('deporte', 'soccer'))}**")
+                        # Colores según resultado
+                        if resultado == "ganado":
+                            ico = "✅"
+                            clr = "#00FF88"
+                        elif resultado == "perdido":
+                            ico = "❌"
+                            clr = "#FF2D55"
+                        elif resultado == "nulo":
+                            ico = "➖"
+                            clr = "#8888AA"
+                        else:
+                            ico = "⏳"
+                            clr = "#FFB800"
                         
-                        with col2:
-                            st.caption(f"Pick: {pick.get('pick_desc', '?')}")
-                        
-                        with col3:
-                            col3a, col3b = st.columns(2)
-                            with col3a:
-                                if st.button("🧪 Probar", key=f"test_grade_{idx}", use_container_width=True):
-                                    # Test grading this pick
-                                    event_id = pick.get("event_id", "")
-                                    pick_desc = pick.get("pick_desc", "")
-                                    pick_type = "ML" if pick_desc in ["Home", "Away"] else "O/U"
-                                    partido = pick.get("partido", "")
-                                    
-                                    test_debug = [f"🧪 TESTING: {partido}"]
-                                    test_debug.append(f"  Pick: {pick_desc} ({pick_type})")
-                                    test_debug.append(f"  Event ID: {event_id}")
-                                    
-                                    if not event_id:
-                                        test_debug.append(f"  ❌ Sin event_id - No se puede probar")
-                                    else:
-                                        # Try ESPN endpoints
-                                        espn_urls = [
-                                            # Soccer - amistosos internacionales (friendly)
-                                            f"http://site.api.espn.com/apis/site/v2/sports/soccer/international-friendly/events/{event_id}",
-                                        # Soccer - main leagues
-                                        f"http://site.api.espn.com/apis/site/v2/sports/soccer/eng.1/events/{event_id}",
-                                        f"http://site.api.espn.com/apis/site/v2/sports/soccer/esp.1/events/{event_id}",
-                                        f"http://site.api.espn.com/apis/site/v2/sports/soccer/ita.1/events/{event_id}",
-                                        f"http://site.api.espn.com/apis/site/v2/sports/soccer/fra.1/events/{event_id}",
-                                        f"http://site.api.espn.com/apis/site/v2/sports/soccer/ger.1/events/{event_id}",
-                                        # Other sports
-                                        f"http://site.api.espn.com/apis/site/v2/sports/baseball/mlb/events/{event_id}",
-                                        f"http://site.api.espn.com/apis/site/v2/sports/basketball/nba/events/{event_id}",
-                                        f"http://site.api.espn.com/apis/site/v2/sports/hockey/nhl/events/{event_id}",
-                                    ]
-                                    
-                                    espn_data = None
-                                    for url in espn_urls:
-                                        try:
-                                            r = requests.get(url, timeout=5)
-                                            test_debug.append(f"  🔍 Probando: {url.split('/sports/')[1].split('/')[0]}")
-                                            test_debug.append(f"     Status: {r.status_code}")
-                                            if r.status_code == 200:
-                                                espn_data = r.json()
-                                                test_debug.append(f"  ✅ ESPN API encontrado")
-                                                break
-                                        except Exception as e:
-                                            test_debug.append(f"  ⚠️ Error en request: {str(e)[:40]}")
-                                            continue
-                                    
-                                    if not espn_data:
-                                        test_debug.append(f"  ❌ No se encontró en ESPN (probadas 8 ligas)")
-                                    else:
-                                        try:
-                                            competition = espn_data.get("competitions", [{}])[0]
-                                            status = competition.get("status", {}).get("type", "")
-                                            test_debug.append(f"  Status: {status}")
-                                            
-                                            if status != "STATUS_FINAL":
-                                                test_debug.append(f"  ⏳ Partido aún NO finalizado")
-                                                test_debug.append(f"     (Espera a que finalice para auto-calificar)")
-                                            else:
-                                                competitors = competition.get("competitors", [])
-                                                if len(competitors) >= 2:
-                                                    home_score = int(competitors[0].get("score", 0))
-                                                    away_score = int(competitors[1].get("score", 0))
-                                                    total_score = home_score + away_score
-                                                    
-                                                    test_debug.append(f"  Resultado: {away_score} - {home_score}")
-                                                    test_debug.append(f"  Total: {total_score}")
-                                                    
-                                                    if pick_type == "ML":
-                                                        winner = "Home" if home_score > away_score else "Away"
-                                                        resultado = "✅ GANADO" if pick_desc == winner else "❌ PERDIDO"
-                                                        test_debug.append(f"  ML: Ganador={winner} vs Tu pick={pick_desc}")
-                                                        test_debug.append(f"  Resultado: {resultado}")
-                                                    else:
-                                                        pick_value = float(pick_desc.replace("O", "").replace("U", ""))
-                                                        if pick_desc.startswith("O"):
-                                                            resultado = "✅ GANADO" if total_score > pick_value else "❌ PERDIDO"
-                                                            test_debug.append(f"  O/U: {total_score} {'>' if total_score > pick_value else '<'} {pick_value}")
-                                                        else:
-                                                            resultado = "✅ GANADO" if total_score < pick_value else "❌ PERDIDO"
-                                                            test_debug.append(f"  O/U: {total_score} {'<' if total_score < pick_value else '>'} {pick_value}")
-                                                        test_debug.append(f"  Resultado: {resultado}")
-                                        except Exception as e:
-                                            test_debug.append(f"  ❌ Error procesando: {str(e)[:50]}")
-                                
-                                # Show results
-                                st.markdown("---")
-                                for line in test_debug:
-                                    st.caption(line)
-                            
-                            with col3b:
-                                if st.button("✅ FORZAR", key=f"force_grade_{idx}", use_container_width=True):
-                                    # FORZAR CALIFICACIÓN INMEDIATA (para testing)
-                                    try:
-                                        partido = pick.get("partido", "")
-                                        pick_desc = pick.get("pick_desc", "").lower()
-                                        deporte = pick.get("deporte", "soccer").lower()
-                                        
-                                        # Simular que el partido terminó y calificar
-                                        resultado = _find_resultado_robusto(partido, deporte, pick_desc)
-                                        
-                                        if resultado:
-                                            # Actualizar en Google Sheets
-                                            try:
-                                                ws_picks.update_cell(idx + 2 + len([p for p in all_picks_sheet if str(p.get("ronda_id","")) == str(ronda_id) and str(p.get("apodo","")).lower() == apodo.lower() and str(p.get("resultado","")) != "pendiente"]), 10, resultado)
-                                                st.success(f"✅ Pick calificado como: **{resultado.upper()}**")
-                                            except Exception as e:
-                                                st.warning(f"⚠️ No se pudo actualizar: {str(e)[:50]}")
-                                        else:
-                                            st.error("❌ No se encontró resultado en ESPN")
-                                    except Exception as e:
-                                        st.error(f"Error: {str(e)[:100]}")
+                        c1, c2, c3, c4 = st.columns([3, 1.5, 0.8, 0.8])
+                        with c1:
+                            st.caption(f"**{partido[:40]}**")
+                        with c2:
+                            st.caption(f"{pick_desc}")
+                        with c3:
+                            st.markdown(f'<span style="color:{clr}">{ico}</span>', unsafe_allow_html=True)
+                        with c4:
+                            if resultado != "pendiente":
+                                st.caption(f"{ganancia:+.0f}")
                 else:
                     st.info("📭 No hay picks de hoy. Hace un pick primero para testear.")
             
