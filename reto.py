@@ -3505,6 +3505,11 @@ def tab_historial(apodo: str, df: pd.DataFrame):
                                 st.rerun()
 
 
+# ═══════════════════════════════════════════════════════════════
+#  TAB 4 - THE PIT (DEBE ESTAR FUERA DE tab_historial)
+# ═══════════════════════════════════════════════════════════════
+def tab_the_pit(apodo: str, bank: float):
+    """THE PIT - Modo de apuestas extremas"""
     # ═══════════════════════════════════════════════════════════════
     #  PICK TYPE DEL DÍA (ALEATORIO PERO REPRODUCIBLE)
     # ═══════════════════════════════════════════════════════════════
