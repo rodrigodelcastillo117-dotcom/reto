@@ -4906,11 +4906,12 @@ def tab_the_pit(apodo: str, bank: float):
                             ws.update_cell(gs_row, 8, "ganado")  # resultado
                             ws.update_cell(gs_row, 9, ganancia)  # ganancia
                             
-                            # EFECTOS
+                            # EFECTOS INMEDIATOS
                             st.balloons()
                             st.markdown(confetti_html(), unsafe_allow_html=True)
                             st.success(f"🎉 ¡¡¡GANASTE!!! +${ganancia:,.0f}")
                             st.session_state.pop("pit_picks", None)
+                            st.rerun()
                             break
                 except Exception as e:
                     st.error(f"Error: {str(e)[:50]}")
@@ -4932,10 +4933,11 @@ def tab_the_pit(apodo: str, bank: float):
                             ws.update_cell(gs_row, 8, "perdido")
                             ws.update_cell(gs_row, 9, ganancia)
                             
-                            # EFECTOS
+                            # EFECTOS INMEDIATOS
                             st.markdown('<div class="wasted-overlay">W A S T E D</div>', unsafe_allow_html=True)
                             st.error(f"💀 WASTED - ${ganancia:,.0f}")
                             st.session_state.pop("pit_picks", None)
+                            st.rerun()
                             break
                 except Exception as e:
                     st.error(f"Error: {str(e)[:50]}")
@@ -4957,6 +4959,7 @@ def tab_the_pit(apodo: str, bank: float):
                             
                             st.info("➖ Pick anulado")
                             st.session_state.pop("pit_picks", None)
+                            st.rerun()
                             break
                 except Exception as e:
                     st.error(f"Error: {str(e)[:50]}")
