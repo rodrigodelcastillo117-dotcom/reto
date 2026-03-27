@@ -1802,6 +1802,7 @@ def auto_grade_all_picks_master():
     - Busca TODOS los picks pendientes
     - Usa ESPN API para obtener resultados
     - Califica automáticamente
+    - ✅ CALCULA ganancia_neta y bankroll_post
     """
     try:
         ss = get_ss()
@@ -1815,20 +1816,31 @@ def auto_grade_all_picks_master():
             
             try:
                 records = _safe_get_records(sheet)
+                current_bank = 1500.0  # Bankroll inicial
                 
+                # Primera pasada: calcular bankroll acumulativo de picks RESUELTOS
+                for idx, row in enumerate(records):
+                    resultado = str(row.get("resultado", "")).strip().lower()
+                    if resultado in ["ganado", "perdido", "nulo"]:
+                        gan = float(row.get("ganancia_neta", 0) or 0)
+                        current_bank += gan
+                
+                # Segunda pasada: calificar picks PENDIENTES
                 for idx, row in enumerate(records):
                     resultado = str(row.get("resultado", "")).strip().lower()
                     
                     # Solo procesar PENDIENTES
                     if resultado == "pendiente":
-                        # Intentar calificar este pick
                         try:
                             partido = str(row.get("partido", "")).strip()
                             deporte = str(row.get("deporte", "soccer")).strip().lower()
                             pick_desc = str(row.get("pick_desc", "")).strip().lower()
                             event_id = str(row.get("event_id", "")).strip()
+                            momio = float(row.get("momio", 0) or 0)
+                            apuesta = float(row.get("apuesta", 0) or 0)
                             
                             calificado = False
+                            res_pick = None
                             
                             # Estrategia 1: Por event_id (si existe)
                             if event_id and event_id != "":
@@ -1839,17 +1851,33 @@ def auto_grade_all_picks_master():
                                     away_team = espn_data.get("away_team", "")
                                     home_team = espn_data.get("home_team", "")
                                     
-                                    res = _calificar_resultado(away_team, home_team, away_score, home_score, pick_desc)
-                                    if res:
-                                        sheet.update_cell(idx + 2, 10, res)
+                                    res_pick = _calificar_resultado(away_team, home_team, away_score, home_score, pick_desc)
+                                    if res_pick:
                                         calificado = True
                             
                             # Estrategia 2: Buscar por nombre del partido
                             if not calificado:
-                                res = _find_resultado_robusto(partido, deporte, pick_desc)
-                                if res:
-                                    sheet.update_cell(idx + 2, 10, res)
+                                res_pick = _find_resultado_robusto(partido, deporte, pick_desc)
+                                if res_pick:
                                     calificado = True
+                            
+                            # ✅ Si se calificó, CALCULAR ganancia_neta y bankroll_post
+                            if calificado and res_pick:
+                                ganancia = 0.0
+                                if res_pick == "ganado":
+                                    ganancia = (momio - 1) * apuesta
+                                elif res_pick == "perdido":
+                                    ganancia = -apuesta
+                                elif res_pick == "nulo":
+                                    ganancia = 0.0
+                                
+                                new_bank = current_bank + ganancia
+                                current_bank = new_bank
+                                
+                                # Actualizar en Google Sheets
+                                sheet.update_cell(idx + 2, 10, res_pick)  # resultado (col 10)
+                                sheet.update_cell(idx + 2, 11, round(ganancia, 2))  # ganancia_neta (col 11)
+                                sheet.update_cell(idx + 2, 12, round(new_bank, 2))  # bankroll_post (col 12)
                         except Exception:
                             pass
             except Exception:
