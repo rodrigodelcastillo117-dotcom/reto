@@ -5157,7 +5157,7 @@ def tab_the_pit(apodo: str, bank: float):
                 df_picks_table = pd.DataFrame(table_data)
                 st.dataframe(df_picks_table, use_container_width=True, hide_index=True)
             
-            with st.expander("📋 Picks de HOY + Prueba de Calificación"):
+            with st.expander("📋 Picks de HOY + Calificación Manual"):
                 # Get today's picks to test
                 today_picks = [p for p in all_picks_sheet
                               if str(p.get("ronda_id","")).strip() == str(ronda_id) and
@@ -5166,36 +5166,108 @@ def tab_the_pit(apodo: str, bank: float):
                 
                 if today_picks:
                     st.write(f"**Tus picks de HOY ({len(today_picks)}):**")
+                    
+                    # Tabla de picks
+                    table_data = []
+                    for pick in today_picks:
+                        table_data.append({
+                            "Partido": pick.get("partido", "?"),
+                            "Pick": pick.get("pick_desc", "?"),
+                            "Momio": pick.get("momio", "?"),
+                            "Apuesta": pick.get("apuesta", "?"),
+                            "Resultado": pick.get("resultado", "pendiente"),
+                        })
+                    
+                    df_today = pd.DataFrame(table_data)
+                    st.dataframe(df_today, use_container_width=True, hide_index=True)
+                    
+                    st.divider()
+                    
+                    # Botones de calificación para cada pick
                     for idx, pick in enumerate(today_picks):
                         partido = pick.get("partido", "?")
                         pick_desc = pick.get("pick_desc", "?")
-                        resultado = pick.get("resultado", "pendiente").lower()
-                        ganancia = pick.get("ganancia_neta", 0)
+                        resultado = str(pick.get("resultado", "pendiente")).lower()
+                        apuesta = float(pick.get("apuesta", 0) or 0)
+                        momio = float(pick.get("momio", 0) or 0)
                         
-                        # Colores según resultado
-                        if resultado == "ganado":
-                            ico = "✅"
-                            clr = "#00FF88"
-                        elif resultado == "perdido":
-                            ico = "❌"
-                            clr = "#FF2D55"
-                        elif resultado == "nulo":
-                            ico = "➖"
-                            clr = "#8888AA"
-                        else:
-                            ico = "⏳"
-                            clr = "#FFB800"
+                        # Solo permitir calificar si está pendiente
+                        if resultado == "pendiente":
+                            st.caption(f"**{partido[:50]}** | {pick_desc}")
+                            
+                            c1, c2, c3, c4 = st.columns([2, 2, 2, 1])
+                            
+                            with c1:
+                                if st.button("✅ GANADO", key=f"pit_win_{idx}", use_container_width=True):
+                                    # Calcular ganancia
+                                    ganancia = round(apuesta * (momio - 1), 2) if apuesta and momio else 0
+                                    
+                                    try:
+                                        # Actualizar en Google Sheets
+                                        ws_picks = ensure_tab(get_ss(), f"picks_{apodo.lower()}", PICKS_HEADERS)
+                                        # Encontrar fila
+                                        records = _safe_get_records(ws_picks)
+                                        for r_idx, record in enumerate(records):
+                                            if (str(record.get("partido", "")).strip() == str(partido).strip() and
+                                                str(record.get("pick_desc", "")).strip() == str(pick_desc).strip()):
+                                                gs_row = r_idx + 2
+                                                ws_picks.update_cell(gs_row, 10, "ganado")
+                                                ws_picks.update_cell(gs_row, 11, ganancia)
+                                                
+                                                # MOSTRAR CONFETTI
+                                                st.balloons()
+                                                st.markdown(confetti_html(), unsafe_allow_html=True)
+                                                st.success(f"🎉 ¡GANASTE! +${ganancia:,.0f}")
+                                                st.session_state.pop("df_picks", None)
+                                                st.session_state.pop("pit_picks", None)
+                                                break
+                                    except Exception as e:
+                                        st.error(f"Error: {str(e)[:50]}")
+                            
+                            with c2:
+                                if st.button("❌ PERDIDO", key=f"pit_loss_{idx}", use_container_width=True):
+                                    ganancia = -apuesta if apuesta else 0
+                                    
+                                    try:
+                                        # Actualizar en Google Sheets
+                                        ws_picks = ensure_tab(get_ss(), f"picks_{apodo.lower()}", PICKS_HEADERS)
+                                        records = _safe_get_records(ws_picks)
+                                        for r_idx, record in enumerate(records):
+                                            if (str(record.get("partido", "")).strip() == str(partido).strip() and
+                                                str(record.get("pick_desc", "")).strip() == str(pick_desc).strip()):
+                                                gs_row = r_idx + 2
+                                                ws_picks.update_cell(gs_row, 10, "perdido")
+                                                ws_picks.update_cell(gs_row, 11, ganancia)
+                                                
+                                                # MOSTRAR WASTED
+                                                st.markdown('<div class="wasted-overlay">W A S T E D</div>', unsafe_allow_html=True)
+                                                st.error(f"💀 WASTED - ${ganancia:,.0f}")
+                                                st.session_state.pop("df_picks", None)
+                                                st.session_state.pop("pit_picks", None)
+                                                break
+                                    except Exception as e:
+                                        st.error(f"Error: {str(e)[:50]}")
+                            
+                            with c3:
+                                if st.button("➖ NULO", key=f"pit_null_{idx}", use_container_width=True):
+                                    try:
+                                        ws_picks = ensure_tab(get_ss(), f"picks_{apodo.lower()}", PICKS_HEADERS)
+                                        records = _safe_get_records(ws_picks)
+                                        for r_idx, record in enumerate(records):
+                                            if (str(record.get("partido", "")).strip() == str(partido).strip() and
+                                                str(record.get("pick_desc", "")).strip() == str(pick_desc).strip()):
+                                                gs_row = r_idx + 2
+                                                ws_picks.update_cell(gs_row, 10, "nulo")
+                                                ws_picks.update_cell(gs_row, 11, 0)
+                                                
+                                                st.info("➖ Nulo")
+                                                st.session_state.pop("df_picks", None)
+                                                st.session_state.pop("pit_picks", None)
+                                                break
+                                    except Exception as e:
+                                        st.error(f"Error: {str(e)[:50]}")
                         
-                        c1, c2, c3, c4 = st.columns([3, 1.5, 0.8, 0.8])
-                        with c1:
-                            st.caption(f"**{partido[:40]}**")
-                        with c2:
-                            st.caption(f"{pick_desc}")
-                        with c3:
-                            st.markdown(f'<span style="color:{clr}">{ico}</span>', unsafe_allow_html=True)
-                        with c4:
-                            if resultado != "pendiente":
-                                st.caption(f"{ganancia:+.0f}")
+                        st.divider()
                 else:
                     st.info("📭 No hay picks de hoy. Hace un pick primero para testear.")
             
