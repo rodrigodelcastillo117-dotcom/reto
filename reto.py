@@ -1856,13 +1856,6 @@ def auto_grade_all_picks_master():
                 pass
     except Exception:
         pass
-                if resultado == "pendiente":
-                    _calificar_pick_robusto(ws_pit, idx + 2, row)
-        except:
-            pass
-        
-    except Exception as e:
-        pass  # Silenciar errores - función no debe fallar nunca
 
 
 def _calificar_pick_robusto(sheet, row_idx: int, pick_row: dict):
