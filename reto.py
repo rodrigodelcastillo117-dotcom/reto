@@ -1797,57 +1797,65 @@ def puede_registrar_pick_hoy(apodo: str, ronda_id: str) -> tuple[bool, str]:
 @st.cache_resource(ttl=300)  # Ejecutar cada 5 minutos
 def auto_grade_all_picks_master():
     """
-    ✅ CALIFICACIÓN MAESTRA GLOBAL - FUNCIONA PARA TODOS LOS USUARIOS
-    
-    - Corre cada 5 minutos automáticamente
-    - Busca TODOS los picks pendientes (de TODOS los usuarios)
-    - Usa event_id como identificador principal
-    - Califica automáticamente cuando partido termina
-    - Maneja REGISTRAR + THE PIT
+    ✅ AUTO-CALIFICACIÓN AUTOMÁTICA GLOBAL
+    - Corre al iniciar la app
+    - Busca TODOS los picks pendientes
+    - Usa ESPN API para obtener resultados
+    - Califica automáticamente
     """
     try:
         ss = get_ss()
         if not ss:
             return
         
-        # ═══════════════════════════════════════════════════════════════
-        # PARTE 1: Calificar picks de REGISTRAR (todas las hojas picks_*)
-        # ═══════════════════════════════════════════════════════════════
-        try:
-            for sheet in ss.worksheets():
-                # Solo procesar hojas picks_APODO
-                if not sheet.title.startswith("picks_"):
-                    continue
-                
-                # Saltar pit_picks (lo manejamos aparte)
-                if sheet.title == "pit_picks":
-                    continue
-                
-                try:
-                    records = _safe_get_records(sheet)
-                    
-                    for idx, row in enumerate(records):
-                        resultado = row.get("resultado", "").strip().lower()
-                        
-                        # Solo procesar picks PENDIENTES
-                        if resultado == "pendiente":
-                            _calificar_pick_robusto(sheet, idx + 2, row)
-                except:
-                    pass
-        except:
-            pass
-        
-        # ═══════════════════════════════════════════════════════════════
-        # PARTE 2: Calificar picks de THE PIT
-        # ═══════════════════════════════════════════════════════════════
-        try:
-            ws_pit = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
-            pit_records = _safe_get_records(ws_pit)
+        # Procesar TODAS las hojas picks_*
+        for sheet in ss.worksheets():
+            if not sheet.title.startswith("picks_"):
+                continue
             
-            for idx, row in enumerate(pit_records):
-                resultado = row.get("resultado", "").strip().lower()
+            try:
+                records = _safe_get_records(sheet)
                 
-                # Solo procesar picks PENDIENTES
+                for idx, row in enumerate(records):
+                    resultado = str(row.get("resultado", "")).strip().lower()
+                    
+                    # Solo procesar PENDIENTES
+                    if resultado == "pendiente":
+                        # Intentar calificar este pick
+                        try:
+                            partido = str(row.get("partido", "")).strip()
+                            deporte = str(row.get("deporte", "soccer")).strip().lower()
+                            pick_desc = str(row.get("pick_desc", "")).strip().lower()
+                            event_id = str(row.get("event_id", "")).strip()
+                            
+                            calificado = False
+                            
+                            # Estrategia 1: Por event_id (si existe)
+                            if event_id and event_id != "":
+                                espn_data = _find_resultado_por_event_id(event_id, deporte)
+                                if espn_data.get("found") and espn_data.get("completed"):
+                                    away_score = espn_data.get("away_score", -1)
+                                    home_score = espn_data.get("home_score", -1)
+                                    away_team = espn_data.get("away_team", "")
+                                    home_team = espn_data.get("home_team", "")
+                                    
+                                    res = _calificar_resultado(away_team, home_team, away_score, home_score, pick_desc)
+                                    if res:
+                                        sheet.update_cell(idx + 2, 10, res)
+                                        calificado = True
+                            
+                            # Estrategia 2: Buscar por nombre del partido
+                            if not calificado:
+                                res = _find_resultado_robusto(partido, deporte, pick_desc)
+                                if res:
+                                    sheet.update_cell(idx + 2, 10, res)
+                                    calificado = True
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+    except Exception:
+        pass
                 if resultado == "pendiente":
                     _calificar_pick_robusto(ws_pit, idx + 2, row)
         except:
@@ -5685,10 +5693,9 @@ def main():
             df, graded, bank = auto_grade_pending(apodo, df, bank)
             st.session_state["df_picks"] = df
             if graded > 0:
-                st.markdown(
-                    f'<div class="autobanner">⚡ Auto-calificador: <strong>{graded} pick(s)</strong> resueltos automáticamente desde ESPN.</div>',
-                    unsafe_allow_html=True
-                )
+                # Banner discreto en el sidebar
+                with st.sidebar:
+                    st.caption(f"⚡ {graded} pick(s) calificado(s) automáticamente")
         except Exception:
             pass
     else:
