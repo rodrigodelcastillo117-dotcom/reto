@@ -3123,6 +3123,9 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             logo_left, logo_right = a_lg, h_lg
                             team_left, team_right = away_disp, home_disp
                         
+                        # ✅ DEFINIR COLUMNAS PARA TARJETA Y BOTÓN
+                        card_c, btn_c = st.columns([4, 1])
+                        
                         with card_c:
                             st.markdown(
                                 f'<div style="background:{bg};border:{border_width} solid {border};border-radius:10px;'
