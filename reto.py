@@ -3152,13 +3152,7 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             f'padding:8px 12px;display:flex;align-items:center;gap:8px;margin-bottom:8px;{glow};'
                             f'cursor:pointer;transition:all 0.2s;'
                             f'hover:opacity:0.9;'
-                            f'" onclick="'
-                            f'var state = JSON.parse(sessionStorage.getItem(\'st_state\') || \'{{}}\');'
-                            f'state[\'open_pick_{ev_id[:10]}\'] = !state[\'open_pick_{ev_id[:10]}\'];'
-                            f'sessionStorage.setItem(\'st_state\', JSON.stringify(state));'
-                            f'window.location.hash = \'click_{ev_id[:10]}\';'
-                            f'location.reload();'
-                            f'">'
+                            f'" onclick="document.querySelector(\'button[key=\\\"open_{ev_id[:10]}\\\"]\').click(); return false;">'
                             f'<div style="display:flex;align-items:center;gap:5px;flex:1;min-width:0">'
                             f'{logo_left}'
                             f'<span style="font-size:.8rem;font-weight:700;color:#EEEEF5;'
@@ -3178,6 +3172,13 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             f'</div>',
                             unsafe_allow_html=True
                         )
+                        
+                        # ✅ Botón INVISIBLE pero FUNCIONAL
+                        col_btn = st.columns([10, 0.1])[1]
+                        with col_btn:
+                            if st.button("", key=f"open_{ev_id[:10]}"):
+                                st.session_state[f"open_pick_{ev_id[:10]}"] = not menu_open
+                                st.rerun()
                         
                         # ✅ Cambiar estado sin mostrar botón
                         menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
