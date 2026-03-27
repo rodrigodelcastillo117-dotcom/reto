@@ -1634,55 +1634,15 @@ def save_pick(apodo: str, row: dict) -> bool:
     except Exception:
         return False
 
-def delete_pick(apodo: str, df_idx: int, partido: str = "", pick_desc: str = ""):
-    """Eliminar un pick de Google Sheets (rápido)."""
+def delete_pick(apodo: str, df_idx: int):
+    """Delete a pick row from the sheet (df_idx = 0-based DataFrame index)."""
     ss = get_ss()
-    if not ss: 
-        return False
-    
+    if not ss: return False
     try:
         ws = ensure_tab(ss, f"picks_{apodo.lower()}", PICKS_HEADERS)
-        ws.delete_rows(df_idx + 2, 1)
+        ws.delete_rows(df_idx + 2)  # +2: header row + 0-based index
         return True
     except Exception:
-        return False
-
-def update_pick_resultado(apodo: str, fecha: str, partido: str, resultado: str, apuesta: float = 0, momio: float = 0, ws=None):
-    """Actualizar resultado de un pick Y calcular ganancia_neta"""
-    try:
-        if not ws:
-            ss = get_ss()
-            if not ss: return False
-            ws = ensure_tab(ss, f"picks_{apodo.lower()}", PICKS_HEADERS)
-        
-        records = _safe_get_records(ws)
-        
-        # Buscar el pick por fecha y partido
-        for idx, record in enumerate(records):
-            rec_fecha = str(record.get("fecha", ""))[:10]
-            rec_partido = str(record.get("partido", "")).strip()
-            
-            if rec_fecha == str(fecha)[:10] and rec_partido == str(partido).strip():
-                sheet_row = idx + 2  # +1 para header, +1 para 0-based
-                
-                # Calcular ganancia_neta según resultado
-                ganancia = 0.0
-                if resultado == "ganado":
-                    ganancia = round(apuesta * (momio - 1), 2) if apuesta and momio else 0
-                elif resultado == "perdido":
-                    ganancia = -apuesta if apuesta else 0
-                elif resultado == "nulo":
-                    ganancia = 0
-                
-                # Actualizar Google Sheets
-                ws.update_cell(sheet_row, 10, resultado)  # resultado (col 10)
-                ws.update_cell(sheet_row, 11, ganancia)   # ganancia_neta (col 11)
-                # bankroll_post se recalcularía en la siguiente carga
-                
-                return True
-        
-        return False
-    except Exception as e:
         return False
 
 def update_pick_row(apodo: str, df_idx: int, resultado: str, ganancia: float, bank_post: float):
@@ -2195,8 +2155,8 @@ def _calificar_resultado(away: str, home: str, away_score: int, home_score: int,
 
 def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.DataFrame, int, float]:
     """
-    ✅ AUTO-GRADE: Busca en últimos 7 días (no solo hoy)
-    - Carga todos los partidos de los últimos 7 días
+    ✅ AUTO-GRADE: Busca por NOMBRE de partido (no event_id que NO funciona)
+    - Carga todos los partidos de ESPN
     - Busca por nombre de partido
     - Respeta formato según deporte
     - Califica automáticamente
@@ -2211,10 +2171,9 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
     try:
         import requests
         import re as re_mod
-        from datetime import datetime, timedelta
         
-        # Cargar partidos de los últimos 7 días
-        all_events = {}
+        # Cargar todos los partidos de hoy
+        all_today = {}
         sports_map = {
             "soccer": ["eng.1", "esp.1", "ita.1", "ger.1", "fra.1", "mex.1", "usa.1", "bra.1"],
             "basketball": ["nba"],
@@ -2222,47 +2181,31 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
             "baseball": ["mlb"],
         }
         
-        # Intentar últimos 7 días
-        for days_back in range(7):
-            date = (datetime.now() - timedelta(days=days_back)).strftime("%Y%m%d")
-            
-            for sport, leagues in sports_map.items():
-                if sport not in all_events:
-                    all_events[sport] = {}
-                
-                for league_slug in leagues:
-                    try:
-                        url = f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{league_slug}/events?dates={date}"
-                        resp = requests.get(url, timeout=5)
-                        if resp.status_code == 200:
-                            data = resp.json()
-                            events = data.get("events", [])
-                            
-                            for evt in events:
-                                comp = evt.get("competitions", [{}])[0]
-                                competitors = comp.get("competitors", [])
-                                status = comp.get("status", {}).get("type", {})
-                                status_name = status.get("name", "").upper()
-                                
-                                # Solo eventos que terminaron
-                                if status_name not in ["FINAL", "COMPLETED"]:
-                                    continue
-                                
-                                if len(competitors) >= 2:
-                                    away = competitors[1].get("team", {}).get("name", "?")
-                                    home = competitors[0].get("team", {}).get("name", "?")
-                                    away_score = int(competitors[1].get("score", -1)) if competitors[1].get("score") is not None else -1
-                                    home_score = int(competitors[0].get("score", -1)) if competitors[0].get("score") is not None else -1
-                                    
-                                    if away not in all_events[sport]:
-                                        all_events[sport][away] = []
-                                    
-                                    all_events[sport][away].append({
-                                        "away": away, "home": home,
-                                        "away_score": away_score, "home_score": home_score,
-                                    })
-                    except Exception:
-                        pass
+        for sport, leagues in sports_map.items():
+            all_today[sport] = {}
+            for league_slug in leagues:
+                try:
+                    url = f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{league_slug}/events"
+                    resp = requests.get(url, timeout=5)
+                    if resp.status_code == 200:
+                        data = resp.json()
+                        events = data.get("events", [])
+                        league_events = []
+                        for evt in events:
+                            comp = evt.get("competitions", [{}])[0]
+                            competitors = comp.get("competitors", [])
+                            if len(competitors) >= 2:
+                                away = competitors[1].get("team", {}).get("name", "?")
+                                home = competitors[0].get("team", {}).get("name", "?")
+                                away_score = int(competitors[1].get("score", -1)) if competitors[1].get("score") is not None else -1
+                                home_score = int(competitors[0].get("score", -1)) if competitors[0].get("score") is not None else -1
+                                league_events.append({
+                                    "away": away, "home": home,
+                                    "away_score": away_score, "home_score": home_score,
+                                })
+                        all_today[sport][league_slug] = league_events
+                except Exception:
+                    all_today[sport][league_slug] = []
         
         def normalize_name(name: str) -> str:
             """Quita acentos, caracteres especiales, espacios"""
@@ -2271,7 +2214,7 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
             name = re_mod.sub(r'[^a-z0-9\s]', '', name.lower().strip())
             return name
         
-        def find_match(partido, deporte, all_events_dict):
+        def find_match(partido, deporte, all_today_events):
             """Busca match según deporte. Soccer usa 'vs', otros usan '@'"""
             if deporte.lower() == "soccer":
                 partido_clean = partido.replace("@", " vs ").lower().strip()
@@ -2293,9 +2236,8 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
             away_norm = normalize_name(away_guardado)
             home_norm = normalize_name(home_guardado)
             
-            # Buscar en todos los eventos
-            for sport_key, teams_dict in all_events_dict.items():
-                for team_name, events_list in teams_dict.items():
+            for sport_key, leagues_dict in all_today_events.items():
+                for league_slug, events_list in leagues_dict.items():
                     for event in events_list:
                         away_espn = event.get('away', '?')
                         home_espn = event.get('home', '?')
@@ -2303,14 +2245,11 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
                         away_espn_norm = normalize_name(away_espn)
                         home_espn_norm = normalize_name(home_espn)
                         
-                        # Match exacto
                         if away_norm == away_espn_norm and home_norm == home_espn_norm:
                             home_score = event.get("home_score", -1)
                             away_score = event.get("away_score", -1)
-                            if home_score != -1 and away_score != -1:
-                                return (True, home_score, away_score)
+                            return (True, home_score, away_score)
                         
-                        # Match parcial (uno contiene al otro)
                         if (away_norm in away_espn_norm or away_espn_norm in away_norm) and \
                            (home_norm in home_espn_norm or home_espn_norm in home_norm):
                             home_score = event.get("home_score", -1)
@@ -2331,7 +2270,7 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
             if not partido or ("@" not in partido and " vs " not in partido):
                 continue
             
-            found, home_score, away_score = find_match(partido, deporte, all_events)
+            found, home_score, away_score = find_match(partido, deporte, all_today)
             
             if not found or home_score == -1 or away_score == -1:
                 continue
@@ -2386,16 +2325,12 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
 #  HELPERS
 # ─────────────────────────────────────────────────────────────
 def get_bankroll(df: pd.DataFrame) -> float:
-    """Calcula bankroll actual: START_BANK + sum(ganancia_neta de todos los picks resueltos)"""
     resolved = df[df["resultado"] != "pendiente"]
     if resolved.empty:
         return START_BANK
-    
-    # Sumar todas las ganancias netas de picks resueltos
-    total_ganancia = float(resolved["ganancia_neta"].sum() or 0)
-    current_bank = START_BANK + total_ganancia
-    
-    return current_bank if current_bank > 0 else START_BANK
+    last = resolved.sort_values("fecha").iloc[-1]
+    v = float(last["bankroll_post"])
+    return v if v > 0 else START_BANK
 
 def get_rango(bank: float) -> dict:
     for r in RANGOS:
@@ -3061,6 +2996,30 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
     # ═══════════════════════════════════════════════════════════════
     # 🔍 DEBUG PANEL - Ver qué datos recibe ESPN
     # ═══════════════════════════════════════════════════════════════
+    with st.expander("🔍 DEBUG: Datos de ESPN (para troubleshooting)", expanded=True):
+        if all_evs:
+            # Mostrar primeros 10 partidos con TODOS sus datos
+            st.write(f"**Total: {len(all_evs)} partidos. Mostrando primeros 10:**")
+            for i, ev in enumerate(all_evs[:10]):
+                with st.expander(f"Partido {i+1}: {ev.get('away', '?')} vs {ev.get('home', '?')} - Score: {ev.get('away_score', '?')} - {ev.get('home_score', '?')} - Live: {ev.get('is_live', False)}"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.write("**Básico:**")
+                        st.write(f"- id: {ev.get('id', '?')}")
+                        st.write(f"- name: {ev.get('name', '?')}")
+                        st.write(f"- sport: {ev.get('sport', '?')}")
+                        st.write(f"- is_live: {ev.get('is_live', False)}")
+                        st.write(f"- status_state: {ev.get('status_state', '?')}")
+                        st.write(f"- status_detail: {ev.get('status_detail', '?')}")
+                    with col2:
+                        st.write("**Score:**")
+                        st.write(f"- away_score: '{ev.get('away_score', '?')}' (tipo: {type(ev.get('away_score')).__name__})")
+                        st.write(f"- home_score: '{ev.get('home_score', '?')}' (tipo: {type(ev.get('home_score')).__name__})")
+                        st.write(f"- away: {ev.get('away', '?')}")
+                        st.write(f"- home: {ev.get('home', '?')}")
+                        st.write(f"- date: {ev.get('date', '?')}")
+                        st.write(f"- completed: {ev.get('completed', False)}")
+
     # ── Group by liga ─────────────────────────────────────────
     from collections import defaultdict
     by_liga = defaultdict(list)
@@ -3129,8 +3088,6 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                         ao = float(ev.get("away_odds",0))
                         ho = float(ev.get("home_odds",0))
                         do = float(ev.get("draw_odds",0))
-                        a_lg = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
-                        h_lg = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
                         qv     = st.session_state.get(f"qp_val_{ev_id}", "")
                         ou_key = f"ou_pending_{ev_id[:10]}"
                         is_open = bool(qv) or bool(st.session_state.get(ou_key))
@@ -3162,9 +3119,6 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             try:
                                 a_score = int(away_score)
                                 h_score = int(home_score)
-                                # ✅ Para SOCCER, invertir scores (ESPN los devuelve al revés)
-                                if sport_ev.lower() == "soccer":
-                                    a_score, h_score = h_score, a_score
                                 score_display = f"<br><span style='font-size:.5rem;color:#FFD700;'>{a_score} - {h_score}</span>"
                             except:
                                 pass
@@ -3179,16 +3133,19 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             odds_html += (f'<span style="background:rgba(0,180,255,.12);color:#00B4FF;'
                                           f'padding:1px 6px;border-radius:4px;font-size:.58rem">{ho}</span>')
 
-                        # ✅ Para soccer: mostrar HOME a la izquierda, AWAY a la derecha
+                        # ✅ PATCH: Logos asignados SEGÚN DEPORTE (antes de invertir)
                         if sport_ev.lower() == "soccer":
-                            logo_left, logo_right = h_lg, a_lg
+                            # Soccer: Home a la IZQUIERDA, Away a la DERECHA
+                            logo_left  = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
+                            logo_right = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
                             team_left, team_right = home_disp, away_disp
                         else:
-                            # NBA/etc: mostrar AWAY a la izquierda, HOME a la derecha
-                            logo_left, logo_right = a_lg, h_lg
+                            # NBA/etc: Away a la IZQUIERDA, Home a la DERECHA
+                            logo_left  = mk_logo(ev.get("away_logo",""), ev.get("away_flag",""), away, 26, "6px")
+                            logo_right = mk_logo(ev.get("home_logo",""), ev.get("home_flag",""), home, 26, "6px")
                             team_left, team_right = away_disp, home_disp
                         
-                        # ✅ DEFINIR COLUMNAS PARA TARJETA Y BOTÓN
+                        # ✅ Crear las columnas para tarjeta y botón
                         card_c, btn_c = st.columns([4, 1])
                         
                         with card_c:
@@ -3217,14 +3174,11 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             )
                         with btn_c:
                             menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
-                            # Botón pequeño con emoji 💰 un poco a la izquierda
-                            col_left, col_btn, col_right = st.columns([0.8, 1, 1.2])
-                            with col_btn:
-                                if st.button("💰", key=f"open_{ev_id[:10]}", 
-                                            use_container_width=True,
-                                            help="Click para apostar"):
-                                    st.session_state[f"open_pick_{ev_id[:10]}"] = not menu_open
-                                    st.rerun()
+                            if st.button("APOSTAR", key=f"open_{ev_id[:10]}",
+                                          use_container_width=True,
+                                          type="primary" if menu_open else "secondary"):
+                                st.session_state[f"open_pick_{ev_id[:10]}"] = not menu_open
+                                st.rerun()
 
                 # Pick panels — full width below each row
                 for ci in range(min(cols_per_row, len(row_evs))):
@@ -3358,7 +3312,7 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                                        "resultado": "pendiente", "ganancia_neta": 0,
                                        "bankroll_post": bank, "notas": ""}
                                 if save_pick(apodo, row_data):
-                                    st.success(f"✅✅✅ PICK GUARDADO: {qv} @ {momio_v}x — ${apuesta_v:,.0f}")
+                                    st.success(f"✅ {qv} @ {momio_v}x — ${apuesta_v:,.0f}")
                                     for k in ["df_picks","selected_event","pick_type"]:
                                         st.session_state.pop(k, None)
                                     st.session_state.pop(f"qp_val_{ev_id}", None)
@@ -3467,172 +3421,217 @@ def tab_historial(apodo: str, df: pd.DataFrame):
         f'margin:8px 0">{len(filt)} picks</div>', unsafe_allow_html=True
     )
 
-    # ── HISTORIAL OPTIMIZADO ──────────────────────────────────
-    
-    # Separar pendientes y resueltos
-    pending = filt[filt["resultado"] == "pendiente"]
-    resolved = filt[filt["resultado"] != "pendiente"]
-    
-    # PENDIENTES (COLAPSADO POR DEPORTE)
-    if not pending.empty:
-        st.write("### ⏳ PENDIENTES")
-        
-        # Agrupar por deporte
-        by_sport_pending = {}
-        for idx, row in pending.iterrows():
-            deporte = str(row.get("deporte","soccer")).lower()
-            if deporte not in by_sport_pending:
-                by_sport_pending[deporte] = []
-            by_sport_pending[deporte].append((idx, row))
-        
-        # Mostrar expanders colapsados
-        for deporte in sorted(by_sport_pending.keys()):
-            sp_ico = SPORT_ICON.get(deporte,"🎯")
-            picks_list = by_sport_pending[deporte]
-            
-            with st.expander(f"{sp_ico} {deporte.upper()} · {len(picks_list)} pendientes", expanded=False):
-                for idx, row in picks_list:
-                    partido = str(row.get("partido","")) or "?"
-                    pick = str(row.get("pick_desc","")) or "—"
-                    apuesta = float(row.get("apuesta",0) or 0)
-                    momio = float(row.get("momio",0) or 0)
-                    
-                    c1, c2, c3, c4 = st.columns([3, 1.5, 1.2, 0.2])
-                    with c1:
-                        st.caption(f"{partido[:45]}")
-                    with c2:
-                        st.caption(f"{pick[:18]}")
-                    with c3:
-                        st.caption(f"${apuesta:,.0f}@{momio}x")
-                    with c4:
-                        if st.button("🗑", key=f"del_p_{idx}", use_container_width=True):
-                            delete_pick(apodo, idx)
-                            st.session_state.pop("df_picks", None)
-                            st.toast("🗑 Eliminado", icon="✅")
-        
-        st.divider()
-    
-    # RESUELTOS (COLAPSADOS POR DEPORTE)
-    if not resolved.empty:
-        st.write("### ✅ RESUELTOS")
-        by_sport = {}
-        for idx, row in resolved.iterrows():
-            deporte = str(row.get("deporte","soccer")).lower()
-            if deporte not in by_sport:
-                by_sport[deporte] = []
-            by_sport[deporte].append((idx, row))
-        
-        for deporte in sorted(by_sport.keys()):
-            sp_ico = SPORT_ICON.get(deporte,"🎯")
-            picks_list = by_sport[deporte]
-            wins = sum(1 for _, r in picks_list if str(r.get("resultado","")) == "ganado")
-            losses = sum(1 for _, r in picks_list if str(r.get("resultado","")) == "perdido")
-            
-            with st.expander(f"{sp_ico} {deporte.upper()} · {len(picks_list)} · {wins}W-{losses}L", expanded=False):
-                for idx, row in picks_list:
-                    res = str(row.get("resultado",""))
-                    gan = float(row.get("ganancia_neta",0) or 0)
-                    partido = str(row.get("partido","")) or "?"
-                    pick = str(row.get("pick_desc","")) or "—"
-                    ico = "✅" if res == "ganado" else "❌" if res == "perdido" else "➖"
-                    clr = "#00FF88" if gan > 0 else "#FF2D55" if gan < 0 else "#8888AA"
-                    fd = str(row.get("fecha",""))[:10]
-                    
-                    c1, c2, c3, c4, c5, c6 = st.columns([1, 2.5, 1.2, 0.6, 0.7, 0.2])
-                    with c1:
-                        st.caption(f"{fd}")
-                    with c2:
-                        st.caption(f"{partido[:32]}")
-                    with c3:
-                        st.caption(f"{pick[:14]}")
-                    with c4:
-                        st.markdown(f'<span style="color:{clr}">{ico}</span>', unsafe_allow_html=True)
-                    with c5:
-                        st.markdown(f'<span style="color:{clr};font-weight:700">{gan:+.0f}</span>', unsafe_allow_html=True)
-                    with c6:
-                        if st.button("🗑", key=f"del_r_{idx}", use_container_width=True):
-                            delete_pick(apodo, idx)
-                            st.session_state.pop("df_picks", None)
-                            st.toast("🗑 Eliminado", icon="✅")
+    # ── Pick cards ────────────────────────────────────────────
+    for idx, row in filt.iterrows():
+        res     = str(row.get("resultado","pendiente"))
+        clr     = res_c.get(res,"#888")
+        ico     = res_i.get(res,"·")
+        gan     = float(row.get("ganancia_neta",0) or 0)
+        apuesta = float(row.get("apuesta",0) or 0)
+        momio   = float(row.get("momio",0) or 0)
+        fd      = str(row.get("fecha",""))[:10]
+        deporte = str(row.get("deporte","soccer")).lower()
+        sp_ico  = SPORT_ICON.get(deporte,"🎯")
+        partido = str(row.get("partido","")) or "Partido desconocido"
+        liga    = str(row.get("liga","")) or ""
+        pick_d  = str(row.get("pick_desc",""))
+        if pick_d in ("","nan","None"): pick_d = "—"
+        mercado = str(row.get("mercado","")) or ""
+        if mercado in ("nan","None"): mercado = ""
+        notas   = str(row.get("notas",""))
+        if notas in ("nan","None",""): notas = ""
 
+        gc  = "#00FF88" if gan>0 else "#FF2D55" if gan<0 else "#FFB800"
+        pot = ""
+        if res == "pendiente" and apuesta > 0 and momio > 1:
+            pot_val = momio * apuesta - apuesta
+            pot = f"+${pot_val:,.0f} pot."
 
-    # 🔍 PANEL: Calificar picks pendientes manualmente (ULTRA RÁPIDO)
+        col_card, col_del = st.columns([11, 1])
+        with col_card:
+            # Row 1: icon + partido + amount
+            r1, r2, r3 = st.columns([1, 7, 3])
+            with r1:
+                st.markdown(f'<div style="font-size:2rem;padding-top:2px;text-align:center">{sp_ico}</div>',
+                             unsafe_allow_html=True)
+            with r2:
+                st.markdown(
+                    f'<div style="font-size:.95rem;font-weight:700;color:#EEEEF5">{format_partido_para_display(partido, deporte)}</div>'
+                    f'<div style="font-size:.62rem;color:#8888AA;margin-top:1px">{liga}'
+                    f'{"  ·  " + mercado if mercado else ""}</div>',
+                    unsafe_allow_html=True)
+            with r3:
+                gs = f"+${gan:,.2f}" if gan>0 else f"-${abs(gan):,.2f}" if gan<0 else pot or "⏳"
+                st.markdown(
+                    f'<div style="text-align:right">'
+                    f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:1.4rem;'
+                    f'color:{gc};line-height:1">{gs}</div>'
+                    f'<div style="font-size:.58rem;color:#8888AA">'
+                    f'{"@" + str(momio) + "x  ·  " if momio > 0 else ""}${apuesta:,.0f}</div>'
+                    f'</div>', unsafe_allow_html=True)
+
+            # Row 2: pick + result + date
+            r4, r5 = st.columns([6, 4])
+            with r4:
+                st.markdown(
+                    f'<div style="background:rgba(0,255,209,.07);border-left:3px solid var(--neon2);'
+                    f'padding:4px 10px;border-radius:0 6px 6px 0;margin-top:6px">'
+                    f'<span style="font-size:.65rem;color:#8888AA">🎯 PICK  </span>'
+                    f'<span style="font-size:.82rem;font-weight:700;color:var(--neon2)">{pick_d}</span>'
+                    f'</div>', unsafe_allow_html=True)
+            with r5:
+                st.markdown(
+                    f'<div style="text-align:right;padding-top:10px">'
+                    f'<span style="font-size:.7rem;font-weight:700;color:{clr}">{ico} {res.upper()}</span>'
+                    f'  <span style="font-size:.58rem;color:#8888AA">{fd}</span>'
+                    f'</div>', unsafe_allow_html=True)
+
+            if notas:
+                st.caption(f"📝 {notas}")
+            st.divider()
+
+        with col_del:
+            st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+            if st.button("🗑", key=f"del_{idx}", help="Eliminar"):
+                if delete_pick(apodo, idx):
+                    st.session_state.pop("df_picks", None)
+                    st.rerun()
+
+    # ═══════════════════════════════════════════════════════════════
+
+    # ═══════════════════════════════════════════════════════════════
+    # 🔍 PANEL: Calificar picks pendientes manualmente
     # ═══════════════════════════════════════════════════════════════
     st.divider()
     st.write("### 🔍 CALIFICAR PICKS PENDIENTES")
     
     try:
         ss = get_ss()
-        if not ss:
-            st.error("No se pudo conectar a Google Sheets")
+        ws = None
+        for sheet in ss.worksheets():
+            if sheet.title.lower() == f"picks_{apodo}".lower():
+                ws = sheet
+                break
+        
+        if not ws:
+            st.warning(f"No se encontró hoja picks_{apodo}")
         else:
-            ws = None
-            for sheet in ss.worksheets():
-                if sheet.title.lower() == f"picks_{apodo}".lower():
-                    ws = sheet
-                    break
+            records = _safe_get_records(ws)
+            pending = [r for r in records if str(r.get("resultado", "")).strip().lower() == "pendiente"]
             
-            if not ws:
-                st.warning(f"No se encontró hoja picks_{apodo}")
+            if not pending:
+                st.info("✅ No hay picks pendientes")
             else:
-                records = _safe_get_records(ws)
-                pending = [r for r in records if str(r.get("resultado", "")).strip().lower() == "pendiente"]
+                st.write(f"**📝 {len(pending)} picks pendientes:**")
+                st.divider()
                 
-                if not pending:
-                    st.info("✅ No hay picks pendientes")
-                else:
-                    st.caption(f"📝 {len(pending)} pendientes")
+                for idx, pick in enumerate(pending):
+                    st.write(f"**{idx+1}. {pick.get('partido', '?')}**")
+                    col1, col2, col3 = st.columns(3)
                     
-                    for loop_idx, pick in enumerate(pending):
-                        partido = str(pick.get("partido", "?"))
-                        deporte = str(pick.get("deporte", "soccer"))
-                        pick_desc = str(pick.get("pick_desc", "?"))
-                        apuesta = float(pick.get("apuesta", 0) or 0)
-                        momio = float(pick.get("momio", 0) or 0)
-                        
-                        # Encontrar fila real
-                        gs_row = loop_idx + 2
-                        for real_idx, record in enumerate(records):
-                            if record.get("partido") == partido and record.get("pick_desc") == pick_desc:
-                                gs_row = real_idx + 2
-                                break
-                        
-                        c_partido, c_ganado, c_perdido, c_nulo = st.columns([3, 0.8, 0.8, 0.8])
-                        
-                        with c_partido:
-                            st.caption(f"**{partido[:45]}** | {pick_desc[:15]} | ${apuesta:,.0f}@{momio}x")
-                        
-                        with c_ganado:
-                            if st.button("✅", key=f"win_{loop_idx}", help="GANADO", use_container_width=True):
-                                ganancia = round(apuesta * (momio - 1), 2) if apuesta and momio else 0
+                    with col1:
+                        st.caption(f"🏀 {pick.get('deporte', '?')} - {pick.get('pick_desc', '?')}")
+                    
+                    with col2:
+                        if st.button("🧪 TEST", key=f"hist_check_{idx}", use_container_width=True):
+                            st.session_state[f"test_{idx}"] = True
+                    
+                    with col3:
+                        if st.button("✅ GRADE", key=f"hist_grade_{idx}", use_container_width=True):
+                            st.session_state[f"grade_{idx}"] = True
+                    
+                    # Mostrar resultado de TEST
+                    if st.session_state.get(f"test_{idx}"):
+                        with st.container(border=True):
+                            st.write(f"**🧪 TEST: {pick.get('partido')}**")
+                            
+                            event_id = str(pick.get('event_id', '')).strip()
+                            partido = str(pick.get('partido', '')).strip()
+                            deporte = str(pick.get('deporte', 'soccer')).strip()
+                            pick_desc = str(pick.get('pick_desc', '')).lower().strip()
+                            
+                            encontrado = False
+                            
+                            # Búsqueda 1: Event ID
+                            if event_id and event_id != "":
+                                st.caption(f"🔍 Buscando por EVENT_ID: {event_id}")
+                                espn_data = _find_resultado_por_event_id(event_id, deporte)
+                                if espn_data.get('debug'):
+                                    st.caption(espn_data.get('debug'))
+                                
+                                if espn_data.get('found') and espn_data.get('completed'):
+                                    st.success(f"✅ {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
+                                    encontrado = True
+                            
+                            # Búsqueda 2: Por nombre
+                            if not encontrado:
+                                st.caption(f"🔍 Buscando por NOMBRE: {partido}")
+                                found_event_id = _buscar_event_id_por_partido(partido, deporte)
+                                if found_event_id:
+                                    st.caption(f"✅ Event ID encontrado: {found_event_id}")
+                                    espn_data = _find_resultado_por_event_id(found_event_id, deporte)
+                                    if espn_data.get('debug'):
+                                        st.caption(espn_data.get('debug'))
+                                    if espn_data.get('found') and espn_data.get('completed'):
+                                        st.success(f"✅ {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
+                                        encontrado = True
+                            
+                            if not encontrado:
+                                st.warning("❌ No se encontró resultado en ESPN")
+                            
+                            if st.button("✖️ Cerrar", key=f"close_test_{idx}"):
+                                st.session_state[f"test_{idx}"] = False
+                    
+                    # Mostrar resultado de GRADE
+                    if st.session_state.get(f"grade_{idx}"):
+                        with st.container(border=True):
+                            st.write(f"**⏳ CALIFICANDO: {pick.get('partido')}**")
+                            
+                            event_id = str(pick.get('event_id', '')).strip()
+                            partido = str(pick.get('partido', '')).strip()
+                            deporte = str(pick.get('deporte', 'soccer')).strip()
+                            pick_desc = str(pick.get('pick_desc', '')).lower().strip()
+                            
+                            resultado = None
+                            
+                            if event_id and event_id != "":
+                                espn_data = _find_resultado_por_event_id(event_id, deporte)
+                                if espn_data.get('found') and espn_data.get('completed'):
+                                    away_team = espn_data.get('away_team', '')
+                                    home_team = espn_data.get('home_team', '')
+                                    away_score = espn_data.get('away_score', -1)
+                                    home_score = espn_data.get('home_score', -1)
+                                    resultado = _calificar_resultado(away_team, home_team, away_score, home_score, pick_desc)
+                            
+                            if not resultado:
+                                found_event_id = _buscar_event_id_por_partido(partido, deporte)
+                                if found_event_id:
+                                    espn_data = _find_resultado_por_event_id(found_event_id, deporte)
+                                    if espn_data.get('found') and espn_data.get('completed'):
+                                        away_team = espn_data.get('away_team', '')
+                                        home_team = espn_data.get('home_team', '')
+                                        away_score = espn_data.get('away_score', -1)
+                                        home_score = espn_data.get('home_score', -1)
+                                        resultado = _calificar_resultado(away_team, home_team, away_score, home_score, pick_desc)
+                            
+                            if not resultado:
+                                resultado = _find_resultado_robusto(partido, deporte, pick_desc)
+                            
+                            if resultado:
                                 try:
-                                    ws.update_cell(gs_row, 10, "ganado")
-                                    ws.update_cell(gs_row, 11, ganancia)
+                                    ws.update_cell(idx + 2, 10, resultado)
+                                    st.success(f"✅ Calificado como: {resultado.upper()}")
                                     st.session_state.pop("df_picks", None)
-                                    st.toast(f"✅ +${ganancia:,.0f}", icon="✅")
-                                except:
-                                    st.toast("Error al guardar", icon="❌")
-                        
-                        with c_perdido:
-                            if st.button("❌", key=f"loss_{loop_idx}", help="PERDIDO", use_container_width=True):
-                                ganancia = -apuesta if apuesta else 0
-                                try:
-                                    ws.update_cell(gs_row, 10, "perdido")
-                                    ws.update_cell(gs_row, 11, ganancia)
-                                    st.session_state.pop("df_picks", None)
-                                    st.toast(f"❌ ${ganancia:,.0f}", icon="❌")
-                                except:
-                                    st.toast("Error al guardar", icon="❌")
-                        
-                        with c_nulo:
-                            if st.button("➖", key=f"null_{loop_idx}", help="NULO", use_container_width=True):
-                                try:
-                                    ws.update_cell(gs_row, 10, "nulo")
-                                    ws.update_cell(gs_row, 11, 0)
-                                    st.session_state.pop("df_picks", None)
-                                    st.toast("➖ Nulo", icon="ℹ️")
-                                except:
-                                    st.toast("Error al guardar", icon="❌")
+                                    st.session_state[f"grade_{idx}"] = False
+                                except Exception as e:
+                                    st.error(f"Error: {str(e)[:50]}")
+                            else:
+                                st.error("❌ No se encontró resultado")
+                            
+                            if st.button("✖️ Cerrar", key=f"close_grade_{idx}"):
+                                st.session_state[f"grade_{idx}"] = False
+                    
+                    st.divider()
     except Exception as e:
         st.error(f"Error: {str(e)[:100]}")
 
@@ -4782,11 +4781,12 @@ def pit_auto_grade(apodo: str, ronda_id: str, my_record: dict) -> tuple[int, int
 # ─────────────────────────────────────────────────────────────
 #  THE PIT — Main tab
 # ─────────────────────────────────────────────────────────────
-def tab_the_pit(apodo: str, df: pd.DataFrame):
+def tab_the_pit(apodo: str, bank: float):
     """THE PIT: Calificación manual de picks con efectos CONFETTI/WASTED
     
     IMPORTANTE: THE PIT usa COLUMNAS DIFERENTES a los picks normales:
     pit_picks: [ronda_id, dia, fecha, apodo, partido, liga, event_id, pick_desc, momio, resultado, comodin_usado]
+                 1         2    3      4       5        6      7         8         9      10
     """
     from datetime import datetime, timedelta
     
@@ -4903,86 +4903,117 @@ def tab_the_pit(apodo: str, df: pd.DataFrame):
         
         with c1:
             if st.button("✅ GANADO", key=f"pit_win_{idx}", use_container_width=True):
-                try:
-                    # Buscar fila en pit_picks por: ronda_id + apodo + partido + pick_desc
-                    records = _safe_get_records(ws)
-                    
-                    for r_idx, record in enumerate(records):
-                        if (str(record.get("ronda_id", "")).strip() == ronda_id and
-                            str(record.get("apodo", "")).lower() == apodo.lower() and
-                            str(record.get("partido", "")).strip() == str(partido).strip() and
-                            str(record.get("pick_desc", "")).strip() == str(pick_desc).strip()):
+                # DEBUG
+                with st.spinner("⏳ Procesando..."):
+                    try:
+                        # Buscar fila en pit_picks por: ronda_id + apodo + partido + pick_desc
+                        records = _safe_get_records(ws)
+                        
+                        encontrado = False
+                        for r_idx, record in enumerate(records):
+                            rec_ronda = str(record.get("ronda_id", "")).strip()
+                            rec_apodo = str(record.get("apodo", "")).lower().strip()
+                            rec_partido = str(record.get("partido", "")).strip()
+                            rec_pick = str(record.get("pick_desc", "")).strip()
                             
-                            gs_row = r_idx + 2
-                            # Columna 10 (índice 9) es "resultado"
-                            ws.update_cell(gs_row, 10, "ganado")
+                            if (rec_ronda == ronda_id and
+                                rec_apodo == apodo.lower() and
+                                rec_partido == str(partido).strip() and
+                                rec_pick == str(pick_desc).strip()):
+                                
+                                gs_row = r_idx + 2
+                                # Columna 10 (índice 9) es "resultado"
+                                ws.update_cell(gs_row, 10, "ganado")
+                                
+                                encontrado = True
+                                break
+                        
+                        if encontrado:
+                            # EFECTOS EN ORDEN
+                            st.balloons()  # Globos
+                            st.success(f"🎉 ¡¡¡GANASTE!!! @ {momio}")  # Mensaje verde
+                            st.markdown(confetti_html(), unsafe_allow_html=True)  # Confetti
                             
-                            # EFECTOS
-                            st.balloons()
-                            st.markdown(confetti_html(), unsafe_allow_html=True)
-                            st.success(f"🎉 ¡¡¡GANASTE!!!  @ {momio}")
                             st.session_state.pop("pit_picks", None)
                             st.rerun()
-                            break
-                    else:
-                        st.warning(f"⚠️ No se encontró el pick en pit_picks")
-                        
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
+                        else:
+                            st.error(f"❌ No se encontró el pick")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
         
         with c2:
             if st.button("❌ PERDIDO", key=f"pit_loss_{idx}", use_container_width=True):
-                try:
-                    records = _safe_get_records(ws)
-                    
-                    for r_idx, record in enumerate(records):
-                        if (str(record.get("ronda_id", "")).strip() == ronda_id and
-                            str(record.get("apodo", "")).lower() == apodo.lower() and
-                            str(record.get("partido", "")).strip() == str(partido).strip() and
-                            str(record.get("pick_desc", "")).strip() == str(pick_desc).strip()):
+                with st.spinner("⏳ Procesando..."):
+                    try:
+                        records = _safe_get_records(ws)
+                        
+                        encontrado = False
+                        for r_idx, record in enumerate(records):
+                            rec_ronda = str(record.get("ronda_id", "")).strip()
+                            rec_apodo = str(record.get("apodo", "")).lower().strip()
+                            rec_partido = str(record.get("partido", "")).strip()
+                            rec_pick = str(record.get("pick_desc", "")).strip()
                             
-                            gs_row = r_idx + 2
-                            ws.update_cell(gs_row, 10, "perdido")
-                            
-                            # EFECTOS
+                            if (rec_ronda == ronda_id and
+                                rec_apodo == apodo.lower() and
+                                rec_partido == str(partido).strip() and
+                                rec_pick == str(pick_desc).strip()):
+                                
+                                gs_row = r_idx + 2
+                                ws.update_cell(gs_row, 10, "perdido")
+                                
+                                encontrado = True
+                                break
+                        
+                        if encontrado:
                             st.markdown('<div class="wasted-overlay">W A S T E D</div>', unsafe_allow_html=True)
                             st.error(f"💀 WASTED")
                             st.session_state.pop("pit_picks", None)
                             st.rerun()
-                            break
-                    else:
-                        st.warning(f"⚠️ No se encontró el pick en pit_picks")
-                        
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
+                        else:
+                            st.error(f"❌ No se encontró el pick")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
         
         with c3:
             if st.button("➖ NULO", key=f"pit_null_{idx}", use_container_width=True):
-                try:
-                    records = _safe_get_records(ws)
-                    
-                    for r_idx, record in enumerate(records):
-                        if (str(record.get("ronda_id", "")).strip() == ronda_id and
-                            str(record.get("apodo", "")).lower() == apodo.lower() and
-                            str(record.get("partido", "")).strip() == str(partido).strip() and
-                            str(record.get("pick_desc", "")).strip() == str(pick_desc).strip()):
+                with st.spinner("⏳ Procesando..."):
+                    try:
+                        records = _safe_get_records(ws)
+                        
+                        encontrado = False
+                        for r_idx, record in enumerate(records):
+                            rec_ronda = str(record.get("ronda_id", "")).strip()
+                            rec_apodo = str(record.get("apodo", "")).lower().strip()
+                            rec_partido = str(record.get("partido", "")).strip()
+                            rec_pick = str(record.get("pick_desc", "")).strip()
                             
-                            gs_row = r_idx + 2
-                            ws.update_cell(gs_row, 10, "nulo")
-                            
+                            if (rec_ronda == ronda_id and
+                                rec_apodo == apodo.lower() and
+                                rec_partido == str(partido).strip() and
+                                rec_pick == str(pick_desc).strip()):
+                                
+                                gs_row = r_idx + 2
+                                ws.update_cell(gs_row, 10, "nulo")
+                                
+                                encontrado = True
+                                break
+                        
+                        if encontrado:
                             st.info("➖ Pick anulado")
                             st.session_state.pop("pit_picks", None)
                             st.rerun()
-                            break
-                    else:
-                        st.warning(f"⚠️ No se encontró el pick en pit_picks")
-                        
-                except Exception as e:
-                    st.error(f"❌ Error: {str(e)}")
+                        else:
+                            st.error(f"❌ No se encontró el pick")
+                            
+                    except Exception as e:
+                        st.error(f"❌ Error: {str(e)}")
         
         st.divider()
 
-# ═══════════════════════════════════════════════════════════════
+
 def main():
     inject_css()
     
@@ -5037,14 +5068,13 @@ def main():
     # Manual refresh button
     col_r = st.columns([6,1])[1]
     with col_r:
-        if st.button("🔄", help="Actualizar resultados desde ESPN", key="main_refresh"):
-            # Limpiar cache y recargar
+        if st.button("🔄", help="Actualizar resultados desde ESPN (limpia cache)", key="main_refresh"):
+            # Limpiar todos los caches
             st.cache_data.clear()
             st.cache_resource.clear()
             for k in ["df_picks","df_apodo","pit_ronda","pit_players","pit_picks"]:
                 st.session_state.pop(k, None)
-            st.toast("🔄 Cache limpiado, recargando...", icon="🔄")
-
+            st.rerun()
 
     # Header
     render_header(apodo, bank)
@@ -5052,6 +5082,181 @@ def main():
     # ═══════════════════════════════════════════════════════════════
     # 🔍 DEBUG GLOBAL: Status de calificación de TODOS los partidos
     # ═══════════════════════════════════════════════════════════════
+    with st.expander("🔍 DEBUG GLOBAL: Status de todos tus picks (PENDIENTES)"):
+        st.write("**Tus picks que aún necesitan calificación:**")
+        
+        try:
+            ss = get_ss()
+            if ss:
+                found_any = False
+                
+                # Debug: Mostrar TODAS las hojas disponibles con detalles
+                with st.expander("📋 DEBUG: Hojas disponibles y contenido:"):
+                    all_sheets = ss.worksheets()
+                    for sheet in all_sheets:
+                        st.write(f"**Hoja: {sheet.title}**")
+                        try:
+                            records = _safe_get_records(sheet)
+                            st.caption(f"Total registros: {len(records)}")
+                            
+                            # Mostrar estructura
+                            if records:
+                                st.caption(f"Headers: {list(records[0].keys())}")
+                                
+                                # Mostrar TODOS tus registros (comparar exactamente con .lower().strip())
+                                my_records = [r for r in records if str(r.get("apodo", "")).lower().strip() == apodo.lower()]
+                                st.caption(f"Registros con apodo '{apodo}': {len(my_records)}")
+                                
+                                # Mostrar tus registros con TODO el detalle
+                                if my_records:
+                                    for idx, r in enumerate(my_records):
+                                        st.caption(f"  {idx+1}. {r.get('fecha', '?')} | {r.get('partido', '?')} | Pick: {r.get('pick_desc', '?')} | Resultado: '{r.get('resultado', '?')}'")
+                        except Exception as e:
+                            st.error(f"Error leyendo {sheet.title}: {str(e)[:50]}")
+                
+                # THE PIT picks
+                try:
+                    ws_pit = ensure_tab(ss, "pit_picks", PIT_PICKS_HEADERS)
+                    pit_records = _safe_get_records(ws_pit)
+                    my_pit_pending = [r for r in pit_records 
+                                     if str(r.get("apodo", "")).lower().strip() == apodo.lower()
+                                     and str(r.get("resultado", "")).strip().lower() == "pendiente"]
+                    
+                    if my_pit_pending:
+                        found_any = True
+                        st.write("**🩸 THE PIT (PENDIENTES):**")
+                        for idx, pick in enumerate(my_pit_pending):
+                            col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+                            with col1:
+                                st.caption(f"**{pick.get('partido', '?')}**")
+                            with col2:
+                                st.caption(f"Pick: {pick.get('pick_desc', '?')}")
+                            with col3:
+                                st.caption("⏳ **PENDIENTE**")
+                            with col4:
+                                if st.button("🧪", key=f"debug_pit_{idx}", use_container_width=True):
+                                    event_id = pick.get('event_id', '')
+                                    partido = pick.get('partido', '')
+                                    deporte = pick.get('deporte', 'soccer')
+                                    pick_desc = pick.get('pick_desc', '').lower()
+                                    
+                                    # Intentar por EVENT_ID primero
+                                    if event_id:
+                                        espn_data = _find_resultado_por_event_id(event_id, deporte)
+                                        if espn_data.get('found'):
+                                            if espn_data.get('completed'):
+                                                st.success(f"✅ Resultado encontrado por EVENT_ID: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
+                                            else:
+                                                st.info(f"⏳ Partido EN CURSO - Status: {espn_data.get('status', '?')}")
+                                            return
+                                    
+                                    # Si NO hay event_id, BUSCARLO por NOMBRE
+                                    if not event_id:
+                                        st.info("🔍 Buscando event_id por nombre del partido...")
+                                        found_event_id = _buscar_event_id_por_partido(partido, deporte)
+                                        if found_event_id:
+                                            st.success(f"✅ Event_id encontrado: {found_event_id}")
+                                            espn_data = _find_resultado_por_event_id(found_event_id, deporte)
+                                            if espn_data.get('found') and espn_data.get('completed'):
+                                                st.success(f"✅ Resultado: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
+                                                return
+                                            elif espn_data.get('found'):
+                                                st.info(f"⏳ Partido EN CURSO")
+                                                return
+                                    
+                                    # Fallback: buscar por NOMBRE
+                                    st.info("🔍 Buscando por nombre del partido...")
+                                    resultado = _find_resultado_robusto(partido, deporte, pick_desc)
+                                    if resultado:
+                                        st.success(f"✅ Se puede calificar como: **{resultado.upper()}**")
+                                    else:
+                                        st.warning("❌ No se encontró resultado en ESPN")
+                except Exception as e:
+                    pass
+                
+                # REGISTRAR picks - BUSCAR EN TODAS LAS HOJAS picks_*
+                try:
+                    for sheet in ss.worksheets():
+                        # Buscar SOLO en hojas que empiezan con "picks_"
+                        if not sheet.title.startswith("picks_"):
+                            continue
+                        
+                        # Saltar la hoja de pit_picks (ya la procesamos)
+                        if sheet.title == "pit_picks":
+                            continue
+                        
+                        try:
+                            records = _safe_get_records(sheet)
+                            
+                            # El nombre de la hoja ES el apodo (picks_RONGO → RONGO)
+                            sheet_apodo = sheet.title.replace("picks_", "").strip().lower()
+                            
+                            # ¿Es esta hoja para el usuario actual?
+                            if sheet_apodo == apodo.lower():
+                                # Filtrar picks pendientes
+                                # (picks_APODO no tiene columna 'apodo', así que todos son del usuario)
+                                my_pending = [r for r in records 
+                                             if str(r.get("resultado", "")).strip().lower() == "pendiente"]
+                                
+                                if my_pending:
+                                    found_any = True
+                                    st.write(f"**📝 {sheet.title} (PENDIENTES: {len(my_pending)}):**")
+                                    for idx, pick in enumerate(my_pending):
+                                        col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
+                                        with col1:
+                                            st.caption(f"**{pick.get('partido', '?')}**")
+                                        with col2:
+                                            st.caption(f"Pick: {pick.get('pick_desc', '?')}")
+                                        with col3:
+                                            st.caption("⏳ **PENDIENTE**")
+                                        with col4:
+                                            if st.button("🧪", key=f"debug_reg_{sheet.title}_{idx}", use_container_width=True):
+                                                event_id = pick.get('event_id', '')
+                                                partido = pick.get('partido', '')
+                                                deporte = pick.get('deporte', 'soccer')
+                                                pick_desc = pick.get('pick_desc', '').lower()
+                                                
+                                                # Intentar por EVENT_ID primero
+                                                if event_id:
+                                                    espn_data = _find_resultado_por_event_id(event_id, deporte)
+                                                    if espn_data.get('found'):
+                                                        if espn_data.get('completed'):
+                                                            st.success(f"✅ Resultado encontrado por EVENT_ID: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
+                                                        else:
+                                                            st.info(f"⏳ Partido EN CURSO - Status: {espn_data.get('status', '?')}")
+                                                        return
+                                                
+                                                # Si NO hay event_id, BUSCARLO por NOMBRE
+                                                if not event_id:
+                                                    st.info("🔍 Buscando event_id por nombre del partido...")
+                                                    found_event_id = _buscar_event_id_por_partido(partido, deporte)
+                                                    if found_event_id:
+                                                        st.success(f"✅ Event_id encontrado: {found_event_id}")
+                                                        espn_data = _find_resultado_por_event_id(found_event_id, deporte)
+                                                        if espn_data.get('found') and espn_data.get('completed'):
+                                                            st.success(f"✅ Resultado: {espn_data['away_team']} {espn_data['away_score']} - {espn_data['home_score']} {espn_data['home_team']}")
+                                                            return
+                                                        elif espn_data.get('found'):
+                                                            st.info(f"⏳ Partido EN CURSO")
+                                                            return
+                                                
+                                                # Fallback: buscar por NOMBRE
+                                                st.info("🔍 Buscando por nombre del partido...")
+                                                resultado = _find_resultado_robusto(partido, deporte, pick_desc)
+                                                if resultado:
+                                                    st.success(f"✅ Se puede calificar como: **{resultado.upper()}**")
+                                                else:
+                                                    st.warning("❌ No se encontró resultado en ESPN")
+                        except Exception as e:
+                            st.warning(f"Error en {sheet.title}: {str(e)[:30]}")
+                except Exception as e:
+                    pass
+                
+                if not found_any:
+                    st.info("✅ No hay picks pendientes. ¡Todos están calificados!")
+        except Exception as e:
+            st.error(f"Error cargando debug: {str(e)[:100]}")
+
     # Tabs
     t1, t2, t3, t4, t5, t6 = st.tabs([
         "📝  REGISTRAR", "📋  HISTORIAL", "📊  ANALYTICS",
