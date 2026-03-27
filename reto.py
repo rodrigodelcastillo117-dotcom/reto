@@ -2193,8 +2193,8 @@ def _calificar_resultado(away: str, home: str, away_score: int, home_score: int,
 
 def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.DataFrame, int, float]:
     """
-    ✅ AUTO-GRADE: Busca por NOMBRE de partido (no event_id que NO funciona)
-    - Carga todos los partidos de ESPN
+    ✅ AUTO-GRADE: Busca en últimos 7 días (no solo hoy)
+    - Carga todos los partidos de los últimos 7 días
     - Busca por nombre de partido
     - Respeta formato según deporte
     - Califica automáticamente
@@ -2209,9 +2209,10 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
     try:
         import requests
         import re as re_mod
+        from datetime import datetime, timedelta
         
-        # Cargar todos los partidos de hoy
-        all_today = {}
+        # Cargar partidos de los últimos 7 días
+        all_events = {}
         sports_map = {
             "soccer": ["eng.1", "esp.1", "ita.1", "ger.1", "fra.1", "mex.1", "usa.1", "bra.1"],
             "basketball": ["nba"],
@@ -2219,31 +2220,47 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
             "baseball": ["mlb"],
         }
         
-        for sport, leagues in sports_map.items():
-            all_today[sport] = {}
-            for league_slug in leagues:
-                try:
-                    url = f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{league_slug}/events"
-                    resp = requests.get(url, timeout=5)
-                    if resp.status_code == 200:
-                        data = resp.json()
-                        events = data.get("events", [])
-                        league_events = []
-                        for evt in events:
-                            comp = evt.get("competitions", [{}])[0]
-                            competitors = comp.get("competitors", [])
-                            if len(competitors) >= 2:
-                                away = competitors[1].get("team", {}).get("name", "?")
-                                home = competitors[0].get("team", {}).get("name", "?")
-                                away_score = int(competitors[1].get("score", -1)) if competitors[1].get("score") is not None else -1
-                                home_score = int(competitors[0].get("score", -1)) if competitors[0].get("score") is not None else -1
-                                league_events.append({
-                                    "away": away, "home": home,
-                                    "away_score": away_score, "home_score": home_score,
-                                })
-                        all_today[sport][league_slug] = league_events
-                except Exception:
-                    all_today[sport][league_slug] = []
+        # Intentar últimos 7 días
+        for days_back in range(7):
+            date = (datetime.now() - timedelta(days=days_back)).strftime("%Y%m%d")
+            
+            for sport, leagues in sports_map.items():
+                if sport not in all_events:
+                    all_events[sport] = {}
+                
+                for league_slug in leagues:
+                    try:
+                        url = f"https://site.api.espn.com/apis/site/v2/sports/{sport}/{league_slug}/events?dates={date}"
+                        resp = requests.get(url, timeout=5)
+                        if resp.status_code == 200:
+                            data = resp.json()
+                            events = data.get("events", [])
+                            
+                            for evt in events:
+                                comp = evt.get("competitions", [{}])[0]
+                                competitors = comp.get("competitors", [])
+                                status = comp.get("status", {}).get("type", {})
+                                status_name = status.get("name", "").upper()
+                                
+                                # Solo eventos que terminaron
+                                if status_name not in ["FINAL", "COMPLETED"]:
+                                    continue
+                                
+                                if len(competitors) >= 2:
+                                    away = competitors[1].get("team", {}).get("name", "?")
+                                    home = competitors[0].get("team", {}).get("name", "?")
+                                    away_score = int(competitors[1].get("score", -1)) if competitors[1].get("score") is not None else -1
+                                    home_score = int(competitors[0].get("score", -1)) if competitors[0].get("score") is not None else -1
+                                    
+                                    if away not in all_events[sport]:
+                                        all_events[sport][away] = []
+                                    
+                                    all_events[sport][away].append({
+                                        "away": away, "home": home,
+                                        "away_score": away_score, "home_score": home_score,
+                                    })
+                    except Exception:
+                        pass
         
         def normalize_name(name: str) -> str:
             """Quita acentos, caracteres especiales, espacios"""
@@ -2252,7 +2269,7 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
             name = re_mod.sub(r'[^a-z0-9\s]', '', name.lower().strip())
             return name
         
-        def find_match(partido, deporte, all_today_events):
+        def find_match(partido, deporte, all_events_dict):
             """Busca match según deporte. Soccer usa 'vs', otros usan '@'"""
             if deporte.lower() == "soccer":
                 partido_clean = partido.replace("@", " vs ").lower().strip()
@@ -2274,8 +2291,9 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
             away_norm = normalize_name(away_guardado)
             home_norm = normalize_name(home_guardado)
             
-            for sport_key, leagues_dict in all_today_events.items():
-                for league_slug, events_list in leagues_dict.items():
+            # Buscar en todos los eventos
+            for sport_key, teams_dict in all_events_dict.items():
+                for team_name, events_list in teams_dict.items():
                     for event in events_list:
                         away_espn = event.get('away', '?')
                         home_espn = event.get('home', '?')
@@ -2283,11 +2301,14 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
                         away_espn_norm = normalize_name(away_espn)
                         home_espn_norm = normalize_name(home_espn)
                         
+                        # Match exacto
                         if away_norm == away_espn_norm and home_norm == home_espn_norm:
                             home_score = event.get("home_score", -1)
                             away_score = event.get("away_score", -1)
-                            return (True, home_score, away_score)
+                            if home_score != -1 and away_score != -1:
+                                return (True, home_score, away_score)
                         
+                        # Match parcial (uno contiene al otro)
                         if (away_norm in away_espn_norm or away_espn_norm in away_norm) and \
                            (home_norm in home_espn_norm or home_espn_norm in home_norm):
                             home_score = event.get("home_score", -1)
@@ -2308,7 +2329,7 @@ def auto_grade_pending(apodo: str, df: pd.DataFrame, bank: float) -> tuple[pd.Da
             if not partido or ("@" not in partido and " vs " not in partido):
                 continue
             
-            found, home_score, away_score = find_match(partido, deporte, all_today)
+            found, home_score, away_score = find_match(partido, deporte, all_events)
             
             if not found or home_score == -1 or away_score == -1:
                 continue
@@ -3560,27 +3581,40 @@ def tab_historial(apodo: str, df: pd.DataFrame):
                 else:
                     st.write(f"**📝 {len(pending)} picks pendientes:**")
                     
-                    for idx, pick in enumerate(pending):
+                    for loop_idx, pick in enumerate(pending):
                         partido = str(pick.get("partido", "?"))
                         deporte = str(pick.get("deporte", "soccer"))
                         pick_desc = str(pick.get("pick_desc", "?"))
                         apuesta = float(pick.get("apuesta", 0) or 0)
                         momio = float(pick.get("momio", 0) or 0)
                         
+                        # Obtener la fila REAL en Google Sheets
+                        # Los records comienzan en fila 2 (fila 1 = header)
+                        # Cada pick en pending tiene un índice diferente
+                        # Necesitamos encontrar en qué fila real está
+                        gs_row = None
+                        for real_idx, record in enumerate(records):
+                            if record.get("partido") == partido and record.get("pick_desc") == pick_desc:
+                                gs_row = real_idx + 2  # +1 para header, +1 para 1-based
+                                break
+                        
+                        if not gs_row:
+                            gs_row = loop_idx + 2  # Fallback (no debería ocurrir)
+                        
                         with st.container(border=True):
-                            st.write(f"**{idx+1}. {partido}**")
+                            st.write(f"**{loop_idx+1}. {partido}**")
                             st.caption(f"{deporte.upper()} · {pick_desc} · ${apuesta:,.0f}@{momio}x")
                             
                             # 3 botones: GANADO, PERDIDO, NULO
                             c1, c2, c3 = st.columns(3)
                             
                             with c1:
-                                if st.button("✅ GANADO", key=f"cal_win_{idx}", use_container_width=True):
+                                if st.button("✅ GANADO", key=f"cal_win_{loop_idx}", use_container_width=True):
                                     # Calcular ganancia
                                     ganancia = round(apuesta * (momio - 1), 2) if apuesta and momio else 0
                                     try:
-                                        ws.update_cell(idx + 2, 10, "ganado")  # resultado
-                                        ws.update_cell(idx + 2, 11, ganancia)  # ganancia_neta
+                                        ws.update_cell(gs_row, 10, "ganado")  # resultado
+                                        ws.update_cell(gs_row, 11, ganancia)  # ganancia_neta
                                         st.session_state.pop("df_picks", None)
                                         st.success(f"✅ Guardado: +${ganancia:,.0f}")
                                         st.rerun()
@@ -3588,11 +3622,11 @@ def tab_historial(apodo: str, df: pd.DataFrame):
                                         st.error(f"Error al guardar: {str(e)[:50]}")
                             
                             with c2:
-                                if st.button("❌ PERDIDO", key=f"cal_loss_{idx}", use_container_width=True):
+                                if st.button("❌ PERDIDO", key=f"cal_loss_{loop_idx}", use_container_width=True):
                                     ganancia = -apuesta if apuesta else 0
                                     try:
-                                        ws.update_cell(idx + 2, 10, "perdido")  # resultado
-                                        ws.update_cell(idx + 2, 11, ganancia)  # ganancia_neta
+                                        ws.update_cell(gs_row, 10, "perdido")  # resultado
+                                        ws.update_cell(gs_row, 11, ganancia)  # ganancia_neta
                                         st.session_state.pop("df_picks", None)
                                         st.error(f"❌ Guardado: ${ganancia:,.0f}")
                                         st.rerun()
@@ -3600,10 +3634,10 @@ def tab_historial(apodo: str, df: pd.DataFrame):
                                         st.error(f"Error al guardar: {str(e)[:50]}")
                             
                             with c3:
-                                if st.button("➖ NULO", key=f"cal_null_{idx}", use_container_width=True):
+                                if st.button("➖ NULO", key=f"cal_null_{loop_idx}", use_container_width=True):
                                     try:
-                                        ws.update_cell(idx + 2, 10, "nulo")  # resultado
-                                        ws.update_cell(idx + 2, 11, 0)  # ganancia_neta
+                                        ws.update_cell(gs_row, 10, "nulo")  # resultado
+                                        ws.update_cell(gs_row, 11, 0)  # ganancia_neta
                                         st.session_state.pop("df_picks", None)
                                         st.info("➖ Guardado: Nulo")
                                         st.rerun()
