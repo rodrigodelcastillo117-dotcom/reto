@@ -3406,102 +3406,82 @@ def tab_historial(apodo: str, df: pd.DataFrame):
         f'margin:8px 0">{len(filt)} picks</div>', unsafe_allow_html=True
     )
 
-    # ── Pick cards ────────────────────────────────────────────
-    # Separar visualmente pendientes y resueltos
-    for idx, row in filt.iterrows():
-        res     = str(row.get("resultado","pendiente"))
-        
-        # Mostrar separador visual antes de cambiar de estado
-        if idx > 0:
-            prev_res = str(filt.iloc[idx-1].get("resultado","pendiente"))
-            if (res == "pendiente" and prev_res != "pendiente") or (res != "pendiente" and prev_res == "pendiente"):
-                st.divider()
-                if res == "pendiente":
-                    st.write("### ⏳ PENDIENTES")
-                else:
-                    st.write("### ✅ RESUELTOS")
-        else:
-            if res == "pendiente":
-                st.write("### ⏳ PENDIENTES")
-            else:
-                st.write("### ✅ RESUELTOS")
-        
-        clr     = res_c.get(res,"#888")
-        ico     = res_i.get(res,"·")
-        gan     = float(row.get("ganancia_neta",0) or 0)
-        apuesta = float(row.get("apuesta",0) or 0)
-        momio   = float(row.get("momio",0) or 0)
-        fd      = str(row.get("fecha",""))[:10]
-        deporte = str(row.get("deporte","soccer")).lower()
-        sp_ico  = SPORT_ICON.get(deporte,"🎯")
-        partido = str(row.get("partido","")) or "Partido desconocido"
-        liga    = str(row.get("liga","")) or ""
-        pick_d  = str(row.get("pick_desc",""))
-        if pick_d in ("","nan","None"): pick_d = "—"
-        mercado = str(row.get("mercado","")) or ""
-        if mercado in ("nan","None"): mercado = ""
-        notas   = str(row.get("notas",""))
-        if notas in ("nan","None",""): notas = ""
-
-        gc  = "#00FF88" if gan>0 else "#FF2D55" if gan<0 else "#FFB800"
-        pot = ""
-        if res == "pendiente" and apuesta > 0 and momio > 1:
-            pot_val = momio * apuesta - apuesta
-            pot = f"+${pot_val:,.0f} pot."
-
-        col_card, col_del = st.columns([11, 1])
-        with col_card:
-            # Row 1: icon + partido + amount
-            r1, r2, r3 = st.columns([1, 7, 3])
-            with r1:
-                st.markdown(f'<div style="font-size:2rem;padding-top:2px;text-align:center">{sp_ico}</div>',
-                             unsafe_allow_html=True)
-            with r2:
-                st.markdown(
-                    f'<div style="font-size:.95rem;font-weight:700;color:#EEEEF5">{format_partido_para_display(partido, deporte)}</div>'
-                    f'<div style="font-size:.62rem;color:#8888AA;margin-top:1px">{liga}'
-                    f'{"  ·  " + mercado if mercado else ""}</div>',
-                    unsafe_allow_html=True)
-            with r3:
-                gs = f"+${gan:,.2f}" if gan>0 else f"-${abs(gan):,.2f}" if gan<0 else pot or "⏳"
-                st.markdown(
-                    f'<div style="text-align:right">'
-                    f'<div style="font-family:\'Bebas Neue\',sans-serif;font-size:1.4rem;'
-                    f'color:{gc};line-height:1">{gs}</div>'
-                    f'<div style="font-size:.58rem;color:#8888AA">'
-                    f'{"@" + str(momio) + "x  ·  " if momio > 0 else ""}${apuesta:,.0f}</div>'
-                    f'</div>', unsafe_allow_html=True)
-
-            # Row 2: pick + result + date
-            r4, r5 = st.columns([6, 4])
-            with r4:
-                st.markdown(
-                    f'<div style="background:rgba(0,255,209,.07);border-left:3px solid var(--neon2);'
-                    f'padding:4px 10px;border-radius:0 6px 6px 0;margin-top:6px">'
-                    f'<span style="font-size:.65rem;color:#8888AA">🎯 PICK  </span>'
-                    f'<span style="font-size:.82rem;font-weight:700;color:var(--neon2)">{pick_d}</span>'
-                    f'</div>', unsafe_allow_html=True)
-            with r5:
-                st.markdown(
-                    f'<div style="text-align:right;padding-top:10px">'
-                    f'<span style="font-size:.7rem;font-weight:700;color:{clr}">{ico} {res.upper()}</span>'
-                    f'  <span style="font-size:.58rem;color:#8888AA">{fd}</span>'
-                    f'</div>', unsafe_allow_html=True)
-
-            if notas:
-                st.caption(f"📝 {notas}")
-            st.divider()
-
-        with col_del:
-            st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
-            if st.button("🗑", key=f"del_{idx}", help="Eliminar"):
-                if delete_pick(apodo, idx):
+    # ── HISTORIAL OPTIMIZADO ──────────────────────────────────
+    
+    # Separar pendientes y resueltos
+    pending = filt[filt["resultado"] == "pendiente"]
+    resolved = filt[filt["resultado"] != "pendiente"]
+    
+    # PENDIENTES (PEQUEÑO, LINEAL)
+    if not pending.empty:
+        st.write("### ⏳ PENDIENTES")
+        for idx, row in pending.iterrows():
+            deporte = str(row.get("deporte","soccer")).lower()
+            sp_ico = SPORT_ICON.get(deporte,"🎯")
+            partido = str(row.get("partido","")) or "?"
+            pick = str(row.get("pick_desc","")) or "—"
+            apuesta = float(row.get("apuesta",0) or 0)
+            momio = float(row.get("momio",0) or 0)
+            
+            c1, c2, c3, c4, c5 = st.columns([0.4, 3, 1.5, 1, 0.2])
+            with c1:
+                st.caption(sp_ico)
+            with c2:
+                st.caption(f"{partido[:40]}")
+            with c3:
+                st.caption(f"{pick[:18]}")
+            with c4:
+                st.caption(f"${apuesta:,.0f}@{momio}x")
+            with c5:
+                if st.button("🗑", key=f"del_p_{idx}", use_container_width=True):
+                    delete_pick(apodo, idx)
                     st.session_state.pop("df_picks", None)
                     st.rerun()
+        st.divider()
+    
+    # RESUELTOS (COLAPSADOS POR DEPORTE)
+    if not resolved.empty:
+        st.write("### ✅ RESUELTOS")
+        by_sport = {}
+        for idx, row in resolved.iterrows():
+            deporte = str(row.get("deporte","soccer")).lower()
+            if deporte not in by_sport:
+                by_sport[deporte] = []
+            by_sport[deporte].append((idx, row))
+        
+        for deporte in sorted(by_sport.keys()):
+            sp_ico = SPORT_ICON.get(deporte,"🎯")
+            picks_list = by_sport[deporte]
+            wins = sum(1 for _, r in picks_list if str(r.get("resultado","")) == "ganado")
+            losses = sum(1 for _, r in picks_list if str(r.get("resultado","")) == "perdido")
+            
+            with st.expander(f"{sp_ico} {deporte.upper()} · {len(picks_list)} · {wins}W-{losses}L", expanded=False):
+                for idx, row in picks_list:
+                    res = str(row.get("resultado",""))
+                    gan = float(row.get("ganancia_neta",0) or 0)
+                    partido = str(row.get("partido","")) or "?"
+                    pick = str(row.get("pick_desc","")) or "—"
+                    ico = "✅" if res == "ganado" else "❌" if res == "perdido" else "➖"
+                    clr = "#00FF88" if gan > 0 else "#FF2D55" if gan < 0 else "#8888AA"
+                    fd = str(row.get("fecha",""))[:10]
+                    
+                    c1, c2, c3, c4, c5, c6 = st.columns([1, 2.5, 1.2, 0.6, 0.7, 0.2])
+                    with c1:
+                        st.caption(f"{fd}")
+                    with c2:
+                        st.caption(f"{partido[:32]}")
+                    with c3:
+                        st.caption(f"{pick[:14]}")
+                    with c4:
+                        st.markdown(f'<span style="color:{clr}">{ico}</span>', unsafe_allow_html=True)
+                    with c5:
+                        st.markdown(f'<span style="color:{clr};font-weight:700">{gan:+.0f}</span>', unsafe_allow_html=True)
+                    with c6:
+                        if st.button("🗑", key=f"del_r_{idx}", use_container_width=True):
+                            delete_pick(apodo, idx)
+                            st.session_state.pop("df_picks", None)
+                            st.rerun()
 
-    # ═══════════════════════════════════════════════════════════════
-
-    # ═══════════════════════════════════════════════════════════════
     # 🔍 PANEL: Calificar picks pendientes manualmente
     # ═══════════════════════════════════════════════════════════════
     st.divider()
