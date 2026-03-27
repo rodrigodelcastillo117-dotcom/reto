@@ -3508,6 +3508,9 @@ def tab_historial(apodo: str, df: pd.DataFrame):
     # ═══════════════════════════════════════════════════════════════
     #  PICK TYPE DEL DÍA (ALEATORIO PERO REPRODUCIBLE)
     # ═══════════════════════════════════════════════════════════════
+    import random
+    _rnd_pit = random.Random()
+    daily_seed = hash(str(date.today())) % (2**32)
     _rnd_pit.seed(daily_seed)
     pick_type_hoy = _rnd_pit.choice(["ML", "O/U"])
     
