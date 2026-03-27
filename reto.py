@@ -3176,8 +3176,8 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             )
                         with btn_c:
                             menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
-                            # Botón pequeño centrado con emoji
-                            col_left, col_btn, col_right = st.columns([1, 1, 1])
+                            # Botón pequeño centrado con emoji (un poco a la izquierda)
+                            col_left, col_btn, col_right = st.columns([0.8, 1, 1.2])
                             with col_btn:
                                 if st.button("💰", key=f"open_{ev_id[:10]}", 
                                             use_container_width=True,
