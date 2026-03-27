@@ -3176,11 +3176,14 @@ def tab_registrar(apodo: str, df: pd.DataFrame, bank: float):
                             )
                         with btn_c:
                             menu_open = st.session_state.get(f"open_pick_{ev_id[:10]}", False)
-                            if st.button("APOSTAR", key=f"open_{ev_id[:10]}",
-                                          use_container_width=True,
-                                          type="primary" if menu_open else "secondary"):
-                                st.session_state[f"open_pick_{ev_id[:10]}"] = not menu_open
-                                st.rerun()
+                            # Botón pequeño centrado con emoji
+                            col_left, col_btn, col_right = st.columns([1, 1, 1])
+                            with col_btn:
+                                if st.button("💰", key=f"open_{ev_id[:10]}", 
+                                            use_container_width=True,
+                                            help="Click para apostar"):
+                                    st.session_state[f"open_pick_{ev_id[:10]}"] = not menu_open
+                                    st.rerun()
 
                 # Pick panels — full width below each row
                 for ci in range(min(cols_per_row, len(row_evs))):
