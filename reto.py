@@ -1634,13 +1634,15 @@ def save_pick(apodo: str, row: dict) -> bool:
     except Exception:
         return False
 
-def delete_pick(apodo: str, df_idx: int):
-    """Delete a pick row from the sheet (df_idx = 0-based DataFrame index)."""
+def delete_pick(apodo: str, df_idx: int, partido: str = "", pick_desc: str = ""):
+    """Eliminar un pick de Google Sheets (rápido)."""
     ss = get_ss()
-    if not ss: return False
+    if not ss: 
+        return False
+    
     try:
         ws = ensure_tab(ss, f"picks_{apodo.lower()}", PICKS_HEADERS)
-        ws.delete_rows(df_idx + 2)  # +2: header row + 0-based index
+        ws.delete_rows(df_idx + 2, 1)
         return True
     except Exception:
         return False
@@ -3506,7 +3508,7 @@ def tab_historial(apodo: str, df: pd.DataFrame):
                         if st.button("🗑", key=f"del_p_{idx}", use_container_width=True):
                             delete_pick(apodo, idx)
                             st.session_state.pop("df_picks", None)
-                            st.rerun()
+                            st.toast("🗑 Eliminado", icon="✅")
         
         st.divider()
     
@@ -3551,10 +3553,10 @@ def tab_historial(apodo: str, df: pd.DataFrame):
                         if st.button("🗑", key=f"del_r_{idx}", use_container_width=True):
                             delete_pick(apodo, idx)
                             st.session_state.pop("df_picks", None)
-                            st.rerun()
+                            st.toast("🗑 Eliminado", icon="✅")
 
 
-    # 🔍 PANEL: Calificar picks pendientes manualmente (SIMPLE)
+    # 🔍 PANEL: Calificar picks pendientes manualmente (ULTRA RÁPIDO)
     # ═══════════════════════════════════════════════════════════════
     st.divider()
     st.write("### 🔍 CALIFICAR PICKS PENDIENTES")
@@ -3579,7 +3581,7 @@ def tab_historial(apodo: str, df: pd.DataFrame):
                 if not pending:
                     st.info("✅ No hay picks pendientes")
                 else:
-                    st.write(f"**📝 {len(pending)} picks pendientes:**")
+                    st.caption(f"📝 {len(pending)} pendientes")
                     
                     for loop_idx, pick in enumerate(pending):
                         partido = str(pick.get("partido", "?"))
@@ -3588,63 +3590,49 @@ def tab_historial(apodo: str, df: pd.DataFrame):
                         apuesta = float(pick.get("apuesta", 0) or 0)
                         momio = float(pick.get("momio", 0) or 0)
                         
-                        # Obtener la fila REAL en Google Sheets
-                        # Los records comienzan en fila 2 (fila 1 = header)
-                        # Cada pick en pending tiene un índice diferente
-                        # Necesitamos encontrar en qué fila real está
-                        gs_row = None
+                        # Encontrar fila real
+                        gs_row = loop_idx + 2
                         for real_idx, record in enumerate(records):
                             if record.get("partido") == partido and record.get("pick_desc") == pick_desc:
-                                gs_row = real_idx + 2  # +1 para header, +1 para 1-based
+                                gs_row = real_idx + 2
                                 break
                         
-                        if not gs_row:
-                            gs_row = loop_idx + 2  # Fallback (no debería ocurrir)
+                        c_partido, c_ganado, c_perdido, c_nulo = st.columns([3, 0.8, 0.8, 0.8])
                         
-                        with st.container(border=True):
-                            st.write(f"**{loop_idx+1}. {partido}**")
-                            st.caption(f"{deporte.upper()} · {pick_desc} · ${apuesta:,.0f}@{momio}x")
-                            
-                            # 3 botones: GANADO, PERDIDO, NULO
-                            c1, c2, c3 = st.columns(3)
-                            
-                            with c1:
-                                if st.button("✅ GANADO", key=f"cal_win_{loop_idx}", use_container_width=True):
-                                    # Calcular ganancia
-                                    ganancia = round(apuesta * (momio - 1), 2) if apuesta and momio else 0
-                                    try:
-                                        ws.update_cell(gs_row, 10, "ganado")  # resultado
-                                        ws.update_cell(gs_row, 11, ganancia)  # ganancia_neta
-                                        st.session_state.pop("df_picks", None)
-                                        st.success(f"✅ Guardado: +${ganancia:,.0f}")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Error al guardar: {str(e)[:50]}")
-                            
-                            with c2:
-                                if st.button("❌ PERDIDO", key=f"cal_loss_{loop_idx}", use_container_width=True):
-                                    ganancia = -apuesta if apuesta else 0
-                                    try:
-                                        ws.update_cell(gs_row, 10, "perdido")  # resultado
-                                        ws.update_cell(gs_row, 11, ganancia)  # ganancia_neta
-                                        st.session_state.pop("df_picks", None)
-                                        st.error(f"❌ Guardado: ${ganancia:,.0f}")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Error al guardar: {str(e)[:50]}")
-                            
-                            with c3:
-                                if st.button("➖ NULO", key=f"cal_null_{loop_idx}", use_container_width=True):
-                                    try:
-                                        ws.update_cell(gs_row, 10, "nulo")  # resultado
-                                        ws.update_cell(gs_row, 11, 0)  # ganancia_neta
-                                        st.session_state.pop("df_picks", None)
-                                        st.info("➖ Guardado: Nulo")
-                                        st.rerun()
-                                    except Exception as e:
-                                        st.error(f"Error al guardar: {str(e)[:50]}")
-                    
-                    st.divider()
+                        with c_partido:
+                            st.caption(f"**{partido[:45]}** | {pick_desc[:15]} | ${apuesta:,.0f}@{momio}x")
+                        
+                        with c_ganado:
+                            if st.button("✅", key=f"win_{loop_idx}", help="GANADO", use_container_width=True):
+                                ganancia = round(apuesta * (momio - 1), 2) if apuesta and momio else 0
+                                try:
+                                    ws.update_cell(gs_row, 10, "ganado")
+                                    ws.update_cell(gs_row, 11, ganancia)
+                                    st.session_state.pop("df_picks", None)
+                                    st.toast(f"✅ +${ganancia:,.0f}", icon="✅")
+                                except:
+                                    st.toast("Error al guardar", icon="❌")
+                        
+                        with c_perdido:
+                            if st.button("❌", key=f"loss_{loop_idx}", help="PERDIDO", use_container_width=True):
+                                ganancia = -apuesta if apuesta else 0
+                                try:
+                                    ws.update_cell(gs_row, 10, "perdido")
+                                    ws.update_cell(gs_row, 11, ganancia)
+                                    st.session_state.pop("df_picks", None)
+                                    st.toast(f"❌ ${ganancia:,.0f}", icon="❌")
+                                except:
+                                    st.toast("Error al guardar", icon="❌")
+                        
+                        with c_nulo:
+                            if st.button("➖", key=f"null_{loop_idx}", help="NULO", use_container_width=True):
+                                try:
+                                    ws.update_cell(gs_row, 10, "nulo")
+                                    ws.update_cell(gs_row, 11, 0)
+                                    st.session_state.pop("df_picks", None)
+                                    st.toast("➖ Nulo", icon="ℹ️")
+                                except:
+                                    st.toast("Error al guardar", icon="❌")
     except Exception as e:
         st.error(f"Error: {str(e)[:100]}")
 
@@ -5648,13 +5636,14 @@ def main():
     # Manual refresh button
     col_r = st.columns([6,1])[1]
     with col_r:
-        if st.button("🔄", help="Actualizar resultados desde ESPN (limpia cache)", key="main_refresh"):
-            # Limpiar todos los caches
+        if st.button("🔄", help="Actualizar resultados desde ESPN", key="main_refresh"):
+            # Limpiar cache y recargar
             st.cache_data.clear()
             st.cache_resource.clear()
             for k in ["df_picks","df_apodo","pit_ronda","pit_players","pit_picks"]:
                 st.session_state.pop(k, None)
-            st.rerun()
+            st.toast("🔄 Cache limpiado, recargando...", icon="🔄")
+
 
     # Header
     render_header(apodo, bank)
