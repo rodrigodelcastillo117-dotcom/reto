@@ -1645,6 +1645,32 @@ def delete_pick(apodo: str, df_idx: int):
     except Exception:
         return False
 
+def update_pick_resultado(apodo: str, fecha: str, partido: str, resultado: str, ws=None):
+    """Actualizar resultado de un pick (GANADO/PERDIDO/NULO)."""
+    try:
+        if not ws:
+            ss = get_ss()
+            if not ss: return False
+            ws = ensure_tab(ss, f"picks_{apodo.lower()}", PICKS_HEADERS)
+        
+        records = _safe_get_records(ws)
+        
+        # Buscar el pick por fecha y partido
+        for idx, record in enumerate(records):
+            rec_fecha = str(record.get("fecha", ""))[:10]
+            rec_partido = str(record.get("partido", "")).strip()
+            
+            if rec_fecha == str(fecha)[:10] and rec_partido == str(partido).strip():
+                sheet_row = idx + 2  # +1 para header, +1 para 0-based
+                # Columna 10 = resultado
+                ws.update_cell(sheet_row, 10, resultado)
+                return True
+        
+        return False
+    except Exception as e:
+        st.error(f"Error actualizando pick: {str(e)[:50]}")
+        return False
+
 def update_pick_row(apodo: str, df_idx: int, resultado: str, ganancia: float, bank_post: float):
     ss = get_ss()
     if not ss: return False
@@ -3598,6 +3624,61 @@ def tab_historial(apodo: str, df: pd.DataFrame):
                             if not resultado:
                                 resultado = _find_resultado_robusto(partido, deporte, pick_desc)
                             
+                            # ✅ SI NO ENCUENTRA AUTO, MOSTRAR BOTONES MANUALES
+                            if resultado:
+                                st.success(f"✅ AUTO-CALIFICADO: **{resultado.upper()}**")
+                                
+                                # Botones para confirmar o cambiar
+                                col_g, col_p, col_n = st.columns(3)
+                                with col_g:
+                                    if st.button("✅ GANADO", key=f"manual_win_{idx}", use_container_width=True):
+                                        update_pick_resultado(apodo, pick.get('fecha'), pick.get('partido'), 'ganado', ws)
+                                        st.session_state[f"grade_{idx}"] = False
+                                        st.session_state.pop("df_picks", None)
+                                        st.success("✅ Guardado como GANADO")
+                                        st.rerun()
+                                with col_p:
+                                    if st.button("❌ PERDIDO", key=f"manual_loss_{idx}", use_container_width=True):
+                                        update_pick_resultado(apodo, pick.get('fecha'), pick.get('partido'), 'perdido', ws)
+                                        st.session_state[f"grade_{idx}"] = False
+                                        st.session_state.pop("df_picks", None)
+                                        st.success("✅ Guardado como PERDIDO")
+                                        st.rerun()
+                                with col_n:
+                                    if st.button("➖ NULO", key=f"manual_void_{idx}", use_container_width=True):
+                                        update_pick_resultado(apodo, pick.get('fecha'), pick.get('partido'), 'nulo', ws)
+                                        st.session_state[f"grade_{idx}"] = False
+                                        st.session_state.pop("df_picks", None)
+                                        st.success("✅ Guardado como NULO")
+                                        st.rerun()
+                            else:
+                                st.warning("⚠️ No se encontró resultado en ESPN. Califica manualmente:")
+                                col_g, col_p, col_n = st.columns(3)
+                                with col_g:
+                                    if st.button("✅ GANADO", key=f"manual_win_{idx}", use_container_width=True):
+                                        update_pick_resultado(apodo, pick.get('fecha'), pick.get('partido'), 'ganado', ws)
+                                        st.session_state[f"grade_{idx}"] = False
+                                        st.session_state.pop("df_picks", None)
+                                        st.success("✅ Guardado como GANADO")
+                                        st.rerun()
+                                with col_p:
+                                    if st.button("❌ PERDIDO", key=f"manual_loss_{idx}", use_container_width=True):
+                                        update_pick_resultado(apodo, pick.get('fecha'), pick.get('partido'), 'perdido', ws)
+                                        st.session_state[f"grade_{idx}"] = False
+                                        st.session_state.pop("df_picks", None)
+                                        st.success("✅ Guardado como PERDIDO")
+                                        st.rerun()
+                                with col_n:
+                                    if st.button("➖ NULO", key=f"manual_void_{idx}", use_container_width=True):
+                                        update_pick_resultado(apodo, pick.get('fecha'), pick.get('partido'), 'nulo', ws)
+                                        st.session_state[f"grade_{idx}"] = False
+                                        st.session_state.pop("df_picks", None)
+                                        st.success("✅ Guardado como NULO")
+                                        st.rerun()
+                            
+                            if st.button("✖️ Cerrar", key=f"close_grade_{idx}"):
+                                st.session_state[f"grade_{idx}"] = False
+                                st.rerun()
                             if resultado:
                                 try:
                                     ws.update_cell(idx + 2, 10, resultado)
