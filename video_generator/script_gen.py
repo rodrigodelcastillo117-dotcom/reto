@@ -5,7 +5,7 @@ import re
 
 import requests
 
-GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_MODEL = "gemini-3.6-flash"
 GEMINI_URL = (
     f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent"
 )
@@ -37,7 +37,8 @@ Tema del video: "{topic}"
 Idioma de la locución: {language}
 
 Divide la historia/explicación en {num_scenes} escenas. Para cada escena entrega:
-- "narracion": el texto que se leerá en voz alta (breve, natural, en {language}).
+- "narracion": el texto que se leerá en voz alta (breve, natural, ÍNTEGRAMENTE en {language},
+  sin mezclar palabras ni caracteres de otros idiomas o alfabetos).
 - "busqueda": 2 a 4 palabras clave EN INGLÉS que describan visualmente la escena,
   útiles para buscar un video de stock (ej: "city traffic night", "coffee cup steam").
 
