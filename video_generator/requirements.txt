@@ -1,0 +1,5 @@
+streamlit>=1.32
+requests>=2.31
+edge-tts>=6.1
+moviepy>=2.1
+python-dotenv>=1.0
