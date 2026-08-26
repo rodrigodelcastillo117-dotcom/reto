@@ -1,4 +1,4 @@
-"""Generación del guion (escenas) a partir de un tema, usando la API de Gemini."""
+"""Llamadas a la API de Gemini: texto libre (para prompts avanzados) y guion en JSON."""
 
 import json
 import re
@@ -21,6 +21,34 @@ def _extract_json(text: str):
     if not match:
         raise ScriptGenError(f"No se encontró un arreglo JSON en la respuesta:\n{text}")
     return json.loads(match.group(0))
+
+
+def generate_text(prompt: str, api_key: str, temperature: float = 0.8, json_mode: bool = False) -> str:
+    """Llama a Gemini con un prompt libre y devuelve el texto de la respuesta."""
+    generation_config = {"temperature": temperature}
+    if json_mode:
+        generation_config["response_mime_type"] = "application/json"
+
+    body = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": generation_config,
+    }
+
+    resp = requests.post(
+        GEMINI_URL,
+        params={"key": api_key},
+        json=body,
+        timeout=60,
+    )
+
+    if resp.status_code != 200:
+        raise ScriptGenError(f"Gemini devolvió error {resp.status_code}: {resp.text}")
+
+    data = resp.json()
+    try:
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+    except (KeyError, IndexError) as exc:
+        raise ScriptGenError(f"Respuesta de Gemini inesperada: {data}") from exc
 
 
 def generate_script(topic: str, language: str, api_key: str, num_scenes: str = "3 a 5") -> list[dict]:
@@ -49,29 +77,7 @@ Responde ÚNICAMENTE con un arreglo JSON válido, sin texto adicional ni markdow
 ]
 """
 
-    body = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {
-            "temperature": 0.8,
-            "response_mime_type": "application/json",
-        },
-    }
-
-    resp = requests.post(
-        GEMINI_URL,
-        params={"key": api_key},
-        json=body,
-        timeout=60,
-    )
-
-    if resp.status_code != 200:
-        raise ScriptGenError(f"Gemini devolvió error {resp.status_code}: {resp.text}")
-
-    data = resp.json()
-    try:
-        text = data["candidates"][0]["content"]["parts"][0]["text"]
-    except (KeyError, IndexError) as exc:
-        raise ScriptGenError(f"Respuesta de Gemini inesperada: {data}") from exc
+    text = generate_text(prompt, api_key, json_mode=True)
 
     try:
         scenes = json.loads(text)
