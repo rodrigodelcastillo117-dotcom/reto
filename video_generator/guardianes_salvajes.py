@@ -324,6 +324,10 @@ Guion:
 """
 
 
+def iso_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
 def load_historial() -> list[dict]:
     if not os.path.exists(HISTORIAL_PATH):
         return []
