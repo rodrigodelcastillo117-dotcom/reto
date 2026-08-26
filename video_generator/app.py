@@ -5,6 +5,9 @@ Modo Genérico: Gemini (guion) -> edge-tts (locución) -> Pexels (clips) -> Movi
 Modo Guardianes Salvajes TV: Gemini (guion con rotación) -> edge-tts (locución)
     -> Nano Banana (imágenes IA por escena) -> MoviePy (montaje con Ken Burns).
 
+La lógica del pipeline vive en pipeline.py (sin dependencia de Streamlit), para
+que también pueda llamarse desde otros sistemas (workers, dashboards, etc.).
+
 Ejecutar con: streamlit run app.py
 """
 
@@ -16,11 +19,11 @@ import streamlit as st
 from dotenv import load_dotenv
 
 import guardianes_salvajes as gs
-from assemble import assemble_video
-from images_ai import ImageGenError, generate_scene_image
-from script_gen import ScriptGenError, generate_script
-from tts import VOICES, TTSError, synthesize_narration
-from visuals import VisualsError, fetch_scene_clip
+from pipeline import generate_generic_video, generate_guardianes_video
+from script_gen import ScriptGenError
+from tts import VOICES, TTSError
+from visuals import VisualsError
+from images_ai import ImageGenError
 
 load_dotenv()
 
@@ -45,7 +48,7 @@ modo = st.radio(
     horizontal=False,
 )
 
-work_dir = None
+FINAL_VIDEO_PATH = os.path.join(os.path.dirname(__file__), "output", "video_final.mp4")
 
 # ─────────────────────────────────────────────────────────────
 # MODO GENÉRICO
@@ -77,54 +80,30 @@ if modo.startswith("Genérico"):
         else:
             work_dir = tempfile.mkdtemp(prefix="videogen_")
             try:
-                with st.status("Generando guion con Gemini...", expanded=True) as status:
+                with st.status("Generando video...", expanded=True) as status:
                     try:
-                        scenes = generate_script(topic, language, gemini_key)
+                        result = generate_generic_video(
+                            topic, language, gender, gemini_key, pexels_key,
+                            work_dir, FINAL_VIDEO_PATH, on_progress=lambda msg: st.write(msg),
+                        )
                     except ScriptGenError as exc:
                         status.update(label="Error generando el guion", state="error")
                         st.error(str(exc))
                         st.stop()
-
-                    st.write(f"Guion listo: {len(scenes)} escenas.")
-                    for i, scene in enumerate(scenes, 1):
-                        st.write(f"**Escena {i}:** {scene['narracion']}  \n_búsqueda: {scene['busqueda']}_")
-
-                    status.update(label="Generando locución y descargando clips...")
-                    scene_paths = []
-                    for i, scene in enumerate(scenes, 1):
-                        st.write(f"Procesando escena {i}/{len(scenes)}...")
-
-                        audio_path = os.path.join(work_dir, f"scene_{i}.mp3")
-                        try:
-                            synthesize_narration(scene["narracion"], language, gender, audio_path)
-                        except TTSError as exc:
-                            status.update(label="Error generando audio", state="error")
-                            st.error(str(exc))
-                            st.stop()
-
-                        video_path = os.path.join(work_dir, f"scene_{i}.mp4")
-                        try:
-                            fetch_scene_clip(scene["busqueda"], pexels_key, video_path)
-                        except VisualsError as exc:
-                            status.update(label="Error descargando video de Pexels", state="error")
-                            st.error(str(exc))
-                            st.stop()
-
-                        scene_paths.append({"video": video_path, "audio": audio_path})
-
-                    status.update(label="Ensamblando video final...")
-                    output_path = os.path.join(work_dir, "video_final.mp4")
-                    assemble_video(scene_paths, output_path)
-
-                    final_path = os.path.join(os.path.dirname(__file__), "output", "video_final.mp4")
-                    os.makedirs(os.path.dirname(final_path), exist_ok=True)
-                    shutil.copy(output_path, final_path)
+                    except TTSError as exc:
+                        status.update(label="Error generando audio", state="error")
+                        st.error(str(exc))
+                        st.stop()
+                    except VisualsError as exc:
+                        status.update(label="Error descargando video de Pexels", state="error")
+                        st.error(str(exc))
+                        st.stop()
 
                     status.update(label="¡Video listo!", state="complete")
 
-                st.success("Video generado correctamente.")
-                st.video(final_path)
-                with open(final_path, "rb") as f:
+                st.success(f"Video generado correctamente ({result['escenas']} escenas).")
+                st.video(FINAL_VIDEO_PATH)
+                with open(FINAL_VIDEO_PATH, "rb") as f:
                     st.download_button(
                         "⬇️ Descargar video",
                         data=f,
@@ -163,86 +142,39 @@ else:
         else:
             work_dir = tempfile.mkdtemp(prefix="videogen_gs_")
             try:
-                with st.status("Eligiendo especie y premisa del día...", expanded=True) as status:
-                    categoria, especie_es, especie_en = gs.pick_especie(historial)
-                    premisa = gs.pick_premisa(historial)
-                    st.write(f"**Especie:** {especie_es} ({categoria})  \n**Premisa:** {premisa['nombre']}")
-
-                    status.update(label="Generando guion con Gemini...")
-                    prompt = gs.build_prompt(categoria, especie_es, premisa, historial)
+                with st.status("Generando video...", expanded=True) as status:
                     try:
-                        raw_script = gs.generate_text(prompt, gemini_key, temperature=0.9)
+                        result = generate_guardianes_video(
+                            gemini_key, gender_gs, work_dir, FINAL_VIDEO_PATH,
+                            on_progress=lambda msg: st.write(msg),
+                        )
                     except ScriptGenError as exc:
                         status.update(label="Error generando el guion", state="error")
                         st.error(str(exc))
                         st.stop()
-
-                    scenes_raw = gs.parse_script(raw_script)
-                    if not scenes_raw:
-                        status.update(label="El guion generado no se pudo interpretar", state="error")
-                        st.error(f"Respuesta de Gemini sin escenas reconocibles:\n\n{raw_script}")
-                        st.stop()
-
-                    n_palabras = gs.contar_palabras_narracion(scenes_raw)
-                    st.write(f"Guion listo: {len(scenes_raw)} escenas, {n_palabras} palabras de narración.")
-                    for i, sc in enumerate(scenes_raw, 1):
-                        st.write(f"**Escena {i}:** {sc['narracion']}  \n_visual: {sc['visual']}_")
-
-                    status.update(label="Generando título...")
-                    try:
-                        titulo = gs.generate_title(raw_script, especie_es, gemini_key)
-                    except ScriptGenError as exc:
-                        status.update(label="Error generando el título", state="error")
+                    except TTSError as exc:
+                        status.update(label="Error generando audio", state="error")
                         st.error(str(exc))
                         st.stop()
-                    st.write(f"**Título:** {titulo}")
-
-                    status.update(label="Generando locución e imágenes por escena...")
-                    scene_paths = []
-                    for i, sc in enumerate(scenes_raw, 1):
-                        st.write(f"Procesando escena {i}/{len(scenes_raw)}...")
-
-                        audio_path = os.path.join(work_dir, f"scene_{i}.mp3")
-                        try:
-                            synthesize_narration(
-                                sc["narracion"], "Español (Latinoamérica neutro)", gender_gs, audio_path
-                            )
-                        except TTSError as exc:
-                            status.update(label="Error generando audio", state="error")
-                            st.error(str(exc))
-                            st.stop()
-
-                        image_path = os.path.join(work_dir, f"scene_{i}.jpg")
-                        try:
-                            generate_scene_image(sc["visual"], gemini_key, image_path)
-                        except ImageGenError as exc:
-                            status.update(label="Error generando imagen con Nano Banana", state="error")
-                            st.error(str(exc))
-                            st.stop()
-
-                        scene_paths.append({"image": image_path, "audio": audio_path})
-
-                    status.update(label="Ensamblando video final...")
-                    output_path = os.path.join(work_dir, "video_final.mp4")
-                    assemble_video(scene_paths, output_path)
-
-                    final_path = os.path.join(os.path.dirname(__file__), "output", "video_final.mp4")
-                    os.makedirs(os.path.dirname(final_path), exist_ok=True)
-                    shutil.copy(output_path, final_path)
-
-                    gs.save_historial_entry({
-                        "titulo": titulo,
-                        "especie": especie_es,
-                        "categoria": categoria,
-                        "premisa_id": premisa["id"],
-                        "fecha": gs.iso_now(),
-                    })
+                    except ImageGenError as exc:
+                        status.update(label="Error generando imagen con Nano Banana", state="error")
+                        st.error(str(exc))
+                        st.stop()
+                    except ValueError as exc:
+                        status.update(label="El guion generado no se pudo interpretar", state="error")
+                        st.error(str(exc))
+                        st.stop()
 
                     status.update(label="¡Video listo!", state="complete")
 
-                st.success(f"Video generado: {titulo}")
-                st.video(final_path)
-                with open(final_path, "rb") as f:
+                st.success(f"Video generado: {result['titulo']}")
+                st.caption(
+                    f"Especie: {result['especie']} ({result['categoria']}) · "
+                    f"Premisa: {result['premisa']} · {result['palabras']} palabras · "
+                    f"{result['escenas']} escenas"
+                )
+                st.video(FINAL_VIDEO_PATH)
+                with open(FINAL_VIDEO_PATH, "rb") as f:
                     st.download_button(
                         "⬇️ Descargar video",
                         data=f,
