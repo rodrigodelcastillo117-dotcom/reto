@@ -1439,3 +1439,64 @@ familias depende del JWT heredado. Falta solo el grep de `SUPABASE_ANON_KEY`.
 18. **Decodificar el payload de un JWT dice su rol sin exponer el secreto.** El
     `role` vive en el segundo segmento en base64; la firma queda intacta. Sirve para
     auditar sin que la llave entre nunca al contexto.
+
+---
+
+## #191 BLOQUEADOR del paso 4: `isServiceToken()` solo entiende JWT, no la llave nueva
+
+Cazado por un rastro de 401 cada 15 minutos en `net._http_response`.
+
+### La cadena
+1. `reanalisis-alineaciones` (jobid 341, `3-59/15`) llama a
+   `disparar_reanalisis_prepartido()`, que **SI manda bien** la cabecera:
+   `'Authorization','Bearer '||public.sk()`.
+2. `public.sk()` devuelve la llave nueva `sb_secret_...`.
+3. `analizar-partido` la rechaza con `{"error":"No autorizado"}` (401) desde su PROPIO
+   codigo, no desde la puerta de enlace.
+
+### La causa exacta
+```ts
+function isServiceToken(token: string): boolean {
+  const service = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  if (service && token === service) return true;      // el JWT heredado
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));
+    return payload?.role === "service_role";          // decodifica un JWT
+  } catch { return false; }
+}
+```
+Las DOS ramas asumen JWT. Una llave `sb_secret_` no es igual a la variable
+`SUPABASE_SERVICE_ROLE_KEY` (que guarda el JWT viejo) y no tiene segmentos que
+decodificar: el `atob` truena, cae al catch, devuelve false, `requireCaller` lanza
+`unauthorized`.
+
+### Por que bloquea el paso 4
+`requireCaller` es un helper COMPARTIDO. Cada edge function que lo importe rechaza a
+los crons igual. Al apagar los JWT heredados, `SUPABASE_SERVICE_ROLE_KEY` deja de ser
+valida y la primera rama tampoco sirve: quedan TODAS esas funciones inalcanzables para
+los crons. Falta medir cuantas la importan.
+
+### El arreglo NO es `token.startsWith("sb_secret_")`
+Eso aceptaria cualquier cadena con ese prefijo — un hoyo de seguridad. Tiene que
+comparar contra el VALOR conocido de la llave, desde una variable de entorno.
+
+### Efecto colateral ya medido
+El reanalisis prepartido con alineaciones (#69, #136) lleva rebotando en 401 cada 15
+minutos. Se "arreglo" dos veces y volvio a morir por una causa distinta cada vez.
+
+## Otros hallazgos de la misma barrida
+- **25 de 67 crons activos que hacen HTTP no declaran `timeout_milliseconds`** y heredan
+  los **5 segundos por omision de pg_net**. Es la version sistemica del #184: aquel push
+  era una instancia. Medido: 46 timeouts de 5 s en 24 h (2.6% de 1,749 respuestas).
+- **818 respuestas 404 `"No stats found"` en 24 h** contra una API externa. No es fallo
+  nuestro, pero son 818 llamadas desperdiciadas al dia.
+- Verificado que la migracion de los 5 crons funciona: `sync-fixtures-index` corrio a las
+  20:54:00 con la llave nueva y devolvio HTTP **200** con
+  `{"ok":true,"ligas_consultadas":55,"eventos":605,"guardados":605}`.
+
+## Leccion nueva
+19. **`succeeded` en pg_cron NO significa que la peticion funciono.** Solo dice que se
+    despacho. La verdad esta en `net._http_response.status_code`. Verificar ahi SIEMPRE.
+20. **Un helper de autenticacion compartido concentra el riesgo de una rotacion de
+    llaves.** Antes de rotar, buscar quien decide "esto es una llamada interna" y
+    confirmar que entienda el formato nuevo.
