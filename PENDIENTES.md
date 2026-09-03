@@ -1537,3 +1537,62 @@ ese JWT esta CORRUPTO y esa llamada ya venia fallando. Verificar antes de migrar
   escrito a mano** y se quito. Ese respaldo habria hecho que el fallo apareciera solo en
   algunos usuarios.
 - `bunx tsgo --noEmit` limpio; vista previa carga.
+
+---
+
+## #193 CERRADO el 401: eran DOS llaves distintas, no un bug de codigo
+
+La especificacion inicial decia "arregla `isServiceToken()` comparando contra
+`SUPABASE_SERVICE_ROLE_KEY`". **Habria reescrito codigo de autenticacion sano y los 401
+habrian seguido igual.** Una sonda temporal de 3 minutos desmonto TRES de los siete
+puntos del plan.
+
+### Lo que revelo la sonda (solo formato y longitud, nunca valores)
+```
+SUPABASE_SERVICE_ROLE_KEY: existe, largo 41, formato "sb_secret_"      <- YA es la nueva
+SUPABASE_ANON_KEY:         existe, largo 46, formato "sb_publishable_" <- YA es la nueva
+SUPABASE_SECRET_KEY:       no existe
+```
+**Supabase ya habia migrado las variables de entorno solo.** Los nombres siguen diciendo
+SERVICE_ROLE y ANON, pero adentro viven las llaves nuevas. Por eso `oraculo-diario` y
+`oraculo-cron` NUNCA estuvieron en riesgo: falsos positivos.
+
+### La causa real
+Hay TRES llaves secretas en el proyecto. Los dos lados usaban distintas:
+| quien | llave |
+|---|---|
+| los 56 crons, via `public.sk()` (vault, `service_role_key`) | `sb_secret_...irMwr` = "backend" |
+| las edge functions, via `SUPABASE_SERVICE_ROLE_KEY` | `sb_secret_...Jak1k` = "default" |
+
+`token === service` comparaba `irMwr` contra `Jak1k`. Fallaba, caia al `atob`, tronaba,
+y devolvia 401. **Cero lineas de codigo malas.**
+
+### Arreglo
+El usuario apunto el vault a la llave "default" desde SU propio SQL Editor
+(`vault.update_secret`), sin que la llave pasara nunca por el chat.
+Verificado: `substr(public.sk(),11,5)` = `Jak1k`.
+
+### Verificado SIN esperar al cron
+Llamada forzada a `analizar-partido` con `Bearer public.sk()` y cuerpo vacio:
+```
+HTTP 400 {"error":"espn_event_id or apifootball_fixture_id, and liga are required"}
+```
+Error de VALIDACION, no de autenticacion. La peticion paso `isServiceToken()`.
+Antes devolvia `401 {"error":"No autorizado"}`.
+
+### Tambien verificado contra produccion (no contra el reporte de nadie)
+- `analizar-partido` v492, desplegada 21:05:56: **0 ocurrencias de `eyJhbGciOi`**,
+  2 usos de la variable de entorno, `verify_jwt: false` intacto.
+- `.env` y `client.ts`: sin JWT. El cliente TENIA uno escrito a mano como respaldo.
+
+### Pendiente de limpieza
+Borrar del panel la sonda `probe-envvars-tmp` (ya neutralizada, devuelve 410).
+
+## Leccion nueva
+21. **Una sonda temporal cuesta menos que un arreglo equivocado.** Tres minutos de
+    medicion desmontaron 3 de 7 puntos y evitaron reescribir autenticacion sana.
+22. **Editar un archivo de edge function en el repositorio NO la despliega.** Verificar
+    siempre contra la funcion VIVA (`get_edge_function`), no contra el repo ni contra el
+    reporte de quien la edito.
+23. **Cuando un proyecto tiene varias llaves del mismo tipo, "la llave correcta" es una
+    pregunta empirica.** Aqui habia tres `sb_secret_` y cada lado uso una distinta.
