@@ -739,6 +739,54 @@ nombre+fecha da 24 de 37 eventos, cero ambiguos, coherente con la sustitucion (2
 **Pendiente:** cerrar el emisor de `af:` (2 picks hoy) y normalizar el historial — **excluyendo
 Corners** por #182.
 
+### #181 PASO 2 EJECUTADO: normalizacion `af:` -> `af_` (3-sep)
+
+56 filas normalizadas, 0 quedaron con `af:`. Los picks pendientes que cruzan con un marcador final
+saltaron de **1 a 38**. Calificador disparado: **28 calificados, 0 errores**.
+
+| Mercado | Siguen pendientes | Ganados | Perdidos | Nulos |
+|---|---|---|---|---|
+| **Corners** | **19** | **0** | **0** | **0** |
+| BTTS | 7 | 4 | 8 | 0 |
+| Over/Under | 5 | 3 | 8 | 0 |
+| Double Chance | 1 | 0 | 0 | 1 |
+
+**LA GUARDA v19 (#182) PROBADA EN PRODUCCION.** 13 corners tenian marcador final disponible y
+**ninguno se califico**. Log textual:
+
+```
+[ORÁCULO/oraculo_picks_tracking] SIN CALIFICAR (mercado no resoluble con marcador):
+  Corners | [💰 PICK DE VALOR] Corners Under 8
+```
+
+Sin la guarda, esos 13 habrian entrado por la rama de goles y escrito 13 resultados falsos nuevos.
+
+**OJO con las CTE:** el primer intento midio "antes y despues" en la misma sentencia y devolvio el
+estado PREVIO en los conteos de despues. En una sola sentencia, los subqueries leen la instantanea
+anterior al CTE que hace el UPDATE. Hay que volver a consultar en una sentencia aparte.
+
+### #186 GRAVE: se califica contra un 0-0 IMPOSIBLE (MLB desde mayo)
+
+Encontrado al auditar los 28 calificados del Paso 2 — apareció Titans vs Bears entre ellos y el
+partido estaba congelado en `scheduled 0-0`.
+
+| Veredicto | Liga | Picks | Ganado | Perdido | Desde |
+|---|---|---|---|---|---|
+| **IMPOSIBLE** | MLB | **15** | 4 | 11 | 23-may |
+| **IMPOSIBLE** | NFL | **3** | 0 | 3 | 3-sep |
+| plausible (futbol) | varias | 65 | — | — | — |
+
+**Un partido de MLB no puede terminar 0-0** (se juegan entradas extra hasta que alguien gane) y uno
+de NFL tampoco. Son **18 resultados falsos**. Los 65 de futbol son legitimos: ahi el 0-0 existe.
+
+**Mi reverso NO sirvio y hay que decirlo:** puse los 3 de NFL en `pendiente` a las ~19:36 y el cron
+(`7-59/15`) los re-califico a las **19:37:01**, un minuto despues, contra el mismo 0-0. **Mientras la
+fila diga `final 0-0`, revertir el pick es inutil.** El arreglo va en el calificador, no en el dato.
+
+**Guarda propuesta (NO aplicada, falta diff y luz verde):** en `grade-oraculo-picks`, no calificar
+cuando el marcador final sea 0-0 y el deporte no admita 0-0 (NFL/MLB/NBA/NHL). Futbol se queda
+calificable. Requiere agregar `liga` al select del pick o `deporte` al SEL de live_scores.
+
 ### #183 TENIS: dos escrituras contradictorias y una apuesta ganada que casi no se cobra
 
 **El caso.** Pick del usuario: Cerundolo Ganador vs Struff, 3,774 de apuesta. Cerundolo gano 3-2.
