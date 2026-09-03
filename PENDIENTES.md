@@ -739,6 +739,107 @@ nombre+fecha da 24 de 37 eventos, cero ambiguos, coherente con la sustitucion (2
 **Pendiente:** cerrar el emisor de `af:` (2 picks hoy) y normalizar el historial — **excluyendo
 Corners** por #182.
 
+### #183 TENIS: dos escrituras contradictorias y una apuesta ganada que casi no se cobra
+
+**El caso.** Pick del usuario: Cerundolo Ganador vs Struff, 3,774 de apuesta. Cerundolo gano 3-2.
+El pick llevaba 12 horas en `pendiente`. Causa: `live_scores` decia `status='live'` y
+`status_detail='Final'` **en la misma fila**. El calificador exige `status='final'`.
+
+**Alcance:** 10 partidos del US Open ese dia (7 WTA, 3 ATP), todos con marcador de sets completo.
+
+**EL CULPABLE NO ERA EL ABSORBEDOR.** Empece a parchar `absorber_tenis_espn` y la medicion movio
+el objetivo: el revert lo hace **`get-espn-matches`**, invocada por el cron `refresh-live-scores`
+(`2-59/3`, **cada 3 minutos**). Evidencia por reloj:
+
+| Momento | Evento |
+|---|---|
+| 19:17:00.409 | el pick se califica GANADO |
+| **19:17:01.834** | **las 10 filas vuelven a 'live'** |
+| 19:20:00 / 19:20:04.569 | corre el cron / revierte otra vez |
+
+**La apuesta gano la carrera por 1.4 segundos.** `get-espn-matches` escribe las dos columnas en la
+misma operacion y se contradice: `'Final'` en el detalle, `'live'` en el estado. Eso cierra los dos
+hilos abiertos (quien revierte y quien escribe `status_detail`): son el mismo.
+
+**CAPA 1 APLICADA: `trg_final_pegajoso`** (universal, todos los deportes). Bloquea
+`final -> live/scheduled/pre/sin_confirmar`; **permite `final -> postponed`** (anula apuestas, no las
+reabre); conserva el resto del UPDATE. Escotilla auditable:
+`set local app.permitir_reabrir_final = 'on'`.
+Vocabulario medido antes de escribirla: sin_confirmar 774, scheduled 686, pre 669, final 500,
+live 38, postponed 1.
+**PROBADA EN VIVO:** tras liberar los 10 partidos, `refresh-live-scores` escribio a las 19:26:01 y
+los 10 siguieron en `final`.
+
+**CAPA 2 PENDIENTE:** el diff de tenis en `get-espn-matches` (Lovable). Reglas: (1) nunca retroceder
+de final; (2) si el detalle dice Final, el estado dice final; (3) un jugador con **3 sets ganados**
+-> final (piso seguro: al mejor de 3 nunca se alcanza, asi que jamas cierra un partido vivo);
+(4) `liga like 'WTA%'` con 2 sets -> final (WTA es siempre al mejor de 3; ATP no puede usarla por
+los Grand Slam de 5 sets).
+
+### #184 PUSH: un timeout de 5 segundos mataba TODAS las notificaciones
+
+El usuario nunca recibio el aviso de su pick ganado. La cadena entera funcionaba menos el ultimo
+salto: fila en `notificaciones` creada, `trg_notificacion_push` ACTIVO y disparado
+(`push_disparada = true`), suscripcion activa registrada ese mismo dia. Pero:
+
+```
+Timeout of 5000 ms reached. Total time: 5000.178 ms (DNS time: 5000.178 ms)
+```
+
+**Los 5 segundos completos se iban resolviendo el DNS.** Medido en 2 horas de trafico real de pg_net:
+
+| Resultado | Peticiones | Murieron en DNS |
+|---|---|---|
+| OK | 1,529 | 0 |
+| **Timeout 5 s** (exclusivo de este trigger) | **30** | 10 |
+| Timeout 30 s | 5 | 3 |
+| Timeout 60 s | 1 | 1 |
+
+Ninguna otra llamada del sistema usaba 5,000 ms. Sintoma acumulado: `push_log` con **5 intentos en
+toda su historia**, el ultimo del 1-sep.
+
+**APLICADO:** `timeout_milliseconds := 5000 -> 30000` por patron quirurgico con guarda de
+ocurrencia unica. Verificado: no queda rastro del 5 s y conserva las dos guardas originales
+(suscripcion activa y veto de parlays para no duplicar el push).
+
+### #185 API-FOOTBALL: 64 partidos zombi que nunca cerraron
+
+Encontrado al revisar por que un partido en vivo mostraba el minuto 52 cuando iba en el 68.
+De 98 filas con `status='live'` en `ligamx_partidos`:
+
+| Antiguedad | Partidos | Promedio sin refrescar |
+|---|---|---|
+| Menos de 2h (plausible) | 34 | 16 min |
+| 6 a 24h (imposible) | 17 | 17 horas |
+| **Mas de 24h (zombi)** | **47** | **75 horas** |
+
+Misma enfermedad del tenis — *un partido que nunca llega a final* — en otra tuberia.
+
+**Riesgo dimensionado antes de tocar nada (lo importante):**
+
+| Medicion | Resultado |
+|---|---|
+| Picks del usuario pendientes sobre zombis | **0** |
+| Picks del usuario totales | **0** |
+| Picks del Oraculo pendientes | **0** |
+| Filas de CLV | **0** |
+| Espejados a `live_scores` | 3 |
+| **Se ven "en vivo" en la app** | **0** |
+| **Ya archivados con marcador FALSO** | **6** |
+| Minuto promedio congelado | 47 |
+
+**Cero exposicion de dinero.** El daño real son las **6 filas ya archivadas con un marcador de media
+cancha** como si fuera final: eso alimenta calibracion e historico. Ligas afectadas: todas
+secundarias (Copa Paulista, Liga Femenina, MLS Next Pro, USL, Primera B, Serie D, reservas).
+
+**NO cerrar los 64 con el marcador congelado**: 62 de 64 estan congelados antes del minuto 85, asi
+que marcarlos `final` inyectaria 62 resultados falsos al historico. Primero traer el marcador real
+de API-Football (64 llamadas por id, barato), despues cerrar.
+
+**Rezago aparte:** los 34 genuinamente vivos van ~16 min atrasados. `ligamx-live-2min` corrio 6
+veces en 30 min, todas exitosas, y el presupuesto de API-Football permite llamar. El cron dispara y
+el dato no llega: sin diagnosticar todavia.
+
 ### #113 — Marcadores cruzados: tenis congelado en 2-0 y MLB al revés en pantalla
 
 ### #120 — Tenis: 112 de 163 partidos de ATP con marcador imposible
