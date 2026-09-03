@@ -21,34 +21,50 @@ El dimensionamiento vive solo en los RPC que recalculan al leer: `mejor_oportuni
 
 ---
 
-## PRIMERO MAÑANA
+## PLAN POR FASES (acordado 3-sep)
 
-### #172 — Cerrar el frente de penales y de partidos congelados
-El 3-sep un parlay de $200 estuvo dos días sin calificar. Eran **tres** fallas encadenadas;
-la primera ya quedó arreglada, las otras dos se repiten en el próximo partido de copa.
+Ordenado por riesgo real de dinero y por la unica fecha dura de la lista: **NFL arranca el 9-10 de septiembre.**
 
-**Los tres puntos, en orden:**
+### FASE 1 — Blindaje y fugas de dinero (hoy / manana)
+1. **#172 red de seguridad.** Ponerle cron a `completar_metadatos_live()` cada 30 min y bajar su
+   ventana a 45 min **solo para partidos en estado vivo** (hoy es de 2 dias y no la corre nadie).
+   Mas la alerta por `confianza_calificacion='BLOQUEADO_PREMATURO' AND resultado='pendiente'`
+   — el segundo filtro es obligatorio: el marcador sobrevive a la liquidacion y sin el la alerta
+   arranca con un falso positivo (el parlay de $250 del 9-ago, ya cerrado).
+2. **#147.** Alinear la fuente de momios del EV con la casa donde se apuesta de verdad.
+3. **Verificacion #179/#180** despues de las 05:25 UTC: que el cron 324 regenerara pocas lecciones
+   y ninguna con numeros de ajuste ni Kelly.
 
-1. **Persistencia de penales.** Capturar el `shootoutScore` de ESPN y guardarlo en
-   `live_scores.score_detail_json`. **El formato ya está estrenado con datos reales**
-   (evento `401914296`):
-   ```json
-   {"definido_en":"penales","penales":{"home":4,"away":5},
-    "ganador_penales":"away","equipo_que_avanza":"CF Monterrey",
-    "marcador_reglamentario":{"home":2,"away":2},"fuente":"..."}
-   ```
-   Con ese dato, la rama de empate de `evaluar_leg_parlay_v1` deja de devolver
-   `no_evaluable` y califica sola.
+### FASE 2 — Datos y NFL (4-6 sep)
+1. **#93 NOVATOS.** CORRECCION MEDIDA: los snaps NO faltan. `nfl_snaps` tiene 7,887 filas de la
+   temporada 2025 (semanas 1-22, cargadas el 1-sep desde nflverse) y el cron `nfl-snaps-martes`
+   (martes 12:13 UTC) ya existe y jalara 2026 conforme se juegue. Los snaps de 2026 no pueden
+   precargarse porque la temporada no ha empezado.
+   **El hueco real es `nfl_novatos`: 1 sola fila, sin cron y sin funcion que la llene.** Un novato
+   sin historico cae al promedio de posicion. Esto SI es precargable y hay que construirlo.
+2. **#118.** Verificar la agenda sembrada y decidir con que evidencia se encienden los picks.
+3. **#157.** Separar estrictamente los snapshots de antes y de durante el partido: protege el CLV
+   y el EV historico con el que despues calibramos.
+4. **#172 punto 1.** Mapear la tanda de penales de la API hacia `score_detail_json`. El formato ya
+   quedo estrenado con datos reales en el evento 401914296.
+5. **#173 ACOTADO.** NO es fuga de banca: la aritmetica lo descarta (EV almacenado +14.1% cuadra
+   con 0.296 x 3.85 - 1; si usara la invertida seria +57.9%). El alcance correcto es auditar si
+   `capture_pick_to_ai_learning` arrastra la inversion a la tabla de entrenamiento.
 
-2. **Cierre de partidos abandonados.** Job que fuerce el cierre de partidos congelados
-   más de 30 min en `period=5` o con `SIN SEÑAL`. América-Monterrey se quedó en
-   `status='live'` desde las 06:12 UTC y hubo que cerrarlo a mano.
+### FASE 3 — Enjambre y calibracion (7-9 sep)
+1. **#175.** Conectar los 14 crons a `bitacora_aprendizaje`. Escribir primero, decidir despues.
+2. **Veto unificado por Brier con n>=200**, en sustitucion del veto por ROI.
+3. **#140 y #158.** Etiqueta de probabilidad en la tarjeta y chip GANA en vivo.
+4. **#176 CON GUARDA.** NO es un swap de 5 minutos. `calibrar_prob_motor` devuelve NULL fuera del
+   rango medido (futbol >70%, beisbol >62%) y un NULL tira filas en silencio por un `WHERE`: es el
+   mecanismo exacto de #57 y #114, que dejaron a MLB y NFL sin un solo pick durante semanas.
+   La reruta va con `coalesce(calibrar_prob_motor(...), prob_cruda)` y conteo antes/despues.
+   Exposicion medida: el techo de 45.4% toco 1 pick en 25 horas (`calibrar_prob_motor` = 31 llamadas,
+   `calibrar_probabilidad` = 1, `construir_parlay_v2` = 0, `get_oportunidades_hoy` = 0).
 
-3. **Alerta de falla silenciosa.** Avisar cuando una pata siga `no_evaluable` más de 2h
-   después de terminado el partido. **Y también cuando un parlay quede en
-   `confianza_calificacion = 'BLOQUEADO_PREMATURO'`** — ese estado significa que el sistema
-   quiso cerrar y no pudo, hoy no avisa a nadie, y es justo el que dejó el de $200 colgado.
-   Antes de construirla: **contar cuántos parlays viejos están en ese estado ahora mismo.**
+### FASE 4 — Post-kickoff
+#120, #113, #36 (datos sucios) · #174, #135, #145, #133 (modelo) · #126, #155, #70, #67, #42
+(pantalla) · #63, #105, #38 (seguridad) · #98, #100 (operacion).
 
 ---
 
