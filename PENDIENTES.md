@@ -554,65 +554,69 @@ En los 8 análisis de MLB del 2-sep las etiquetas SÍ cuadran (7 de 8 coinciden 
 
 **Regla:** cuando un bloque diga `inferred_from_`, no creerle sin cruzarlo contra la aritmética del EV.
 
-### #181 — Oraculo sin calificar: NO era una causa, eran TRES (medido 3-sep)
+### #181 — CAUSA RAIZ REAL: los picks nacen con ID de API-Football, no de ESPN
 
-**La cifra crecio de 68 a 88 mientras trabajabamos: la fuga sigue activa.** Y al medir el desglose,
-la hipotesis original ("limpieza-nocturna borra el marcador") explica **65 de 88**, no el total.
+**CORRECCION DE MI PROPIO DIAGNOSTICO (dos veces el mismo dia).** Escribi que
+`limpieza-nocturna` borraba el marcador y dejaba los picks colgados. **Es falso**, y la medicion
+que lo desmonta es de una linea:
 
-Desglose de los 88 `resultado='pendiente'`, por estado de `live_scores`:
-
-| Estado en live_scores | Picks | Lectura |
-|---|---|---|
-| (sin fila) | 65 | el marcador se borro a las 24h — la hipotesis original |
-| `scheduled` | 11 | la fila existe pero nunca se actualizo |
-| `pre` | 8 | **partidos del 4 al 6-sep: correctamente pendientes** |
-| `live` | 3 | **en curso hoy: correctamente pendientes** |
-| `final` | 1 | tiene marcador 3-0 y AUN ASI no se califico |
-
-**16 de los 88 no son bug**: son partidos por jugarse. El problema real es de 72.
-
-Por mercado, y aqui aparece la segunda causa:
-
-| Mercado | Pendientes | Sin marcador | Aun por jugarse |
+| Grupo | Picks | Llegaron a `marcadores_archivo` | % |
 |---|---|---|---|
-| Over/Under | 27 | 22 | 2 |
-| BTTS | 21 | 21 | 0 |
-| **Corners** | **20** | 19 | **0** |
-| Moneyline | 18 | 1 | 14 |
-| Double Chance | 2 | 2 | 0 |
+| Ya calificados (desde 11-ago) | 561 | 561 | **100.0%** |
+| Pendientes | 88 | 2 | **2.3%** |
 
-**CAUSA A — el marcador borrado (65 picks).** La confirmada. `limpieza-nocturna` borra `live_scores`
-a las 24h y el calificador se queda sin con que comparar.
+Si el borrado fuera la causa, los 561 calificados mostrarian el mismo hueco: estan sujetos
+exactamente al mismo `limpieza-nocturna`. No lo muestran. **El archivo funciona.**
 
-**CAUSA B — mercado sin dato, aunque el marcador estuviera (20 picks de Corners).** Un pick de
-corners NO se puede calificar con `home_score`/`away_score`. Necesita el conteo de tiros de esquina.
-El caso testigo: NEOM 3-0 Al Khaleej Saihat, `status='final'`, marcador presente, pick
-"Corners Under 11" — **sigue pendiente con el dato completo enfrente**. Preservar `live_scores` no
-habria salvado ni uno de estos 20.
+**LA CAUSA REAL.** Los 88 pendientes, agrupados por la FORMA del `espn_event_id`:
 
-Lo notable: **el dato de corners SI existe y su pipeline esta vivo** — `detalle_partido_espn` tiene
-**19,526 partidos, 15,646 con corners**, alimentada por el cron `detalle-espn-backfill` (jobid 303,
-`35 4,16 * * *`, 600 eventos por corrida, activo). Pero de los 20 eventos de estos picks tiene
-**cero filas**. La tabla de corners nunca supo que esos partidos existian.
+| Forma del ID | Picks | Eventos | En archivo | Corners | liga='Unknown' |
+|---|---|---|---|---|---|
+| `af:` (ID de API-Football) | **56** | 37 | **0** | 19 de 20 | 42 de 45 |
+| numerico (ID de ESPN) | 24 | 20 | 2 | 1 | 0 |
+| otro formato | 8 | 8 | 0 | 0 | 3 |
 
-**CAUSA C — `live_scores` congelado (3 picks NFL).** Titans vs Bears (`401874394`), tres picks de
-Over/Under. La fila SI sobrevivio, pero lleva **116 horas** en `status='scheduled'` con `0-0` desde
-el 29-ago. No es borrado: es un partido de pretemporada que nunca se actualizo. Emparenta con #35.
-(Nota lateral: dos de esos picks dicen "Over 36.5 **Goles**" en NFL — etiqueta equivocada, cosmetico.)
+Un ID `af:1492358` **jamas** va a cruzar con `live_scores`, `marcadores_archivo`,
+`historico_partidos_espn` ni `detalle_partido_espn`: todas estan llaveadas por ID de ESPN.
+Esos picks **nacieron incalificables**. Y la mortalidad es total:
 
-**Observacion transversal:** **45 de los 88 traen `liga='Unknown'`**, todos de `fuente='ai_pro'`, y
-se concentran en corners (16 de 20) y BTTS (14 de 21). Hay un generador que emite picks sin liga
-resuelta, y son justo los que mas se quedan sin calificar.
+| Dia | Picks creados | Con ID `af:` | `af:` calificados |
+|---|---|---|---|
+| 3-sep | 9 | 2 | **0** |
+| 29-ago | 72 | 10 | **0** |
+| 24-ago | 12 | 3 | **0** |
+| 22-ago | 48 | 6 | **0** |
+| 21-ago | 9 | 4 | **0** |
 
-**Lo que esto cambia del plan:** la directriz de "captura al vuelo en el consumidor" sigue siendo
-correcta para la CAUSA A, y la tabla ya tiene donde aterrizar (`oraculo_picks_tracking.score_final`
-y `.match_date`, hoy vacias en los 88). Pero **no resuelve B ni C**, y aplicarla sola habria dejado
-20 picks de corners igual de muertos mientras creiamos haberlos arreglado.
+**31 picks con ID `af:` en 14 dias. 31 siguen pendientes. CERO calificados, ni uno, nunca.**
+Y sigue pasando: 2 de los 9 picks de hoy traen `af:`.
 
-**Pendiente de decidir (no ejecutado):** (1) que captura el consumidor — marcador solo, o tambien
-corners/tarjetas cuando el mercado lo pida; (2) si se encola a `detalle-espn-backfill` los eventos
-que tengan picks vivos, para que el dato de corners llegue antes de que el marcador se borre;
-(3) que hacer con los 45 de `liga='Unknown'` y con el generador que los produce.
+Esto explica de golpe las tres "causas" que crei distintas:
+- Los 20 de **Corners**: 19 traen `af:`. No era el mercado — era el ID. `detalle-espn-backfill`
+  enumera desde `historico_partidos_espn`, y un `af:` nunca esta ahi.
+- Los 45 de **`liga='Unknown'`**: 42 traen `af:`. La liga no se resuelve porque el evento no es de
+  ESPN. La etiqueta 'Unknown' es sintoma, no causa (y 148 picks 'Unknown' con ID de ESPN
+  se calificaron al 100%).
+- Los **64 huerfanos** sin fila en ninguna tabla: son los `af:` mas los de "otro formato".
+
+**Es #66 otra vez** ("Los picks recomendados traen IDs de API-Football, no de ESPN"), marcado como
+cerrado. El arreglo no cubrio esta ruta, o se reabrio.
+
+**LO QUE NO SE DEBE CONSTRUIR (y estuve a punto):** la captura al vuelo del marcador al pitazo
+final, mas el encolamiento a `detalle-espn-backfill`. Para 56 de 88 picks **no habria hecho nada**:
+no hay pitazo que capturar porque el evento no existe en ninguna tabla de ESPN. Habriamos declarado
+#181 resuelto con el 64% de los picks igual de muertos. La medicion "100% vs 2.3%" es la que salvo
+el diseno.
+
+**ORDEN CORRECTO DE TRABAJO (pendiente de decidir):**
+1. Encontrar QUE generador emite `af:` y cerrarlo en origen (es la fuga viva, 2 picks hoy).
+2. Decidir si los `af:` historicos se traducen a ID de ESPN (hay `evento_id_map`, sin medir todavia)
+   o se marcan `sin_dato`. Nunca adivinar un resultado.
+3. Solo despues, la captura al vuelo — que sigue siendo correcta, pero para los 24 con ID de ESPN.
+
+**Sin tocar:** el archivador `archivar_marcadores` (cron `archivar-marcadores`, `40 * * * *`) y el
+calificador v15 estan sanos. v15 ya lee `live_scores` U `marcadores_archivo` priorizando por estado.
+No hay nada que arreglarles.
 
 ### #113 — Marcadores cruzados: tenis congelado en 2-0 y MLB al revés en pantalla
 
