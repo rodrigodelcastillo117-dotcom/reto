@@ -1647,3 +1647,62 @@ pantalla lo presenta como si midiera. Mismo patron que las lecciones 8 y 10.
 25. **Un fallo que aparece justo despues de un cambio grande no viene necesariamente de
     ese cambio.** Habriamos revertido la migracion de llaves por un underflow de
     coma flotante que llevaba tiempo esperando el dato adecuado.
+
+---
+
+## #195 BOTON PRESIONADO. Migracion de llaves CERRADA y verificada
+
+Verificacion a los 25 minutos del clic en "Disable legacy API keys":
+```
+respuestas 2xx ................... 187
+401 reales ....................... 0   (los 2 que aparecen son mis propias pruebas)
+crons fallidos ................... 0
+filas de marcador tocadas en 10min 471   -> la ingesta sigue viva
+picks pendientes ................. 0
+```
+Tambien medido despues del apagado, con la llave publishable:
+- `/auth/v1/settings` -> **200**
+- `rpc apodos_por_reclamar` -> **200**, devuelve `[]`
+- `leaderboard-roi` -> **200**
+
+**#63 y #190 quedan cerrados.** La llave heredada ya no existe y nada depende de ella.
+
+### Falsa alarma: "Servidor lento o caido"
+El banner de `LoginScreen.tsx` sale con `authDegraded || servidorLento`, y `servidorLento`
+se prende cuando `supabase.rpc("apodos_por_reclamar")` **da error O tarda mas de 8s**.
+Esa RPC responde 200 y tiene los permisos correctos (SECURITY DEFINER, anon con EXECUTE).
+Era la instancia de la app que el usuario tenia abierta ANTES del clic: su sondeo quedo
+atrapado en la transicion. **El mensaje culpa al "servicio de cuentas" cuando lo unico que
+sabe es que UNA rpc no contesto en 8 segundos.** Mal diagnostico por mensaje generico.
+
+---
+
+## #196 Cuatro arreglos de pantalla reportados por el usuario (MEDIDOS)
+
+**1. "Casa" / "Fuera" en LOS ULTIMOS PARTIDOS** -> quiere emojis 🏠 y ✈️. Cosmetico.
+
+**2. CLIMA muestra "46 ft"** -> es `altitud_ft`, un campo de las vistas de **MLB y NFL**
+(`v_juego_clima`, `v_juego_clima_nfl`). En un partido de la Superliga danesa la pantalla
+esta leyendo la fuente equivocada. **El clima de futbol SI existe y esta fresco**:
+`futbol_clima_hora` tiene 8,976 filas, 48 estadios, 7,920 de las ultimas 24 h y pronostico
+hasta el 9-sep, con temp_f, viento_mph, viento_dir, humedad y lluvia_mm.
+Es el mismo patron del #97: **dos vocabularios para la misma idea** y la pantalla toma el
+que no es. Residual del #144.
+
+**3. FAVORITOS muestra partidos ya terminados.** El dato esta BIEN:
+```
+401874523  F.C. Kobenhavn - FC Nordsjaelland   final FT
+401879020  KAA Gent - OH Leuven                final FT
+401900372  Al Diriyah - Al Qadsiah             final FT
+```
+Las tarjetas hasta dicen "post" en la esquina. **La pantalla no los filtra.** Frontend.
+
+**4. Alerta "el modelo opina de un equipo que no conoce" (Manchester United vs Sabah FK)**
+-> **NO es un bug: es la guarda del #108 funcionando.** Verificado: no existe ningun pick
+en `oraculo_picks_tracking` para ese partido. El modelo formo una opinion, la guarda la
+detuvo, y nada salio. La alerta es el sistema avisando, no fallando.
+
+## Leccion nueva
+26. **Un mensaje de error generico manda a diagnosticar al lugar equivocado.**
+    "El servicio de cuentas no esta respondiendo" en realidad significaba "una rpc tardo
+    mas de 8s". Estuvimos a punto de revertir la migracion de llaves por eso.
