@@ -31,7 +31,7 @@ Ordenado por riesgo real de dinero y por la unica fecha dura de la lista: **NFL 
    Mas la alerta por `confianza_calificacion='BLOQUEADO_PREMATURO' AND resultado='pendiente'`
    — el segundo filtro es obligatorio: el marcador sobrevive a la liquidacion y sin el la alerta
    arranca con un falso positivo (el parlay de $250 del 9-ago, ya cerrado).
-2. **#147.** Alinear la fuente de momios del EV con la casa donde se apuesta de verdad.
+2. **#147. CERRADO el 3-sep.** Ver seccion DINERO.
 3. **Verificacion #179/#180** despues de las 05:25 UTC: que el cron 324 regenerara pocas lecciones
    y ninguna con numeros de ajuste ni Kelly.
 
@@ -120,9 +120,59 @@ cruzado con las fechas de cambio de motor, **separando MLB del resto** (88% de l
 **Paso 2, solo si A sobrevive:** ajuste isotónico sobre picks publicados y extender el rango
 arriba de 70%. **Si gana B:** no se recalibra nada, se purga o marca la muestra vieja.
 
-### #147 — El EV se calcula con precios de DraftKings pero se apuesta en PlayDoIt
-Falta acumular ~30 pares DraftKings/PlayDoIt para sustituir el umbral de 2.0% de EV en Moneyline,
-que hoy está puesto por criterio y no por medición.
+### #147 — CERRADO el 3-sep-2026. La premisa era falsa y el diagnostico real era otro
+**Lo que creiamos:** el EV se calculaba con DraftKings y se apostaba en PlayDoIt, y ademas
+`momio_real_de_mercado()` hacia line shopping (`order by m desc`) entre ~11 casas.
+
+**Lo que la medicion encontro (194 picks con precio de la cartelera del 3-sep):**
+
+| Medida | Valor |
+|---|---|
+| Casas distintas que ganaban la subasta | **1** (DraftKings) |
+| Picks donde el ancla cambio de casa al arreglarlo | **0** |
+| Cobertura antes / despues | **194 / 194** |
+| Eventos donde Pinnacle publica precio (36h) | **0 de 157** |
+
+El `order by m desc` **nunca comparo casas**. Lo que hacia era quedarse con la MEJOR foto de las
+ultimas 24 horas del MISMO libro: `radar_odds_snapshots` guarda hasta 12 snapshots por evento y
+casa, y `odds_espn` (proveedor = `draftkings`) y `badrino_partidos` (`casa_odds` = `draftkings`)
+son dos puertas mas al mismo DraftKings. **Era una subasta contra el tiempo, no contra el mercado.**
+
+Peor caso medido, y estaba aprobado en la cartelera:
+```
+ML Kansas City Royals (vs Miami)
+  precio usado : 2.060  <- foto de AYER 18:15
+  precio real  : 1.847  <- DraftKings HOY 16:12   (+11.50% de sobreprecio)
+  EV mostrado  : +1.1%     EV real: -9.3%
+```
+
+**ARREGLO 1 — `momio_real_de_mercado()`.** El `order by m desc` se sustituyo por una cadena de
+prioridad por identidad de casa + la foto mas reciente:
+`1. pinnacle -> 2. draftkings (radar, odds_espn o badrino) -> 3. cualquier otra casa`, y dentro de
+cada escalon `snapshot_at desc`. **El tercer escalon es obligatorio**: sin el, un evento sin
+Pinnacle ni DK devuelve NULL y eso es el apagon silencioso de #57/#114 por otra puerta.
+Ademas se le puso guarda de en vivo a `odds_espn` (34 filas traen proveedor
+`draftkings - live odds`), que era la misma fuga que radar ya bloqueaba con `fase <> 'en_vivo'`.
+
+**ARREGLO 2 — el piso.** `v_pick_canonico.es_pick` pasa de `ev_pct > 0` a `ev_pct >= 2.5`.
+El 2.5 **no es criterio, es la brecha medida DraftKings -> PlayDoIt (+2.46%, n=14)**: el unico
+margen que queda por absorber una vez anclado el precio.
+**NO subirlo a 6%.** Ese numero cubria ademas el sobreprecio del line shopping (+3.01%), que el
+Arreglo 1 ya erradico; cobrarlo ahora seria cobrar dos veces la misma comision y costaba 12 picks
+positivos reales. Barrido completo sobre los 194: piso 0 -> 62, 1% -> 58, 2.5% -> 54, 4% -> 46,
+6% -> 42, 8% -> 36.
+
+**Efecto en produccion (mismo dia, misma cartelera):** 445 picks, 194 con precio,
+`es_pick` **50 -> 43**, EV minimo aprobado 3.2%, 10 ligas y los 2 deportes activos siguen con picks
+(futbol 38, MLB 5). Ningun deporte se apago.
+
+**RESIDUAL de #147 — la segunda tuberia de precio.** `refrescar_destacados()` (pantalla
+DESTACADOS) NO usa `momio_real_de_mercado`: usa `v_momios_confiables`. Revisado: **no tiene la
+fuga de la subasta** (ya hace `distinct on (espn_event_id) ... order by snapshot_at desc`), pero
+si tiene dos cosas por decidir, cada una medible por separado:
+1. su piso de aprobacion sigue en `ev_pct > 0`, no en 2.5;
+2. no filtra en vivo — ni `fase` de radar ni el `proveedor` `'live odds'` de ESPN — y su ventana
+   es de 18 horas, asi que un precio capturado con el partido corriendo si puede entrar.
 
 ### #156 residual / #159 — Cartelera de MLB
 `v_radar_mlb` tiene tres filtros que hay que revisar. La prohibición de totales ya quedó aplicada
