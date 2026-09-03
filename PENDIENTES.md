@@ -429,6 +429,19 @@ En ambos, el proceso que limpia no sabe quien mas necesitaba el dato. **Conviene
 TODOS los DELETE programados de `limpieza-nocturna` y ver quien mas consume lo que borran**, en vez
 de ir tapando caso por caso.
 
+**DIRECTRIZ DE DISENO acordada el 3-sep-2026 para cuando se aborde #181.**
+NO condicionar la purga a que todos los consumidores den el visto bueno (`calificado = true`).
+Suena correcto y tiene un filo: **si un consumidor nunca termina, la tabla crece sin techo**. Los 45
+picks de liga `"Unknown"` son ese caso — llevan desde el 11-ago sin calificar y no se van a calificar
+solos; un DELETE que espere su visto bueno los conservaria para siempre, y `live_scores` se
+convertiria en archivo historico por accidente.
+**La regla es CAPTURA AL VUELO EN EL CONSUMIDOR:** cada funcion copia la foto que necesita a su
+propia tabla de dominio en el instante en que el evento se declara final, en vez de obligar a la
+tabla de paso a retener. Asi la purga sigue siendo simple, por tiempo y determinista, y ningun
+proceso depende de la retencion de otro.
+Ya hay precedente vivo en la casa: `clv_tracking` guarda el CLV en su propia fila y no lo recalcula
+desde `radar_odds_snapshots` cada vez.
+
 ### RETENCION DE `analisis_partidos` — abierto, a dimensionar aparte
 **Este es el motivo real de que `pick_learning_data` este vacia de predicciones**, no el mapeo.
 `analisis_partidos` cubre 2 dias (2-sep a 3-sep); `pick_learning_data` cubre 40 (24-jul a 2-sep).
