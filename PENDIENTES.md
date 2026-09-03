@@ -787,6 +787,72 @@ fila diga `final 0-0`, revertir el pick es inutil.** El arreglo va en el calific
 cuando el marcador final sea 0-0 y el deporte no admita 0-0 (NFL/MLB/NBA/NHL). Futbol se queda
 calificable. Requiere agregar `liga` al select del pick o `deporte` al SEL de live_scores.
 
+### #186 CERRADO: guarda v20 (plausibilidad 0-0) + los 18 revertidos
+
+**v20 desplegada** con `verify_jwt: false` explicito. Diff aditivo, 17 de 17 pruebas unitarias.
+
+```ts
+const LIGAS_SIN_CERO_A_CERO    = /\b(nfl|mlb|nba|nhl)\b/i;
+const DEPORTES_SIN_CERO_A_CERO = /americano|american football|beisbol|baseball|basquet|basketball|hockey/i;
+function marcadorEsImposible(hs, as_, liga, deporte){
+  if(hs !== 0 || as_ !== 0) return false;
+  return LIGAS_SIN_CERO_A_CERO.test(norm(liga||'')) || DEPORTES_SIN_CERO_A_CERO.test(norm(deporte||''));
+}
+```
+
+**Tres trampas que la medicion evito:**
+1. **`deporte` solo habria atrapado 3 de 18.** Catorce picks de MLB no tienen deporte ni en
+   `live_scores` ni en `marcadores_archivo`. Por eso `liga` es la señal principal (18 de 18).
+2. **`⚾ Béisbol` lleva ACENTO.** Mi primera consulta busco `beis` y dio CERO contra un valor que si
+   era beisbol. Se resuelve con `norm()`, misma trampa que "Córners" en la v19.
+3. **"Copa América" no debe casar con "americano".** Probado explicitamente: no casa.
+
+**Decision de diseño, al reves que la v19:** aqui es LISTA NEGRA, no blanca. Solo veta con
+identificacion POSITIVA; un 0-0 sin señal se sigue calificando. Bloquear todo dejaria colgados los
+65 empates a cero legitimos del futbol. El default seguro aqui es PERMITIR.
+
+**Ademas:** hubo que agregar `deporte` al SEL de marcadores y `liga` a los dos selects de picks —
+el calificador no pedia ninguno de los dos.
+
+**PROBADO EN PRODUCCION.** Revertidos los 18 (15 MLB + 3 NFL) y disparado el calificador:
+`graded: 0, errors: 0`. Log textual:
+
+```
+[ORÁCULO/oraculo_picks_tracking] SIN CALIFICAR (0-0 imposible en MLB): Under 8 Carreras
+[ORÁCULO/oraculo_picks_tracking] SIN CALIFICAR (0-0 imposible en NFL): Over 37.5 Puntos
+```
+
+Veinte minutos antes, ese mismo cron los habia reescrito 60 segundos despues del reverso.
+
+### #185 CAUSA RAIZ DE LOS ZOMBIS: el rescate YA EXISTE, cubre 4 ligas de 511
+
+Leido `sync-ligamx/index.ts` (v73, `verify_jwt: false`, vive en Lovable). **`runLive` ya implementa
+exactamente el rescate propuesto**: busca filas en `live`, pide `/fixtures?id=` una por una y cierra
+con el marcador real. Pero esta acotado por dos filtros:
+
+```ts
+.in("liga_id", LIGA_IDS)                                   // solo 262, 848, 16, 253
+.gte("fecha_utc", new Date(Date.now() - 6*3600_000)...)    // solo ultimas 6 horas
+```
+
+`LIGAS` son cuatro: Liga MX, Leagues Cup, Concachampions y MLS. Y `runLive` pide
+`/fixtures?live=262-848-16-253`, asi que una liga fuera de esa lista **nunca recibe actualizacion en
+vivo**. Por eso el partido de la Saudi Pro League quedo en el minuto 52.
+
+| Cobertura | Filas | Marcadas `live` | Zombis | Ligas |
+|---|---|---|---|---|
+| **CUBIERTA por runLive** | 972 | **0** | **0** | 4 |
+| **NO CUBIERTA** | 16,245 | 96 | **64** | **511** |
+
+**Cero zombis donde el mecanismo aplica; los 64 estan en las 511 ligas que no cubre.** El mecanismo
+funciona perfecto — simplemente no alcanza.
+
+**NO es cuestion de ampliar la lista a 511 ligas:** pedir el feed en vivo de 511 ligas quemaria la
+cuota de API-Football, y por eso alguien puso ese limite (los comentarios del codigo lo dicen). El
+arreglo correcto es un rescate DIRIGIDO por `/fixtures?id=` para los eventos que importan
+(los que tienen picks encima), sin importar la liga. Como los 64 zombis tienen **cero picks**, el
+volumen es minimo.
+
 ### #183 TENIS: dos escrituras contradictorias y una apuesta ganada que casi no se cobra
 
 **El caso.** Pick del usuario: Cerundolo Ganador vs Struff, 3,774 de apuesta. Cerundolo gano 3-2.
