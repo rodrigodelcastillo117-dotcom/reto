@@ -36,7 +36,7 @@ Ordenado por riesgo real de dinero y por la unica fecha dura de la lista: **NFL 
    y ninguna con numeros de ajuste ni Kelly.
 
 ### FASE 2 — Datos y NFL (4-6 sep)
-1. **#93 NOVATOS.** CORRECCION MEDIDA: los snaps NO faltan. `nfl_snaps` tiene 7,887 filas de la
+1. **#93 NOVATOS. CERRADO el 3-sep** (ver seccion NFL). Historico: CORRECCION MEDIDA: los snaps NO faltan. `nfl_snaps` tiene 7,887 filas de la
    temporada 2025 (semanas 1-22, cargadas el 1-sep desde nflverse) y el cron `nfl-snaps-martes`
    (martes 12:13 UTC) ya existe y jalara 2026 conforme se juegue. Los snaps de 2026 no pueden
    precargarse porque la temporada no ha empezado.
@@ -409,7 +409,65 @@ que la escribiera**: fue una carga manual para la medición de #54. No es un pip
 **NO tocar ni desactivar el cron `nfl-sync-cdn` ni `sync_nfl_desde_cdn()`** hasta después del
 arranque del 9-10 de septiembre, y solo con confirmación explícita.
 
-### #93 — NFL auto-actualización: lesiones LISTO, faltan snaps y novatos
+### #93 — NFL: el hueco de datos del depth chart, cerrado el 3-sep-2026
+**La premisa original era falsa.** No hacia falta una tabla estatica con la clase de draft 2026
+(~257 nombres). Medido: de los **247** jugadores del depth chart 2026, **237 ya tenian historico
+de temporada regular**. El hueco real eran 10, y el mismo sintoma escondia TRES causas distintas.
+
+**HERRAMIENTA — `v_nfl_sin_historico`.** Vista derivada, `security_invoker = true`, cerrada a
+`anon`/`authenticated`. Cruza el depth chart vigente contra el historico y devuelve quien NO tiene
+un solo partido de temporada regular, con la EVIDENCIA (partidos_regular, partidos_pretemporada,
+en_nfl_pateadores, declarado_novato) y una `causa` que **solo dice novato si alguien lo declaro en
+`nfl_novatos`**. La temporada sale de `max(temporada)` del propio depth chart: no hay que tocarla
+cada agosto.
+
+**ERROR CORREGIDO EN LA MISMA SESION (vale la pena recordarlo).** La v1 medía el historico de TODOS
+contra `nfl_player_game_logs`, que solo guarda pase/acarreo/recepcion. **Un pateador por diseno
+nunca aparece ahi**, asi que la v1 marco 26 falsos positivos con carrera completa: Harrison Butker,
+Jake Elliott, Chris Boswell, Ka'imi Fairbairn. La etiqueta era literalmente cierta y completamente
+enganosa. La v2 lee la evidencia **segun la posicion**: K/PK desde `nfl_pateadores` +
+`nfl_kicker_logs`, el resto desde `nfl_player_game_logs` x `nfl_partidos` (`tipo_temporada = 2`).
+
+**PATEADORES — no faltaba carga, faltaba temporada.** El ingestor `nfl-def-k-sync` ya existia,
+apunta al dominio bueno (`sports.core.api.espn.com`) y **no tiene cron**. Corrido para 2025:
+200 OK, 32 defensas + 29 pateadores, 11 s, idempotente. Bass y Sanders seguian faltando, y NO era
+el `continue` por `fgm === 0`: preguntando a ESPN directo, **404 en la temporada regular 2025 de
+ambos**, con perfil 200 y posicion PK. **No jugaron esa temporada.** Corrido para 2024 (12 s):
+entraron con dato oficial de ESPN, sin colisionar con 2025 (`onConflict: espn_athlete_id,temporada`):
+
+| Pateador | Temporada | Juegos | FG | FG% | PAT | fantasy_ppj |
+|---|---|---|---|---|---|---|
+| Tyler Bass (BUF)    | 2024 | 17 | 24/29 | 82.8 | 59 | 8.59 |
+| Jason Sanders (NYJ) | 2024 | 17 | 37/41 | 90.2 | 26 | 9.76 |
+
+**LOS 3 NOVATOS PATEADORES NO SE SEMBRARON EN `nfl_pateadores`.** Un registro base con
+`juegos=0, fgm=0, fantasy_ppj=0` no es dato faltante: es un pateador que segun la base **falla
+todo**, y las funciones de fantasy lo leerian como efectividad 0%. Peor que la ausencia. Los cinco
+sin historial profesional se sembraron en `nfl_novatos`, que existe justo para eso, y
+`fantasy_limitaciones()` ya avisa de ellos.
+
+**SIEMBRA — 5 filas, derivadas, no tecleadas.** El INSERT sale de `v_nfl_sin_historico`
+(equipo, posicion, id vienen del depth chart de ESPN), asi que no hay forma de errar un dato.
+`ronda`, `pick_global` y `universidad` quedan **NULL a proposito**: no estan verificados contra el
+draft oficial y no se inventan. `verificado = false` en los cinco; la fila de Fernando Mendoza,
+confirmada por el usuario, quedo intacta gracias al `on conflict do nothing`.
+RB Jeremiyah Love (ARI) · RB Jadarian Price (SEA) · K Trey Smack (GB) · K Dominic Zvada (NYG) ·
+K Drew Stevens (WSH).
+
+**ESTADO FINAL:** el hueco pasa de **10 a 8**, y **`pateador_sin_carga` queda en 0**. Los 8 que
+restan son los 6 novatos declarados (el modelo sabe que no sabe) y 2 `solo_pretemporada`:
+Deshaun Watson (CLE, QB1) y Jonathon Brooks (CAR, RB2).
+
+**LO QUE SIGUE ABIERTO, Y ES LO QUE LE FALTA AL NOMBRE DE ESTA TAREA:**
+1. **`nfl-def-k-sync` NO tiene cron.** Es la causa de que quedara a medias. Sin el, la estadistica
+   de pateadores y defensas de 2026 no entrara sola conforme se juegue la temporada.
+2. **Watson y Brooks.** Decision tomada el 3-sep: se quedan como `solo_pretemporada`. Darles
+   historico exige cargar `nfl_player_game_logs` de 2024, que SI toca la base del motor y el
+   baseline de calibracion, a dias del arranque. `nfl_pateadores` era distinto: es una tabla
+   aislada de fantasy, sus unicos lectores son `nfl_fantasy_meter_k_y_def` y las funciones
+   `fantasy_*`, y no roza el motor de apuestas.
+3. La base solo tiene **2025 regular y 2026 pretemporada** en `nfl_player_game_logs`. No hay 2024
+   ni anterior. Cualquier plan que diga "jalar temporadas anteriores" choca con esto primero.
 
 ### #87 — FANTASY/NFL: uso, zona roja, K, DEF y depth charts cargados. Solo falta ADP
 
