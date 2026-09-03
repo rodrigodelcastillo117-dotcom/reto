@@ -1706,3 +1706,74 @@ detuvo, y nada salio. La alerta es el sistema avisando, no fallando.
 26. **Un mensaje de error generico manda a diagnosticar al lugar equivocado.**
     "El servicio de cuentas no esta respondiendo" en realidad significaba "una rpc tardo
     mas de 8s". Estuvimos a punto de revertir la migracion de llaves por eso.
+
+---
+
+## #197 REVERTIDO el apagado de llaves heredadas: dejaba al usuario FUERA de su cuenta
+
+Al presionar "Disable legacy API keys" la app dejo de reconocer la sesion del usuario y
+lo mando a la pantalla de "Tu cuenta esta creada. Falta elegir tu apodo", como si fuera
+nuevo. El usuario rehabilito las llaves y volvio a entrar. Nada se perdio: el perfil
+`rodelcast` sigue intacto con su cuenta ligada y bankroll inicial 5,000.
+
+### La causa
+```
+usuarios -- permisos por rol
+authenticated  SELECT, INSERT, UPDATE, DELETE
+service_role   idem
+anon           NINGUNO
+```
+Las politicas RLS estan bien: `"Users read own profile" SELECT {authenticated}
+user_id = auth.uid()`. El problema es que la peticion **dejaba de llegar como
+`authenticated` y llegaba como `anon`**: al apagar los JWT heredados, **las sesiones de
+usuario YA ABIERTAS dejan de ser validas** — el token fue emitido bajo el esquema viejo,
+el proyecto ya no lo reconoce, y PostgREST degrada la peticion a anonimo. De ahi el
+`permission denied for table usuarios`, el perfil no encontrado y el `needsProfile=true`.
+
+### EL HUECO FUE MIO
+Verifique, uno por uno y contra produccion:
+- los 56 crons con la llave nueva -> 200
+- las edge functions y su `verify_jwt`
+- el `.env` y el `client.ts` del frontend
+- el porton con la llave publishable (`leaderboard-roi` -> 200)
+- `/auth/v1/settings` -> 200
+- `rpc apodos_por_reclamar` -> 200
+
+**Nunca probe que una SESION DE USUARIO YA EXISTENTE siguiera siendo valida.** Probe todas
+las credenciales de maquina y ninguna de persona. Ese era el unico camino que el usuario
+iba a recorrer.
+
+### Riesgo evitado por poco
+La pantalla ofrecia "CREAR MI CUENTA" con el apodo vacio. Si el usuario la hubiera usado,
+`registrar_perfil` le habria creado un SEGUNDO perfil y partido su historial y su bankroll
+en dos. Se le advirtio a tiempo.
+
+### Camino correcto para completar la migracion (PENDIENTE)
+1. (hecho) Rehabilitar las heredadas para recuperar el acceso.
+2. Cerrar sesion DESDE DENTRO de la app y volver a entrar: el token se reemite bajo el
+   esquema nuevo.
+3. **Verificar con esa sesion nueva** que la peticion llega como `authenticated` y que
+   `usuarios` responde.
+4. Solo entonces apagar las heredadas otra vez.
+Ojo: esto aplica a TODOS los usuarios con sesion abierta, no solo al dueno.
+
+### Estado tras revertir (verificado)
+```
+llave de los crons ......... Jak1k (la alineada)
+crons fallidos 15min ....... 0
+respuestas 2xx 15min ....... 88
+401 reales ................. 0  (los 2 del log son mis pruebas sin sesion)
+marcadores tocados 10min ... 681
+perfiles ................... 3, intactos
+```
+
+## Leccion nueva
+27. **Probar credenciales de MAQUINA no prueba credenciales de PERSONA.** Verifique seis
+    caminos distintos con llaves de servicio y publishable, y el unico que importaba para
+    el usuario -su sesion ya abierta- no lo probe nunca. Antes de rotar credenciales,
+    la lista de verificacion tiene que incluir "una sesion de usuario existente sigue
+    entrando", no solo "los servicios se hablan entre si".
+28. **Una pantalla de recuperacion puede ser mas peligrosa que el fallo.** El fallo dejaba
+    al usuario fuera; el boton "CREAR MI CUENTA" que la app le ofrecia habria partido su
+    historial en dos. Cuando algo falla en autenticacion, revisar QUE le esta ofreciendo
+    la interfaz al usuario en ese estado.
