@@ -1337,3 +1337,52 @@ Falta: un solo helper de tokenizacion usado en las 12 lineas.
 14. **Un piso de confianza no defiende contra una coincidencia difusa: la exclusividad si.**
     Medir la distribucion real de confianzas antes de elegir un umbral; aqui el dato malo y
     los buenos estaban entrelazados y NINGUN umbral los separaba.
+
+---
+
+## #188 Vocabulario: sembrados los 50 equipos de mas peso. El hueco NO era exotico
+
+Medido: de los 50 equipos sin alias con mas volumen, **26 son la plantilla completa de MLB**
+(Yankees, Dodgers, Braves, Mets...) con 130-166 picks del Oraculo cada uno. Le siguen NHL,
+WNBA y MLS. El hueco no era una cola larga de clubes raros: **las ligas americanas nunca se
+sembraron en `team_aliases`**. Hoy funcionaban por suerte — sus nombres son limpios y
+distintos, asi que la capa de tokens los resolvia sola. Dependian de la suerte.
+
+Sembrados los 50 con mapeo IDENTIDAD (`bookie_name = espn_name`), que solo puede ayudar:
+entra por la capa 1a exacta a confianza 1.0 y evita que las capas difusas se activen.
+
+**Verificado despues de sembrar**: corpus de 354 patas, **0 cambios**. Agregar filas a
+`team_aliases` mueve el espacio de busqueda de las capas 3 y 4 (trigram), asi que el corpus
+NO es opcional aqui.
+
+Quedan **2,510 de 3,039** equipos vistos en 120 dias sin alias exacto.
+
+## #189 Las 771 filas `sin_confirmar` son basura de tenis, NO partidos por cerrar
+
+El plan inicial era marcarlas `final`. **La medicion lo desmonto:**
+
+```
+sin_confirmar   771 filas   761 con 0-0   picks vivos: 0   ultimo toque: 9-jun
+scheduled       216 filas   212 sin marcador                picks vivos: 7
+pre               4 filas                                    picks vivos: 0
+postponed         1 fila                                     picks vivos: 0
+```
+
+Marcarlas `final` habria creado **761 partidos que "terminaron 0-0"**, y el calificador
+resolveria Over/Under como under, moneyline como empate y BTTS como no. Es el bug #186
+exacto, multiplicado por 761. Y no habia nada que ganar: **cero picks vivos encima**.
+
+Que son en realidad: TODAS son tenis (Ilkley, Hertogenbosch, Davis Cup, W15 Madrid,
+M25 Varnamo...), todas del 9-10 de junio, sin tocarse desde entonces. Es una sola corrida
+de ingesta que escribio cada partido del cuadro como `sin_confirmar 0-0`. Enlaza con #120.
+**Se borran, no se cierran.**
+
+## Leccion nueva
+15. **"Destrabar" un estado atorado NO es empujarlo al estado terminal.** Antes de mover un
+    estado, medir DOS cosas: que contiene la fila (761 de 771 traian 0-0) y quien depende de
+    ella (cero picks vivos). Si no hay dependiente, no hay nada que destrabar; y si el
+    contenido es falso, empujarlo a terminal convierte basura inerte en dato activo que
+    envenena calificaciones.
+16. **Sembrar alias exige re-correr el corpus.** `match_team` tiene capas de trigram: cada
+    fila nueva cambia el vecindario de TODAS las busquedas difusas, no solo la del equipo
+    sembrado.
