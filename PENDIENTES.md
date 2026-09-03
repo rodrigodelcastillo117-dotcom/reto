@@ -1247,3 +1247,93 @@ Cosas que costaron caro aprender y conviene no repetir:
 11. **Cuando una guarda bloquee algo, la respuesta correcta casi nunca es saltarla.**
     `BLOQUEADO_PREMATURO` tenía razón: el partido seguía `live`. Se arregló dándole el dato real,
     no desactivando la protección.
+
+---
+
+## #187 DINERO: un pick GANADO se califico como PERDIDO. Seis copias del mismo razonamiento
+
+**Reportado por el usuario en vivo.** Pick: Al Qadisiyah Resultado Final, $870 @1.90,
+Al Diriyah 0-2 Al-Qadisiyah FC. La visita gano. El calificador lo marco `perdido`, -$870.
+Corregido a `ganado`, +$783.00.
+
+### La cadena completa
+
+1. `evaluar_leg_parlay_v1` tenia el razonamiento "a que lado apunta este pick" escrito
+   **SEIS veces**, con 18 llamadas inline a `match_team`. Cada copia de una epoca distinta:
+   - 2 bloques con piso `confidence >= 0.9` (los de tenis)
+   - 3 bloques con guarda `IS DISTINCT FROM` (tenis x2 + avance)
+   - **3 bloques con NINGUNA de las dos**: moneyline, doble oportunidad y hándicap
+2. `match_team('Al Diriyah')` y `match_team('Al-Qadisiyah FC')` devolvian **AMBOS**
+   `Al Qadisiyah`. La rama de moneyline comparaba pick vs local primero y ganaba por orden:
+   **devolvia el resultado del LOCAL sin importar a quien apuntara el pick.**
+3. Causa del alias envenenado: **`Al Diriyah` no existia en `team_aliases`**. Sin fila exacta
+   cayo a la capa 3 de `match_team`, que acepta cualquier similitud > 0.3 **sin exigir
+   separacion con el segundo candidato** (la capa 1c si la exige). Aterrizo en `Al Qadisiyah`
+   con confianza **0.333**.
+
+### El bug cortaba en los dos sentidos
+Con el local ganando 2-0, el mismo pick a la visita salia **`ganado`**. No solo restaba
+dinero: fabricaba victorias falsas que envenenan el track record y la calibracion.
+
+### Por que un parche no servia
+Ponerle guardas a mano a los 3 bloques sueltos dejaba vivas las seis copias. El problema
+no era una guarda faltante: era **la ausencia de la abstraccion**.
+
+### Solucion aplicada
+- **`public.lado_del_pick(pick, home, away, liga) -> 'local' | 'visita' | NULL`**: unica
+  fuente de verdad. Capa 1 alias con **exclusividad obligatoria** (local y visitante deben
+  resolver a nombres distintos) y **contraste contra el puntaje por tokens** (si las dos
+  senales se contradicen, NO se adivina). Capa 2 tokens con ganador estricto. Capa 3 NULL.
+- `evaluar_leg_parlay_v1` reescrita: 18 llamadas a `match_team` -> **6 llamadas al
+  resolvedor**. De 15,452 a 13,571 caracteres.
+- Respaldo del comportamiento viejo en `evaluar_leg_parlay_v1_pre20260903`.
+- 7 alias nuevos en `team_aliases`: `Al Diriyah` (no existia), `Al Qadsiah` (grafia de ESPN)
+  y `Al-Qadisiyah FC` (grafia de API-Football) — las tres formas del mismo club.
+
+### MEDIDO, no supuesto
+- **NO existe piso de confianza que sirva**: el alias envenenado venia a 0.333 y alias
+  legitimos vienen a 0.467 (Napoles->Napoli), 0.626 (Aris) y 0.700 (PSG). Un piso alto tira
+  los buenos, uno bajo deja pasar el malo. **La defensa es la exclusividad, no el piso.**
+- Corpus de **354 patas** (picks + patas de parlay, contra el marcador real):
+  **1 cambia** (la del usuario, perdido -> ganado), 0 pierden cobertura, 0 ganado->perdido.
+- Primer intento con piso 0.9: perdia 5 patas legitimas (Napoles, PSG, Inter Milan). El
+  corpus lo cazo antes de tocar produccion.
+- Segundo error propio: mi regex esperaba un espacio simple donde el codigo tenia salto de
+  linea, y dejo un resto `AND v_pick_espn IS DISTINCT FROM v_away_espn` con la variable ya
+  sin asignar. `NULL IS DISTINCT FROM NULL` es FALSE -> 3 patas de "Se clasifica" muertas.
+  Tambien lo cazo el corpus.
+
+### HALLAZGO SISTEMICO PENDIENTE
+**1,246 de 1,877 equipos vistos en 30 dias (66%) NO tienen fila exacta en `team_aliases`.**
+Cada uno puede producir la misma colision difusa. El resolvedor ya los protege (devuelve
+NULL en vez de adivinar), pero un pick sobre ellos se queda `no_evaluable` en vez de
+calificar. Falta poblar el vocabulario.
+
+### Segundo frente: el duplicado del partido
+El mismo partido existia DOS veces: `401900372` (ESPN, `Saudi Pro League`, fresco) y
+`af_1603010` (API-Football, `Pro League`, congelado 21 min en el 82').
+**La hipotesis de que faltaba el slug `ksa.1` era FALSA**: `get-espn-matches` no tiene
+catalogo fijo, lo lee de `ligas_master`, y `soccer/ksa.1` ya estaba activa. El duplicado se
+creo porque el escaner no pudo cruzar el boleto con el evento de ESPN: **el club se llama de
+tres formas distintas** (`Al Qadsiah` en ESPN, `Al-Qadisiyah FC` en API-Football,
+`Al Qadisiyah` en el boleto) y ninguna estaba en `team_aliases`. Con los 7 alias nuevos,
+`lado_del_pick` ya resuelve `visita` contra las dos filas.
+
+### Tercer frente: PENDIENTE (frontend)
+`ActivePicksTab.tsx` tiene el mismo defecto estructural: el razonamiento de "que lado" esta
+escrito **6 veces** (`split(/\s+/).filter(w => w.length > 2)` en 12 lineas). Con
+`Al-Qadisiyah FC` el token queda `al-qadisiyah` y nunca casa con `Al Qadisiyah` del pick ->
+`getPickStatus` devuelve `"pending"` -> paleta ambar. **El rojo que vio el usuario nunca
+significo "vas perdiendo": significaba "no se".** Afecta a 217 de 3,046 nombres de equipo.
+Falta: un solo helper de tokenizacion usado en las 12 lineas.
+
+## Leccion nueva
+12. **Cuando una funcion tiene el mismo razonamiento escrito N veces, contar cuantas copias
+    tienen cada guarda.** 3 con guarda y 3 sin ella no es un bug: es la firma de que falta
+    una abstraccion, y garantiza que el bug volvera por otra copia.
+13. **Antes de cambiar una funcion de dinero, correrla contra TODO el historico y comparar
+    veredicto viejo vs nuevo.** Ese corpus caza tanto el bug ajeno como el propio: aqui
+    encontro dos errores mios antes de que tocaran produccion.
+14. **Un piso de confianza no defiende contra una coincidencia difusa: la exclusividad si.**
+    Medir la distribucion real de confianzas antes de elegir un umbral; aqui el dato malo y
+    los buenos estaban entrelazados y NINGUN umbral los separaba.
