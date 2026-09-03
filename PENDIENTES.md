@@ -1386,3 +1386,56 @@ de ingesta que escribio cada partido del cuadro como `sin_confirmar 0-0`. Enlaza
 16. **Sembrar alias exige re-correr el corpus.** `match_team` tiene capas de trigram: cada
     fila nueva cambia el vecindario de TODAS las busquedas difusas, no solo la del equipo
     sembrado.
+
+---
+
+## #190 Rotacion de llaves: los 5 crons con JWT pegado eran `anon`, no `service_role`
+
+Al abrir el panel se vio el cuadro real. **La suposicion de que faltaba rotar la
+`service_role` era incompleta.**
+
+### Lo medido
+- La llave que usan los 56 crons es `sb_secret_...irMwr` = la nombrada **`backend`** en el
+  panel. Las otras dos (`default`, `regeneratedapikey`) no tienen uso detectable.
+- **5 crons activos traian un JWT pegado dentro del comando**, y al decodificar el payload
+  los cinco resultaron ser **`anon`**, no `service_role`:
+  145 recalibrate-model-weights-monday, 148 pre-analizar-fut-diario,
+  216 sync-fixtures-index (cada 30 min!), 245 nfl-player-stats-enrich-diario,
+  323 autopsia-picks-nocturna.
+- **EL FRENTE MAS PELIGROSO**: `.env` de Lovable trae
+  `VITE_SUPABASE_PUBLISHABLE_KEY="eyJhbGciOi..."` — el nombre dice PUBLISHABLE pero el
+  contenido es el **JWT `anon` heredado**. El boton "Disable JWT-based API keys" apaga
+  `anon` Y `service_role` a la vez: presionarlo habria dejado la app sin cargar nada,
+  para todos, al instante.
+
+### Aplicado
+Los 5 crons migrados a la convencion unica de los otros 51:
+`headers := jsonb_build_object('Authorization', 'Bearer ' || public.sk(), 'Content-Type', 'application/json')`
+Verificado: **0 crons con JWT pegado, 56 con public.sk()**.
+
+Cambio extra declarado: `pre-analizar-fut-diario` tenia `timeout_milliseconds := 1000`
+(UN segundo, misma clase que el push de #184). Subido a 30000.
+
+### Caso curioso: el cron 323 leia la llave de OTRO cron
+`'Bearer '||(select (regexp_match(command,'Bearer (eyJ...)'))[1] from cron.job where jobid=20)`
+El cron 20 ya no tiene Bearer JWT, asi que esa subconsulta devolvia NULL y la cabecera
+salia nula. **NO estaba roto**: `ai_autopsias` tiene 1,212 filas y la ultima es de hoy.
+Funcionaba porque esa edge function no exige autenticacion. Funcionaba por accidente.
+
+### Secuencia pendiente (pasos 2 y 4)
+2. Cambiar el `.env` de Lovable al publishable real `sb_publishable_...` + que Lovable
+   haga `rg SUPABASE_ANON_KEY supabase/functions/` para cerrar el ultimo hueco.
+3. Desplegar frontend.
+4. **EL USUARIO** presiona "Disable JWT-based API keys".
+
+Medido para el paso 3: 129 edge functions, 24 con `verify_jwt=true`. Las de cron ya van
+por `public.sk()`; las del navegador van con la sesion del usuario. Ninguna de esas dos
+familias depende del JWT heredado. Falta solo el grep de `SUPABASE_ANON_KEY`.
+
+## Leccion nueva
+17. **El nombre de una variable de entorno no dice que contiene.**
+    `VITE_SUPABASE_PUBLISHABLE_KEY` guardaba un JWT `anon`. Antes de revocar cualquier
+    credencial, leer el VALOR de cada consumidor, no su etiqueta.
+18. **Decodificar el payload de un JWT dice su rol sin exponer el secreto.** El
+    `role` vive en el segundo segmento en base64; la firma queda intacta. Sirve para
+    auditar sin que la llave entre nunca al contexto.
