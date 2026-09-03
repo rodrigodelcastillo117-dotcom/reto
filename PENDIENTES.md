@@ -458,9 +458,16 @@ K Drew Stevens (WSH).
 restan son los 6 novatos declarados (el modelo sabe que no sabe) y 2 `solo_pretemporada`:
 Deshaun Watson (CLE, QB1) y Jonathon Brooks (CAR, RB2).
 
-**LO QUE SIGUE ABIERTO, Y ES LO QUE LE FALTA AL NOMBRE DE ESTA TAREA:**
-1. **`nfl-def-k-sync` NO tiene cron.** Es la causa de que quedara a medias. Sin el, la estadistica
-   de pateadores y defensas de 2026 no entrara sola conforme se juegue la temporada.
+**LO QUE SIGUE ABIERTO:**
+1. ~~`nfl-def-k-sync` no tiene cron.~~ **FALSO, corregido el 3-sep.** SI lo tiene:
+   `nfl-defensas-pateadores` (jobid 346), `41 12 * * 2`, activo, con `{"temporada":2026}` y
+   timeout 240 s. Ultima corrida: martes 1-sep 12:41 UTC, `succeeded`. Encaja en la fila de los
+   martes sin encimarse (snaps 12:13, derivados 12:30, agenda 12:37, def-k 12:41), que importa por
+   #88. **El error fue mio al buscar**: filtre `cron.job` por `command ~* '(pateador|kicker)'` y el
+   comando dice `nfl-def-k-sync`, que no contiene ninguna de esas palabras. Buscar por el nombre
+   del cron o por el slug de la funcion, no por el tema.
+   La automatizacion de la NFL **ya estaba sellada**; lo que faltaba era el dato historico, que es
+   lo que se cargo hoy.
 2. **Watson y Brooks.** Decision tomada el 3-sep: se quedan como `solo_pretemporada`. Darles
    historico exige cargar `nfl_player_game_logs` de 2024, que SI toca la base del motor y el
    baseline de calibracion, a dias del arranque. `nfl_pateadores` era distinto: es una tabla
