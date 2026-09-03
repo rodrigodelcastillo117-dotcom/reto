@@ -382,6 +382,53 @@ como VALOR de `probabilidades._odds_provider`, no como clave de primer nivel de 
 busque en el nivel equivocado. Al inspeccionar un JSON, listar las claves de primer nivel NO
 descarta que el dato viva como valor un nivel abajo.
 
+### #181 — 68 picks del Oraculo sin calificar: la limpieza borra el insumo del calificador
+**Detectado el 3-sep-2026** al revisar un aviso de "picks sin calificar". **El dinero del usuario
+estaba bien**: un solo pick pendiente en todo el sistema (Cerundolo-Struff, ATP, $3,774) y su
+partido **seguia jugandose** — sets 1-2, 4to set, 2.9 h desde el saque, `live_scores` refrescado
+hacia 1 minuto. Cero parlays pendientes. El autograder no lo calificaba porque **no habia
+terminado**, que es lo correcto.
+
+**Lo que si esta atorado es `oraculo_picks_tracking`**: 88 pendientes, **68 con el partido
+terminado hace mas de 6 horas**, algunos desde el **11 de agosto**. No son apuestas, son los picks
+publicados con los que se mide el track record.
+
+**CAUSA RAIZ: el dato que el calificador necesita se borra antes de que lo use.**
+`limpieza-nocturna` (jobid 32, 11:00 diario) hace:
+```sql
+DELETE FROM live_scores WHERE status IN ('post','final') AND updated_at < now() - interval '24 hours';
+```
+Si un pick no se califica dentro de las ~24-35 h posteriores al partido, su marcador desaparece y
+**queda pendiente para siempre**. Medido: **65 de los 68 ya no tienen fila en `live_scores`**.
+
+**Desglose por liga:** 45 de los 68 son de liga `"Unknown"` (11 a 26-ago) — nunca tuvieron liga
+resuelta, no se calificaron el primer dia, y a las 24 h perdieron el marcador. Los **3 de NFL** son
+los unicos que **conservan fila viva** y se pueden calificar hoy.
+
+**HIPOTESIS DESCARTADA (verificada antes de reportarla):** el cron de 15 min (jobid 55) llama a
+`grade-oraculo-picks` **sin cabecera Authorization**, lo que parecia un 401 sistematico. Falso:
+esa funcion tiene `verify_jwt = false` y acepta la llamada. El cron si corre.
+
+**QUE HACER, en este orden:**
+1. Calificar los 3 de NFL, que aun tienen el marcador.
+2. Los 65 restantes: **marcarlos `sin_dato`, NO borrarlos ni adivinarlos.** Su marcador ya no existe
+   en la base; inventarlo seria justo lo que se lleva toda la sesion evitando.
+3. **El arreglo de fondo:** la retencion de `live_scores` (24 h) es mas corta que la ventana en que
+   el calificador puede necesitarla. O se alarga, o **el calificador guarda el marcador en
+   `oraculo_picks_tracking` en el momento de ver el partido final** (preferible: no depende de la
+   retencion de nadie).
+
+**No afecta dinero, pero contamina la metrica publica y es un confundidor directo de #169**
+(calibracion sobre picks publicados): 68 picks sin resultado son 68 huecos en el track record.
+
+### PATRON A MIRAR JUNTO — crons de limpieza que borran el insumo de otro proceso
+Son ya **dos casos del mismo error de diseno**, encontrados el mismo dia:
+- `analisis_partidos` se purga a 2 dias y deja a `pick_learning_data` sin ninguna prediccion (#173).
+- `live_scores` se purga a 24 h y deja 68 picks del Oraculo sin marcador (#181).
+En ambos, el proceso que limpia no sabe quien mas necesitaba el dato. **Conviene revisar de una vez
+TODOS los DELETE programados de `limpieza-nocturna` y ver quien mas consume lo que borran**, en vez
+de ir tapando caso por caso.
+
 ### RETENCION DE `analisis_partidos` — abierto, a dimensionar aparte
 **Este es el motivo real de que `pick_learning_data` este vacia de predicciones**, no el mapeo.
 `analisis_partidos` cubre 2 dias (2-sep a 3-sep); `pick_learning_data` cubre 40 (24-jul a 2-sep).
