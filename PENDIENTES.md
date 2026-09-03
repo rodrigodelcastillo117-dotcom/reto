@@ -665,10 +665,55 @@ para desatorar #181. Eso habria mandado **13 picks de corners mas** por esta mis
 habria escrito 13 resultados falsos nuevos mientras celebrabamos el arreglo. **Cualquier
 normalizacion de IDs debe excluir el mercado de Corners hasta que el calificador tenga guarda.**
 
-**Sin decidir todavia:** (1) poner guarda de mercado en `grade-oraculo-picks` para que Corners (y
-cualquier mercado sin dato) no caiga en la rama de totales; (2) recalificar los 79 verificables
-contra `detalle_partido_espn`; (3) que hacer con los 56 no verificables (sin fila de corners).
-Nada de esto se toca sin diff a la vista: es dinero e historial.
+**PASO 1 APLICADO (3-sep, v19 en produccion).** Guarda de mercado por LISTA BLANCA:
+
+```ts
+const MERCADOS_CALIFICABLES_CON_MARCADOR = new Set([
+  'Over/Under','Moneyline','BTTS','Handicap','Double Chance','Draw No Bet',
+]);
+const TEXTO_DE_PROP = /\bcorner|esquina|\btarjetas?\b|\bamarillas?\b|\bcards?\b/i;
+function mercadoEsCalificable(mercado, texto){
+  if(!MERCADOS_CALIFICABLES_CON_MARCADOR.has(String(mercado||'')))return false;
+  if(TEXTO_DE_PROP.test(norm(texto||'')))return false;   // norm() quita acentos
+  return true;
+}
+```
+
+Lista BLANCA y no negra a proposito: un mercado nuevo queda vetado por omision en vez de
+calificarse mal en silencio. `Corners`, `Otro` y `Resultado Exacto` quedan fuera: el calificador
+no tiene logica para ninguno.
+
+**Las cuatro trampas que la medicion previa evito:**
+1. **La columna `mercado` sola no basta**: 1 pick de corners vive con `mercado='Over/Under'`.
+2. **El texto solo tampoco basta**: 3 de 154 con `mercado='Corners'` no dicen "corner".
+3. **`card` habria vetado 47 Moneyline sanos**: todos son *St. Louis **Card**inals*. Por eso
+   `\bcards?\b` con frontera de palabra (en JS si funciona; en Postgres no — eso fue #50).
+   Y NADA de `roja`: **Estrella Roja** es un equipo.
+4. **Acentos**: hay 3 picks que dicen "C**ó**rners" y `\bcorner` NO casa con eso. Se resolvio
+   pasando el texto por el `norm()` que ya existia en el archivo.
+
+**Se queda 'pendiente', NO 'sin_dato'**: `oraculo_calibracion` y las 3 vistas `ai_performance_*`
+filtran por `resultado <> 'pendiente'`, asi que un valor nuevo entraria a esas metricas como
+resultado consumado. Cambiar el vocabulario es un paso aparte, con auditoria de lectores.
+
+**Verificacion:** diff puramente aditivo (45 lineas, 0 eliminadas, llaves balanceadas); 18 de 18
+pruebas unitarias con textos REALES de la base; desplegada con `verify_jwt: false` explicito
+(jobid 55, el cron de cada 15 min, NO manda Authorization — si se voltea a true la calificacion
+muere en silencio); leida de vuelta desde produccion; y dos corridas post-deploy (19:07:01 del
+cron y 19:07:37 manual) con HTTP 200 y `errors: 0`.
+
+**Pillado en el acto:** el log de las 18:37, mientras trabajabamos en esto:
+`[ORÁCULO/oraculo_picks_tracking] Neom SC vs Al Khaleej | Corners Under 11 | 3-0 → ganado`.
+Ese 3-0 son GOLES. La hemorragia estaba activa.
+
+**Caveat honesto:** la guarda todavia NO se ha ejercitado en produccion — ninguno de los 19 corners
+pendientes tiene marcador final disponible ahora mismo (el unico que lo tenia, el del Neom, ya se
+califico mal a las 18:37 bajo v18). Esta probada por inspeccion del codigo desplegado y por las 18
+pruebas, no por un evento real todavia. El Paso 2 la va a ejercitar: 13 de los 37 picks que
+desatora son de corners.
+
+**Pendiente:** Paso 2 (normalizar `af:` -> `af_`, solo mercados de la lista blanca), Paso 3 (cerrar
+el emisor de `af:`), Paso 4 (recalificar los 79 corners verificables contra `detalle_partido_espn`).
 
 ### #181 — CAUSA RAIZ CONFIRMADA: `af:` contra `af_`, un solo caracter
 
