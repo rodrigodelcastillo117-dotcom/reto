@@ -178,9 +178,67 @@ si tiene dos cosas por decidir, cada una medible por separado:
 `v_radar_mlb` tiene tres filtros que hay que revisar. La prohibición de totales ya quedó aplicada
 en `filtro_pick`, pero la causa raíz de la cartelera sigue abierta.
 
-### #157 — `radar_odds_snapshots` mezcla precios de antes y de DURANTE el partido
-Afecta cualquier medición de CLV y cualquier backtest que use esa tabla. **Al usarla siempre
-filtrar `snapshot_at < fecha del partido`.**
+### #157 — CERRADO el 3-sep-2026. La separacion ya existia; nadie la usaba
+**La tabla NO tiene `is_live`, ni `period`, ni la hora del partido.** Pero `v_radar_odds_fase` ya
+cruzaba contra `v_evento_hora` y clasificaba cada foto:
+`snapshot_at > hora` -> `en_vivo`, dentro de los 15 min previos -> `cierre`, antes -> `pregame`,
+sin hora -> `sin_hora`. El problema nunca fue construirla: era **quien no la usaba**.
+
+**Contaminacion medida** (filas con `espn_event_id`, desde el 6-ago): pregame 10,063 (90.7%),
+**en_vivo 643 (5.8%, 215 eventos)**, sin_hora 236, cierre 154.
+
+**Inventario: 25 objetos leen `radar_odds_snapshots` en crudo. UNO solo pasaba por la vista de
+fase** (`momio_real_de_mercado`, arreglada el mismo dia en #147).
+
+**EL AGUJERO — la FUENTE 2 de `capturar_clv_pick`.** Cruzaba por `LIKE '%primera palabra%'` (que
+puede pegarle a otro partido: "Manchester" casa con City y United) y ordenaba
+`snapshot_at >= created_at ORDER BY snapshot_at DESC` **sin ningun techo**. Con el partido ya
+empezado tomaba un precio EN VIVO y lo escribia como momio de cierre.
+Daño: de las 17 filas auditables de `clv_tracking`, **7 traian un "cierre" capturado en promedio
+431 minutos DESPUES del saque** (el peor, 683 min: el partido llevaba 11 horas terminado).
+
+**`capturar_clv_oraculo` NO se toco**: ya tenia techo (`<= match_date + 5 min`), ventana de 10 dias
+y cruce por `espn_event_id` con respaldo `norm_equipo`. Estaba bien.
+
+**PARCHE 1 — la consulta.** Mismo criterio que la funcion hermana: techo `hora + 5 min` (tolerancia
+por saques que se atrasan), ventana de 10 dias, cruce por id con `norm_equipo` de respaldo, y
+`JOIN` duro contra `v_evento_hora` (sin hora de partido NO se calcula CLV: no se puede afirmar que
+un precio sea pregame si no se sabe cuando empezo).
+**El piso `snapshot_at >= created_at` se quito**: para el CLV importa el ULTIMO precio antes del
+saque, no cuando se creo el pick. Medido sobre los 26 picks que caen a esta fuente: con el piso se
+resuelven 7, sin el 16. Verificado: **16 de 16 con veredicto pregame, cero en vivo.**
+
+**PARCHE 2 — la escritura, que llevaba semanas rota.** `ON CONFLICT (pick_id)` no correspondia a
+ningun indice: la funcion **fallaba SIEMPRE con 42P10 y nunca pudo escribir**. Y `pick_id` no es la
+identidad de la fila: con `origen='parlay'` es el id del PARLAY y cada pata mete la suya (hasta 16
+filas con el mismo `pick_id`), asi que un indice unico sobre `pick_id` habria colapsado el CLV de
+los parlays. Medido sobre las 341 filas: `(pick_id, origen, pick_desc)` deja 24 duplicados;
+`(pick_id, espn_event_id, pick_desc)` deja 0.
+**El indice correcto YA EXISTIA**: `clv_tracking_unico`, sobre
+`(pick_id, COALESCE(pick_desc,''), COALESCE(espn_event_id,''))`. El `COALESCE` es deliberado: sin
+el, dos NULL no colisionan y el upsert insertaria duplicados en silencio.
+
+**PARCHE 3 — `pick_desc` faltaba en el INSERT.** Sin el, cada corrida escribia una fila con
+`pick_desc` NULL en vez de completar la que ya existia: dos registros del mismo pick, uno con la
+descripcion y sin CLV, otro con el CLV y sin descripcion. **Esto explica las 330 filas con
+`fuente_cierre` NULL**: picks registrados esperando un CLV que nunca llegaba.
+Prueba de idempotencia: dos corridas seguidas -> **1 sola fila**, la legitima, completada.
+
+**SANEAMIENTO.** `clv_tracking` gana `cierre_confiable` y `nota_calidad`. Las 7 contaminadas quedan
+en `false` con los minutos exactos de desfase; 18 verificadas pregame en `true`; 316 en NULL (sin
+`captured_close_at` o sin hora de partido, no auditables). **No se recalculan ni se borran**: el
+precio real de ese momento ya no es recuperable, y un CLV marcado como no confiable informa mejor
+que uno borrado o uno inventado.
+
+**GUARDA DE FASE en `v_pick_canonico`.** El bloque que saca `home_ml/draw_ml/away_ml` para
+`prob_local_casa_pct` y el chip de favorito leia la tabla cruda. Ahora lee `v_radar_odds_fase` con
+`fase <> 'en_vivo'`. Medido: sobre la cartelera de hoy no cambia nada (77/77 iguales, 0 perdidas,
+son partidos futuros), pero **sobre los 215 eventos que si tuvieron fotos en vivo cambia el precio
+en 182**, y solo 4 se quedan sin precio de casa.
+
+**RESIDUAL:** quedan **21 lectores** de la tabla cruda sin revisar, entre ellos `v_momios_confiables`
+(que alimenta DESTACADOS), `v_line_movement` y `detectar_sharp_money`. Varios son de diagnostico y
+no les importa la fase. Hay que revisarlos uno por uno, no en bloque.
 
 ### #158 — El chip GANA de MLB enseñaba la probabilidad previa con el partido en vivo
 
