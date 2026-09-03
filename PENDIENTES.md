@@ -554,6 +554,66 @@ En los 8 análisis de MLB del 2-sep las etiquetas SÍ cuadran (7 de 8 coinciden 
 
 **Regla:** cuando un bloque diga `inferred_from_`, no creerle sin cruzarlo contra la aritmética del EV.
 
+### #181 — Oraculo sin calificar: NO era una causa, eran TRES (medido 3-sep)
+
+**La cifra crecio de 68 a 88 mientras trabajabamos: la fuga sigue activa.** Y al medir el desglose,
+la hipotesis original ("limpieza-nocturna borra el marcador") explica **65 de 88**, no el total.
+
+Desglose de los 88 `resultado='pendiente'`, por estado de `live_scores`:
+
+| Estado en live_scores | Picks | Lectura |
+|---|---|---|
+| (sin fila) | 65 | el marcador se borro a las 24h — la hipotesis original |
+| `scheduled` | 11 | la fila existe pero nunca se actualizo |
+| `pre` | 8 | **partidos del 4 al 6-sep: correctamente pendientes** |
+| `live` | 3 | **en curso hoy: correctamente pendientes** |
+| `final` | 1 | tiene marcador 3-0 y AUN ASI no se califico |
+
+**16 de los 88 no son bug**: son partidos por jugarse. El problema real es de 72.
+
+Por mercado, y aqui aparece la segunda causa:
+
+| Mercado | Pendientes | Sin marcador | Aun por jugarse |
+|---|---|---|---|
+| Over/Under | 27 | 22 | 2 |
+| BTTS | 21 | 21 | 0 |
+| **Corners** | **20** | 19 | **0** |
+| Moneyline | 18 | 1 | 14 |
+| Double Chance | 2 | 2 | 0 |
+
+**CAUSA A — el marcador borrado (65 picks).** La confirmada. `limpieza-nocturna` borra `live_scores`
+a las 24h y el calificador se queda sin con que comparar.
+
+**CAUSA B — mercado sin dato, aunque el marcador estuviera (20 picks de Corners).** Un pick de
+corners NO se puede calificar con `home_score`/`away_score`. Necesita el conteo de tiros de esquina.
+El caso testigo: NEOM 3-0 Al Khaleej Saihat, `status='final'`, marcador presente, pick
+"Corners Under 11" — **sigue pendiente con el dato completo enfrente**. Preservar `live_scores` no
+habria salvado ni uno de estos 20.
+
+Lo notable: **el dato de corners SI existe y su pipeline esta vivo** — `detalle_partido_espn` tiene
+**19,526 partidos, 15,646 con corners**, alimentada por el cron `detalle-espn-backfill` (jobid 303,
+`35 4,16 * * *`, 600 eventos por corrida, activo). Pero de los 20 eventos de estos picks tiene
+**cero filas**. La tabla de corners nunca supo que esos partidos existian.
+
+**CAUSA C — `live_scores` congelado (3 picks NFL).** Titans vs Bears (`401874394`), tres picks de
+Over/Under. La fila SI sobrevivio, pero lleva **116 horas** en `status='scheduled'` con `0-0` desde
+el 29-ago. No es borrado: es un partido de pretemporada que nunca se actualizo. Emparenta con #35.
+(Nota lateral: dos de esos picks dicen "Over 36.5 **Goles**" en NFL — etiqueta equivocada, cosmetico.)
+
+**Observacion transversal:** **45 de los 88 traen `liga='Unknown'`**, todos de `fuente='ai_pro'`, y
+se concentran en corners (16 de 20) y BTTS (14 de 21). Hay un generador que emite picks sin liga
+resuelta, y son justo los que mas se quedan sin calificar.
+
+**Lo que esto cambia del plan:** la directriz de "captura al vuelo en el consumidor" sigue siendo
+correcta para la CAUSA A, y la tabla ya tiene donde aterrizar (`oraculo_picks_tracking.score_final`
+y `.match_date`, hoy vacias en los 88). Pero **no resuelve B ni C**, y aplicarla sola habria dejado
+20 picks de corners igual de muertos mientras creiamos haberlos arreglado.
+
+**Pendiente de decidir (no ejecutado):** (1) que captura el consumidor — marcador solo, o tambien
+corners/tarjetas cuando el mercado lo pida; (2) si se encola a `detalle-espn-backfill` los eventos
+que tengan picks vivos, para que el dato de corners llegue antes de que el marcador se borre;
+(3) que hacer con los 45 de `liga='Unknown'` y con el generador que los produce.
+
 ### #113 — Marcadores cruzados: tenis congelado en 2-0 y MLB al revés en pantalla
 
 ### #120 — Tenis: 112 de 163 partidos de ATP con marcador imposible
