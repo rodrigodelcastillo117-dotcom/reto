@@ -423,7 +423,8 @@ esa funcion tiene `verify_jwt = false` y acepta la llamada. El cron si corre.
 
 ### PATRON A MIRAR JUNTO — crons de limpieza que borran el insumo de otro proceso
 Son ya **dos casos del mismo error de diseno**, encontrados el mismo dia:
-- `analisis_partidos` se purga a 2 dias y deja a `pick_learning_data` sin ninguna prediccion (#173).
+- `analisis_partidos` se purgaba a **36 horas** (no a 2 dias) y dejaba a `pick_learning_data` sin
+  ninguna prediccion (#173). CERRADO el 3-sep: era `oraculo-cron`. Ver la seccion de RETENCION.
 - `live_scores` se purga a 24 h y deja 68 picks del Oraculo sin marcador (#181).
 En ambos, el proceso que limpia no sabe quien mas necesitaba el dato. **Conviene revisar de una vez
 TODOS los DELETE programados de `limpieza-nocturna` y ver quien mas consume lo que borran**, en vez
@@ -473,16 +474,79 @@ que los 90 dias del cron. Verificado que no esta en ninguna funcion SQL (0 coinc
 3. **Queda por identificar cual edge function hace ese DELETE.** Hay 129 y no se puede grepear el
    contenido desde SQL; toca revisarlas por nombre o mirar los logs de PostgREST.
 
-### RETENCION DE `analisis_partidos` — abierto, a dimensionar aparte
-**Este es el motivo real de que `pick_learning_data` este vacia de predicciones**, no el mapeo.
-`analisis_partidos` cubre 2 dias (2-sep a 3-sep); `pick_learning_data` cubre 40 (24-jul a 2-sep).
-Solo **20 de 383** picks cruzan con un analisis: cuando el trigger dispara al calificar, el analisis
-de ese partido ya se purgo.
-Ya es SEGURO alargarla (las dos cargas de #173 quedaron desarmadas), pero **antes hay que medir**:
-cuanto pesa un `analisis_json`, cuantos se generan al dia, y cuantos dias de ventana hacen falta
-para que el trigger alcance a los picks, que se califican dias despues del analisis. Es un frente
-operativo con costo de almacenamiento, no una grieta funcional: **no entra en la Fase 2 previa al
-kickoff.**
+### RETENCION DE `analisis_partidos` — CERRADO (3-sep). El borrador fantasma tenia nombre
+
+**Culpable: `oraculo-cron` v146, rama `corrida === "europa"`.** Borraba a **36 horas** via
+PostgREST, con la etiqueta "CLEANUP: First run of the day (europa) cleans old cache":
+
+```ts
+if (corrida === "europa") {
+  await supabase.from("analisis_partidos").delete()
+    .lt("created_at", new Date(now.getTime() - 36 * 60 * 60 * 1000).toISOString())
+```
+
+**Cadena de evidencia:**
+- `pg_stat_statements`: el DELETE no viene de SQL sino de PostgREST.
+- Edge log: `DELETE /rest/v1/analisis_partidos?created_at=lt.2026-09-01T23:30:01.433Z`,
+  `Deno/2.1.4 SupabaseEdgeRuntime`, a las `11:30:01.441`.
+- `function_edge_logs`: `oraculo-cron` invocada a `11:30:01.310` — **131 ms antes**.
+- El codigo v146 cuadra al segundo: 11:30 menos 36h = `2026-09-01T23:30`.
+
+**La medicion que cambio la prioridad:** la tabla tenia **1.73 dias de historia** (165 filas, piso
+`2026-09-02 00:45`). Ese piso ES la huella del borrador: la app no es joven, la tabla es una ventana
+rodante que se recorta sola. La corrida del 3-sep reporto `Cleaned 0` **por coincidencia** (el corte
+cayo 75 min antes de la fila mas vieja); la del 4-sep habria matado **136 de 165 filas (82%)**.
+
+**El agravante:** leen esta tabla **20 funciones y 4 vistas**, entre ellas
+`capture_pick_to_ai_learning` — la misma que acabamos de desinfectar en #173. Le arreglamos las dos
+cargas contaminadas y su fuente se evaporaba cada 36h. Por eso `ai_learning` quedo inerte con 401
+filas y todos los campos en cero: **ningun backfill de aprendizaje podia mirar mas de dia y medio
+atras.** Los horarios lo rematan: `limpieza-nocturna` (11:00 UTC, 90 dias) corre 30 minutos antes
+que `oraculo-europa` (11:30 UTC, 36 horas), o sea la politica oficial llega a una tabla ya vaciada.
+
+**PASO 1 — Contencion en SQL (aplicada 3-sep):** `trg_analisis_retencion_90d`, un `BEFORE DELETE`
+que hace cumplir los 90 dias en la tabla misma, sin importar quien borre ni por que ruta:
+
+```sql
+if OLD.created_at > now() - interval '90 days' then
+  return null;  -- cancela el borrado en SILENCIO
+end if;
+return OLD;
+```
+
+`return null` en vez de `raise exception` es deliberado: `oraculo-cron` no revisa el resultado del
+borrado, asi que un error tumbaria toda la corrida `europa` y Premier, Bundesliga y Serie A se
+quedarian sin analizar. Con `return null` la corrida sigue igual y el log dira `Cleaned 0`.
+
+**Las dos ramas probadas contra la tabla real, con reversion forzada** (`raise exception` al final
+del bloque, la transaccion nunca se confirma — la tabla quedo identica antes y despues):
+
+| Prueba | DELETE reproducido | Resultado | Esperado |
+|---|---|---|---|
+| El que `oraculo-cron` intentaria el 04-sep | `created_at < 2026-09-02 23:30` | **0 filas** | 0 |
+| El legitimo de `limpieza-nocturna` | fila envejecida a 100 dias | **1 fila** | 1 |
+
+La segunda prueba importaba tanto como la primera: sin ella se podia haber dejado una tabla
+imborrable para siempre, cambiando una fuga de datos por una fuga de disco.
+
+**PASO 2 — Correccion estructural (enviada a Lovable 3-sep, `umsg_01m1m8c7`):** dos cambios en
+`supabase/functions/oraculo-cron/index.ts`: (a) eliminar el bloque `.delete()` completo; (b) caducar
+el cache en la **LECTURA** agregando `.gte("created_at", now - 36h)` a la consulta que llena
+`cachedIds`. El comportamiento del Oraculo no cambia en nada: un analisis de mas de 36h deja de
+contar como cache valido y el partido se re-analiza, **identico a cuando la fila se borraba**. Mismo
+gasto de LLM, mismo tier gate, mismo cap tier-2. La diferencia es que la fila sobrevive.
+
+**EL PATRON, tercera vez (#157, #181 y esta):** una funcion que limpia sin saber quien mas consume
+el dato. El autor trato `analisis_partidos` como *su* cache de trabajo (`cachedIds`, para no
+re-analizar). Nunca supo que tambien es insumo de entrenamiento. Su "36h" es correcto para un cache
+y catastrofico para un historico. **Directriz: un solo lugar decide retencion; nadie borra el
+insumo de otro proceso, y quien caduca un cache lo caduca en la lectura, no borrando.**
+
+**Residual:** el efecto sobre `pick_learning_data` (20 de 383 picks cruzan con un analisis) debe
+volver a medirse en ~1 semana, cuando la tabla acumule historia de verdad. Hasta ahora era
+imposible: el trigger dispara al calificar el pick, dias despues del analisis, y el analisis ya no
+existia. Costo de almacenamiento medido: ~12 KB por analisis, 1.9 MB por 165 filas — 90 dias son
+decenas de MB, no gigas. No es un problema.
 
 **No se pudo determinar si es sistemático:** solo n=4 cruces útiles (2 bien, 2 invertidos), y de 49
 análisis con momio, 15 (31%) discrepan del mercado sobre quién es favorito — alto pero no prueba.
