@@ -1596,3 +1596,54 @@ Borrar del panel la sonda `probe-envvars-tmp` (ya neutralizada, devuelve 410).
     reporte de quien la edito.
 23. **Cuando un proyecto tiene varias llaves del mismo tipo, "la llave correcta" es una
     pregunta empirica.** Aqui habia tres `sb_secret_` y cada lado uso una distinta.
+
+---
+
+## #194 La pestaña RETO 13M no cargaba: underflow de exp(), NO la migracion de llaves
+
+El usuario abrio la app despues del publish y la pestaña RETO 13M mostro
+"No se pudo cargar". Estabamos a un clic de apagar las llaves heredadas.
+
+### Lo que se descarto primero, midiendo
+- **El porton de Supabase SI acepta la llave publishable como `Authorization: Bearer`**:
+  llamada a `leaderboard-roi` con la publishable → **HTTP 200**. La hipotesis de que la
+  publishable no servia como Bearer era FALSA.
+- `mi-track-record` con la publishable da 401, pero eso es correcto: pide el token de
+  sesion del usuario y yo no mande ninguno.
+- Los dos helpers nuevos de `ActivePicksTab` (`teamWords`, `normalizeComparable`) estan a
+  nivel de modulo, asi que se izan: no hay error de orden.
+
+### La causa real
+`reto_13m_estado()` → `reto_probabilidad_meta()` → `ERROR 22003: value out of range: underflow`
+
+```sql
+v_p_meta := exp(public.log_phi((-v_b + v_mu*v_apuestas)/v_raiz))   -- SIN tope
+          + exp(greatest(least(v_l2, 0), -700));                    -- CON tope
+```
+La segunda `exp()` de la MISMA sentencia esta acotada a -700; a la primera se le olvido.
+Medido con los datos reales del usuario:
+```
+argumento          = -39.9052
+log_phi(-39.9052)  = -800.82
+exp(-800.82)       → underflow (el limite de float8 esta cerca de -745)
+```
+En PostgreSQL `exp()` sobre float8 NO devuelve cero al desbordar por abajo: lanza error.
+
+### Arreglo
+Mismo tope que ya tenia la exp() de al lado, en las dos ramas (meta y piso).
+`exp(-700) = 9.9e-305`: cero a efectos de una probabilidad, asi que no cambia ningun
+numero mostrado; solo evita el crash. Aplicado con guarda de ocurrencias (1 y 1).
+Verificado: `reto_13m_estado('rodelcast')` ya devuelve el resumen completo.
+
+### PENDIENTE relacionado (no urgente)
+Ese `mu` y ese `sigma` salen de **2 picks** en `reto_picks_mostrados`. De ahi salen
+`ritmo_semanal_pct: 453.40` y `semanas_para_la_meta: 4`. Con n=2 eso no mide nada y la
+pantalla lo presenta como si midiera. Mismo patron que las lecciones 8 y 10.
+
+## Leccion nueva
+24. **Cuando una sentencia tiene la misma operacion dos veces y solo una lleva guarda,
+    la que no la lleva es el bug esperando fecha.** Aqui las dos `exp()` estaban en la
+    MISMA asignacion, una acotada y la otra no.
+25. **Un fallo que aparece justo despues de un cambio grande no viene necesariamente de
+    ese cambio.** Habriamos revertido la migracion de llaves por un underflow de
+    coma flotante que llevaba tiempo esperando el dato adecuado.
