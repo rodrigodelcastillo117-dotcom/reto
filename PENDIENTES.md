@@ -1777,3 +1777,55 @@ perfiles ................... 3, intactos
     al usuario fuera; el boton "CREAR MI CUENTA" que la app le ofrecia habria partido su
     historial en dos. Cuando algo falla en autenticacion, revisar QUE le esta ofreciendo
     la interfaz al usuario en ese estado.
+
+---
+
+## #198 Los cuatro puntos de pantalla: tres mandados a Lovable, uno resultó no ser bug
+
+### 1. "Casa"/"Fuera" -> 🏠 / ✈️
+Cosmetico. Mandado a Lovable con `aria-label` para no perder accesibilidad.
+
+### 2. CLIMA mostraba "46 ft" — CAUSA MEDIDA
+Son 46 PIES: el campo `altitud_ft` de las vistas de **MLB y NFL**
+(`v_juego_clima`, `v_juego_clima_nfl`), leido en un partido de la Superliga danesa.
+El clima de futbol vive en `futbol_clima_hora` (estadio, hora_utc, temp_f, viento_mph,
+viento_dir, humedad, lluvia_mm) y **nadie lo pedia**. Mismo patron del #97: dos
+vocabularios para la misma idea y la pantalla toma el que no es.
+
+**Creada `public.v_futbol_clima_partido`** para que el frontend tenga UNA fuente:
+cruza `live_scores -> partido_sede -> futbol_clima_hora` tomando la hora mas cercana al
+saque (+/- 90 min), expone `altitud_ft` por separado y marca `hay_clima` booleano.
+Devuelve NULL cuando no hay dato, para que la pantalla diga "sin dato" en vez de inventar.
+
+**MEDIDO al construirla — la cobertura es el problema de verdad:**
+```
+partidos de futbol proximos 7 dias .... 235
+con sede conocida ..................... 142
+CON CLIMA .............................  42  (17.9%)
+estadios en el recolector .............  48 de 213 conocidos (23%)
+```
+La plomeria queda resuelta; **la cobertura es otro trabajo**: el recolector de clima solo
+cubre 48 estadios. "Sin dato" va a ser el estado COMUN, no la excepcion, y asi se le dijo
+a Lovable para que lo diseñe como estado normal y no como error.
+
+### 3. FAVORITOS mostraba partidos terminados
+El dato esta BIEN (`final`/`FT` los tres); la pantalla no filtra. Instruccion explicita:
+**filtrar por ESTADO, no por reloj** — un partido puede empezar tarde o irse a tiempo
+extra y desapareceria estando vivo. Conjunto explicito de estados terminales porque en
+esta base el campo tiene varias grafias.
+
+### 4. "El modelo opina de un equipo que no conoce" — NO ES BUG
+`modelo_opina_sin_datos | Manchester United vs Sabah FK`. **Es la guarda del #108
+funcionando.** Verificado: no existe NINGUN pick en `oraculo_picks_tracking` para ese
+partido. El modelo formo una opinion, la guarda la detuvo, y nada salio. La alerta es el
+sistema avisando, no fallando.
+
+## PENDIENTE nuevo
+**Cobertura del clima de futbol: 48 de 213 estadios.** Ampliar el recolector, o al menos
+priorizar los estadios de las ligas donde de verdad se apuesta.
+
+## Leccion nueva
+29. **Antes de arreglar una pantalla que muestra el dato equivocado, medir cuanto dato
+    BUENO hay.** Aqui la fuente correcta existe y esta fresca, pero solo cubre el 17.9%
+    de los partidos: si no se mide, se arregla la lectura y el usuario ve "sin dato" en 8
+    de cada 10 partidos sin entender por que.
