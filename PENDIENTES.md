@@ -442,6 +442,37 @@ proceso depende de la retencion de otro.
 Ya hay precedente vivo en la casa: `clv_tracking` guarda el CLV en su propia fila y no lo recalcula
 desde `radar_odds_snapshots` cada vez.
 
+### CORRECCION IMPORTANTE (3-sep, mismo dia): `analisis_partidos` NO se purga a 2 dias
+**Lo escribi mal en #173 y en su commit.** El sintoma era real — solo hay analisis del 2 y 3 de
+septiembre — pero **la causa que le atribui es falsa**. Medido leyendo el cron completo:
+```sql
+-- Retencion ampliada de 14 a 90 dias: el post-mortem necesita el analisis
+-- original para comparar prediccion vs resultado. El JSON es texto liviano.
+DELETE FROM analisis_partidos WHERE created_at < now() - interval '90 days';
+```
+**La retencion configurada es de 90 dias, no 2**, y ese DELETE ha borrado **0 filas** (nada tiene 90
+dias). Tambien: `espn_data_json` (lo que pesa) se libera aparte a los 7 dias, y `analisis_json` —el
+que necesita el aprendizaje— se conserva.
+
+**PERO SI HAY UN BORRADOR ACTIVO, Y NO ES ESE.** `pg_stat_user_tables` reporta **34 filas borradas**
+en `analisis_partidos`, y `pg_stat_statements` lo identifica: una llamada **via PostgREST**, no SQL:
+```
+WITH pgrst_source AS (DELETE FROM "public"."analisis_partidos"
+                      WHERE "created_at" < $1 RETURNING "id") ...
+```
+Es decir, **una edge function (o el cliente) borra por fecha con su PROPIO umbral**, mucho mas corto
+que los 90 dias del cron. Verificado que no esta en ninguna funcion SQL (0 coincidencias con
+`delete...analisis_partidos`) ni en ningun otro cron.
+
+**QUE CAMBIA ESTO:**
+1. El frente de "arquitectura de almacenamiento para IA" (extraer variables antes de la purga)
+   **puede no hacer falta**: con 90 dias de retencion el analisis vive de sobra para que el trigger
+   lo alcance. Primero hay que encontrar y evaluar el borrador de PostgREST.
+2. La tabla ocupa **1.9 MB con 165 filas**. El costo de almacenamiento no es el problema que
+   parecia: a ~12 KB por analisis, 90 dias de retencion son decenas de MB, no gigas.
+3. **Queda por identificar cual edge function hace ese DELETE.** Hay 129 y no se puede grepear el
+   contenido desde SQL; toca revisarlas por nombre o mirar los logs de PostgREST.
+
 ### RETENCION DE `analisis_partidos` — abierto, a dimensionar aparte
 **Este es el motivo real de que `pick_learning_data` este vacia de predicciones**, no el mapeo.
 `analisis_partidos` cubre 2 dias (2-sep a 3-sep); `pick_learning_data` cubre 40 (24-jul a 2-sep).
