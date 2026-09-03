@@ -43,13 +43,11 @@ Ordenado por riesgo real de dinero y por la unica fecha dura de la lista: **NFL 
    **El hueco real es `nfl_novatos`: 1 sola fila, sin cron y sin funcion que la llene.** Un novato
    sin historico cae al promedio de posicion. Esto SI es precargable y hay que construirlo.
 2. **#118.** Verificar la agenda sembrada y decidir con que evidencia se encienden los picks.
-3. **#157.** Separar estrictamente los snapshots de antes y de durante el partido: protege el CLV
-   y el EV historico con el que despues calibramos.
-4. **#172 punto 1.** Mapear la tanda de penales de la API hacia `score_detail_json`. El formato ya
-   quedo estrenado con datos reales en el evento 401914296.
-5. **#173 ACOTADO.** NO es fuga de banca: la aritmetica lo descarta (EV almacenado +14.1% cuadra
-   con 0.296 x 3.85 - 1; si usara la invertida seria +57.9%). El alcance correcto es auditar si
-   `capture_pick_to_ai_learning` arrastra la inversion a la tabla de entrenamiento.
+3. **#157. CERRADO el 3-sep.** Ver seccion DINERO.
+4. **#172. CERRADO el 3-sep.** Ver la seccion de abajo.
+5. **#173. CERRADO el 3-sep.** Ver seccion MODELO.
+
+**FASE 2 COMPLETA (3-sep-2026): #93, #157, #172 y #173 cerrados.**
 
 ### FASE 3 — Enjambre y calibracion (7-9 sep)
 1. **#175.** Conectar los 14 crons a `bitacora_aprendizaje`. Escribir primero, decidir despues.
@@ -265,9 +263,62 @@ las 03:11 y seguía sin calificar. Ninguna de las 22 funciones de calificación 
 `clasific`. Parche aplicado con DO-block y guarda de ocurrencias, resolviendo el equipo con
 `match_team()`.
 
-**FALLA 2 — ABIERTA.** La tanda de penales no vive en ningún lado: `live_scores` no tiene
-columna y `score_detail_json` estaba en null. Por eso el parche devuelve `no_evaluable`
-**a propósito** cuando hay empate: sin el dato NO se inventa un ganador.
+**FALLA 2 — CERRADA el 3-sep-2026, y eran TRES bugs, no uno.**
+
+**(a) ESPN SI publica la tanda, y la funcion la tiraba.** El scoreboard que `get-espn-matches`
+consulta cada 3 minutos (cron `refresh-live-scores`, jobid 31) ya trae todo. Verificado contra
+`concacaf.leagues.cup?dates=20260902-20260903`:
+```
+AME: score=2  shootoutScore=4  winner=false
+MTY: score=2  shootoutScore=5  winner=true
+status.type.name = STATUS_FINAL_PEN     (shortDetail = "FT-Pens")
+```
+`parseMatch()` leia solo `score` y descartaba el resto del competidor. Cero llamadas nuevas hacian
+falta: el dato pasaba por delante cada 3 minutos.
+**NOTA:** `site.api.espn.com/.../summary` da **403** (sigue bloqueado, #43/#83). El slug correcto
+de la copa es `concacaf.leagues.cup`, y **ya estaba en `ligas_master`** activa y no bloqueada, asi
+que no hubo que agregar ninguna liga al radar.
+
+**(b) `"FT-Pens"` no se reconocia como final.** El upsert decidia el estado con
+`minute.includes("Final") || minute === "FT" || minute === "AET"`. `"FT-Pens"` **no casa con
+ninguna de las tres**: esa es la causa mecanica exacta de que el partido se quedara `live` desde
+las 06:12 UTC. Arreglar solo la tanda lo habria dejado colgado igual.
+**El estado manda sobre el texto:** la guarda exige `state === "post"` o `completed === true`,
+porque `"Pens"` a secas aparece TAMBIEN durante la tanda (`state="in"`) y marcarlo final ahi
+calificaria un parlay a medio patear.
+
+**(c) EL MAS GRAVE — `trg_live_scores_ignorar_sin_cambio` cancelaba la escritura EN SILENCIO.**
+Ese trigger compara 14 columnas y **`score_detail_json` NO estaba entre ellas**: si solo cambiaba
+el detalle, devolvia `null` y el UPDATE se descartaba sin error. Y ese es exactamente el caso de
+una tanda: se conoce cuando el partido YA termino y el marcador lleva rato congelado.
+**No afectaba solo a los penales: cualquier proceso que intentara enriquecer `score_detail_json`
+despues del pitazo final llevaba fallando en silencio.** Se agrego la columna a la lista blanca.
+No reabre el derroche de Realtime que motivo el trigger (5M mensajes/mes): la comparacion sigue
+siendo POR VALOR, asi que reescribir el mismo json se sigue cancelando.
+
+**LO DESPLEGADO.**
+- RPC `guardar_penales_espn(text,int,int,text)`, `security definer`, solo `service_role`.
+  **FUSIONA con `||`, no reemplaza** — 981 filas ya traen `score_detail_json` de otras fuentes y
+  **719 de ellas son ARREGLOS**, que la RPC deja intactos. Es **idempotente y sin timestamp**: si
+  los penales ya estan, devuelve false sin escribir. Un `capturado_at` habria hecho el json
+  distinto en cada vuelta y forzado escritura + Realtime cada 3 minutos.
+  Probada: tanda nueva `true`, repetida `false`, 0-0 `false`, nulos `false`, arreglo intacto.
+- Trigger `live_scores_ignorar_sin_cambio` con `score_detail_json` en la lista blanca.
+- `get-espn-matches/index.ts` enviado a Lovable (los 4 cambios, con el detalle de que
+  `buildFixturesIndex` usa OTRO vocabulario de estado — escribe `"post"`, no `"final"` — y por eso
+  NO lleva la guarda del cambio 2).
+
+**HALLAZGO LATERAL: la ingesta ya existia por otra puerta.** El mismo partido esta DUPLICADO en
+`live_scores`: `af_1635864` (API-Football, `status_detail='PEN'`, penales 4-5 **automaticos**) y
+`401914296` (ESPN). De 261 filas `af_` todas traen la clave `penales`; de 2,402 filas de ESPN solo
+una la tenia, y era la que se escribio a mano. El calificador cruza por el id de ESPN, asi que
+nunca miraba la fila buena. El puente `enlazar_espn_apifootball` **solo cubre Liga MX**
+(`ligamx_partidos`), y las dos unicas tandas de la base — Leagues Cup y Super Cup griega — quedan
+fuera por construccion. Se eligio la ruta ESPN y no espejar la fila `af_`: evita depender de
+API-Football y evita cruzar nombres entre bases para copas internacionales.
+
+**Volumen real: 2 tandas en toda la historia de la base.** Es un evento raro, pero cuando ocurre
+deja dinero parado dos dias.
 
 **FALLA 3 — ABIERTA.** `protect_parlays_premature_grading` revierte el cierre a `pendiente`
 con `BLOQUEADO_PREMATURO` si la pata perdedora tiene el partido sin confirmar como final.
@@ -275,6 +326,9 @@ con `BLOQUEADO_PREMATURO` si la pata perdedora tiene el partido sin confirmar co
 se quedó `live` porque el sync perdió la señal, y que ese bloqueo **no avisa a nadie**.
 
 Aplica a Leagues Cup, Copa MX, eliminatorias de Champions y Mundial.
+
+**RESIDUAL de #172:** verificar en la proxima tanda real que el ciclo completo corre solo, de punta
+a punta, sin tocar nada a mano.
 
 ### #173 — CERRADO el 3-sep-2026. La mina tenia DOS cargas, y estaba inerte
 **El diagnostico original sigue en pie:** en `401914297` (Toluca vs Leon) el analisis guardo
