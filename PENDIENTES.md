@@ -1829,3 +1829,66 @@ priorizar los estadios de las ligas donde de verdad se apuesta.
     BUENO hay.** Aqui la fuente correcta existe y esta fresca, pero solo cubre el 17.9%
     de los partidos: si no se mide, se arregla la lectura y el usuario ve "sin dato" en 8
     de cada 10 partidos sin entender por que.
+
+---
+
+## #199 "+445.8%/sem" y "0.1 anios a la meta": la pantalla extrapola desde 1.2 DIAS
+
+El usuario dijo "siento que esos datos estan mal". **Tiene razon y el numero lo prueba.**
+
+```
+reto_picks_mostrados ....... 2 filas en total, 1 calificada
+dias en el reto ............ 1.2  (0.17 semanas)
+bankroll ................... 5,000 -> 6,653.83  (+33%)
+```
+`ritmo_semanal_pct` compone ese +33% de 1.2 dias a una tasa semanal:
+`1.33077^(1/0.17) - 1 = 437%`. Aritmeticamente correcto, **estadisticamente vacio**.
+De ahi salen los tres numeros de la pantalla:
+- RITMO REAL **+445.8%/sem** (necesario: 15.5%)
+- TIEMPO A LA META **0.1 anios**
+- ATRASO **+29.9%** — ademas MAL ETIQUETADO: +29.9% significa ir ADELANTADO, no atrasado.
+
+Es el mismo defecto que ya cazamos tres veces (#106 muestra de 2 partidos, #148 n=5
+retractado, #8 "no se concluye con muestra chica") pero **en la pantalla principal, donde
+mas influye en la decision de apostar**. Un usuario que ve "+445%/sem" sube el tamano de
+sus apuestas.
+
+### Arreglo propuesto (PENDIENTE, no aplicado)
+Piso de muestra ANTES de extrapolar: si `semanas < 2` o `picks_calificados < 20`, no
+mostrar tasa; mostrar "muestra insuficiente para medir ritmo (1 de 20 picks)". Y renombrar
+ATRASO a "vs RITMO NECESARIO" con signo explicito.
+
+---
+
+## #200 Por que solo 1 pick hoy: el RETO tiene NUEVE ligas y el tenis NO esta
+
+Medido en `reto_13m_estado`:
+```
+ligas_incluidas = Premier League, La Liga, Serie A, Bundesliga, Ligue 1,
+                  UEFA Champions League, NFL, MLB, Liga MX
+conteo = 1 listo, 5 en espera, 1 descartado
+cobertura = 168 partidos de ligas top en 7 dias; 13 en 24h, 12 con precio (92%)
+```
+**ATP y WTA no se miden a proposito**: no estan en la lista. No es un fallo, es el alcance
+del reto. Los 5 "en espera" no son falta de partidos: les falta el dato que decide
+(alineacion o abridor confirmado).
+
+---
+
+## #201 Inventario para la hoja de ruta propuesta (MEDIDO)
+```
+detalle_partido_espn ....... 19,526 filas   -> props (corners/tarjetas) es viable
+radar_odds_snapshots ....... 71,890 filas, 587 eventos -> CLV instantaneo es viable
+historico_partidos_espn .... 31,928 filas   -> fuerza de calendario es viable
+reto_picks_mostrados ....... 2 filas, 1 calificada -> AUTO-TUNING NO ES VIABLE
+```
+**El regresor de auto-calibracion (XGBoost) sobre `calibration_error` es exactamente el
+error que combatimos toda la noche**: alimentar un modelo con n=1 y publicar su salida con
+autoridad. Es la misma familia del #107 (BET en 25 de 25 por falta de datos), #108 (equipo
+desconocido tratado como promedio), #179 y #180 (un LLM escribiendo reglas numericas desde
+n=3). Se pospone hasta tener muestra, y la muestra se junta sola con el tiempo.
+
+## Leccion nueva
+30. **El mismo defecto de muestra chica duele mas segun DONDE se muestra.** Lo habiamos
+    cazado en tendencias y en alertas; aqui estaba en la pantalla principal, en letras
+    grandes, donde influye directo en cuanto dinero se arriesga.
