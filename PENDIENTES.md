@@ -1500,3 +1500,40 @@ minutos. Se "arreglo" dos veces y volvio a morir por una causa distinta cada vez
 20. **Un helper de autenticacion compartido concentra el riesgo de una rotacion de
     llaves.** Antes de rotar, buscar quien decide "esto es una llamada interna" y
     confirmar que entienda el formato nuevo.
+
+---
+
+## #192 Auditoria completa: SIETE dependencias del JWT heredado. El paso 4 sigue bloqueado
+
+Lovable corrio `rg -n "SUPABASE_ANON_KEY|ANON_KEY|eyJhbGciOi" supabase/functions/ src/`.
+Con eso la lista quedo cerrada.
+
+### Se rompen si se apagan los JWT heredados (7)
+| # | donde | como depende |
+|---|---|---|
+| 1 | `_shared/auth.ts` `isServiceToken()` | no entiende `sb_secret_`; rechaza a TODOS los crons (#191) |
+| 2 | `oraculo-diario/index.ts:12` | `Deno.env.get("SUPABASE_ANON_KEY")!` |
+| 3 | `oraculo-cron/index.ts:12` | `Deno.env.get("SUPABASE_ANON_KEY")!` |
+| 4 | `analizar-partido/index.ts:3821-3822` | JWT anon escrito a mano |
+| 5 | `WrappedStories.tsx:5` | JWT anon escrito a mano |
+| 6 | `LiveDayTab.tsx:27` | JWT anon escrito a mano |
+| 7 | `AnalysisTab.tsx:523-524 y 566-567` | JWT anon escrito a mano, DOS veces |
+
+### Falsos positivos (no tocar)
+`sharp-api.ts`, `reto13m-api.ts` y `ShareAnalysisButton.tsx` declaran una variable LOCAL
+llamada `SUPABASE_ANON_KEY` pero la llenan con `VITE_SUPABASE_PUBLISHABLE_KEY`. El nombre
+engana; la dependencia no existe. Es el mismo patron que `VITE_SUPABASE_PUBLISHABLE_KEY`
+guardando un JWT: **el nombre no dice el contenido**.
+
+### Sospecha por confirmar
+En `AnalysisTab.tsx:566` el payload en base64 dice `cm9sZCI6ImFub24i` (`rold":"anon"`)
+mientras el de la linea 523 dice `cm9sZSI6ImFub24i` (`role":"anon"`). Si eso es literal,
+ese JWT esta CORRUPTO y esa llamada ya venia fallando. Verificar antes de migrarla.
+
+### Ya hecho en este paso
+- `.env` migrado a `sb_publishable_2dJSFM1GRifrxzJdLqRJvQ_QZn75jkg` (VERIFICADO por mi,
+  leyendo el archivo, no el reporte).
+- `client.ts` ahora lee `import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY`; **tenia el JWT
+  escrito a mano** y se quito. Ese respaldo habria hecho que el fallo apareciera solo en
+  algunos usuarios.
+- `bunx tsgo --noEmit` limpio; vista previa carga.
