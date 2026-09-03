@@ -618,6 +618,82 @@ el diseno.
 calificador v15 estan sanos. v15 ya lee `live_scores` U `marcadores_archivo` priorizando por estado.
 No hay nada que arreglarles.
 
+### #182 GRAVE (integridad del historial): los córners se califican contra los GOLES
+
+Encontrado mientras media el rescate de #181. **Es mas grave que #181.**
+
+`grade-oraculo-picks` normaliza el texto del pick y aplica una sola regex de totales:
+
+```js
+desc = desc.replace(/menos de/g,'under');
+const underM = desc.match(/under\s*(\d+\.?\d*)/i);   // "corners under 11" TAMBIEN casa
+if (underM) { const line = ...; if (total > line) return 'perdido'; ... }
+//                                    ^^^^^ total = home_score + away_score = GOLES
+```
+
+No hay ninguna guarda de mercado. Un pick "Corners Under 11" entra por la rama de totales y se
+compara contra los **goles** del partido. Como las lineas de corners (7-12) casi siempre estan por
+encima del total de goles (0-4), casi todo "Under" se lee como ganado.
+
+**Medido contra el dato real de corners** (`detalle_partido_espn`, 79 picks verificables):
+
+| | Picks | % |
+|---|---|---|
+| Calificados verificables | 79 | 100% |
+| Bien calificados | 31 | 39.2% |
+| **MAL calificados** | **48** | **60.8%** |
+| Dice GANO y en realidad perdio | 23 | |
+| Dice PERDIO y en realidad gano | 20 | |
+| Eran push (nulo) y se marcaron ganado/perdido | 5 | |
+
+Ejemplos con el dato real enfrente:
+
+| Partido | Pick | Goles | Corners reales | Se marco | Era |
+|---|---|---|---|---|---|
+| NY Red Bulls vs Nashville | Under 9 | 1 | **17** | ganado | **perdido** |
+| Augsburg vs Schalke | Under 8 | 3 | **14** | ganado | **perdido** |
+| Monaco vs Marseille | Under 9 | 2 | **12** | ganado | **perdido** |
+| Fiorentina vs Frosinone | Under 10 | 3 | **13** | ganado | **perdido** |
+| NY Red Bulls vs Philadelphia | Over 7 | 4 | **11** | perdido | **ganado** |
+| Famalicao vs Gil Vicente | Under 9 | 0 | 9 | ganado | **nulo (push)** |
+
+**Alcance:** 135 picks de corners ya calificados (68 ganado, 61 perdido, 6 nulo), desde el 4-mayo.
+Ese historial falso alimenta el track record, la calibracion y `pick_learning_data`.
+
+**Lo que casi hago mal (segunda vez el mismo dia).** Iba a proponer normalizar los IDs `af:` -> `af_`
+para desatorar #181. Eso habria mandado **13 picks de corners mas** por esta misma rama rota, y
+habria escrito 13 resultados falsos nuevos mientras celebrabamos el arreglo. **Cualquier
+normalizacion de IDs debe excluir el mercado de Corners hasta que el calificador tenga guarda.**
+
+**Sin decidir todavia:** (1) poner guarda de mercado en `grade-oraculo-picks` para que Corners (y
+cualquier mercado sin dato) no caiga en la rama de totales; (2) recalificar los 79 verificables
+contra `detalle_partido_espn`; (3) que hacer con los 56 no verificables (sin fila de corners).
+Nada de esto se toca sin diff a la vista: es dinero e historial.
+
+### #181 — CAUSA RAIZ CONFIRMADA: `af:` contra `af_`, un solo caracter
+
+`evento_id_map` NO rescata nada: 0 de 37 cruzan, en ninguna de las dos formas. Pero el rescate
+existe y es exacto — **el ID esta bien, la puntuacion no**:
+
+| Tabla | IDs `af:` | IDs `af_` |
+|---|---|---|
+| `live_scores` | 0 | 261 |
+| `marcadores_archivo` | 0 | 592 |
+| `evento_id_map` | 0 | 134 |
+| `picks` (apuestas reales del usuario) | 0 | 5 |
+| **`oraculo_picks_tracking`** | **56** | 0 |
+| **`analisis_partidos`** | **6** | 0 |
+
+`af_` es la convencion de la casa. Solo las dos salidas del Oraculo escriben `af:`. Por eso las
+apuestas reales del usuario SI se califican y las del Oraculo no.
+
+Con la sustitucion `af:` -> `af_`, **37 de los 56 picks pendientes encuentran fila FINAL con
+marcador** en `marcadores_archivo`. Los otros 19 siguen sin rastro. La prueba cruzada por
+nombre+fecha da 24 de 37 eventos, cero ambiguos, coherente con la sustitucion (25 eventos).
+
+**Pendiente:** cerrar el emisor de `af:` (2 picks hoy) y normalizar el historial — **excluyendo
+Corners** por #182.
+
 ### #113 — Marcadores cruzados: tenis congelado en 2-0 y MLB al revés en pantalla
 
 ### #120 — Tenis: 112 de 163 partidos de ATP con marcador imposible
