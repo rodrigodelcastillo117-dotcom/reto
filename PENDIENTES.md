@@ -276,18 +276,68 @@ se quedó `live` porque el sync perdió la señal, y que ese bloqueo **no avisa 
 
 Aplica a Leagues Cup, Copa MX, eliminatorias de Champions y Mundial.
 
-### #173 — El bloque `probabilidades` puede traer local y visitante invertidos
-En `401914297` (Toluca vs León) el análisis guardó `home_win=29.6` y `away_win=41.0` con
-`agenda_espn` diciendo home=Toluca. **Es al revés:** el EV guardado lo prueba —
-`0.296 × 3.85 − 1 = +13.96%`, que es el `+14.1%` registrado. El pick usó 29.6% para León, así que
-Toluca tenía 41.0% y era el favorito.
+### #173 — CERRADO el 3-sep-2026. La mina tenia DOS cargas, y estaba inerte
+**El diagnostico original sigue en pie:** en `401914297` (Toluca vs Leon) el analisis guardo
+`home_win=29.6` y `away_win=41.0` con `agenda_espn` diciendo home=Toluca. Es al reves, y el EV
+guardado lo prueba: `0.296 x 3.85 - 1 = +13.96%`, que es el `+14.1%` registrado. El bloque venia
+marcado `"_odds_provider": "inferred_from_picks"`: reconstruido hacia atras desde los picks, y ahi
+se cruzaron los lados. **Medido: 36 de 165 analisis (22%) traen esa marca.**
+(Segundo defecto del mismo analisis, sin cerrar: `goles_esperados` es `{local 1.1, visitante 1.1}`,
+simetrico, y con lambdas simetricas el 1X2 no puede salir 29.6/29.4/41.0. Ese 1X2 no salio de esas
+lambdas, asi que cualquier BTTS u Over derivado de ellas tampoco es confiable.)
 
-El bloque viene marcado `"_odds_provider": "inferred_from_picks"`: se reconstruyó hacia atrás desde
-los picks y ahí se cruzaron los lados.
+**CARGA 1 — el hardcodeo.** `capture_pick_to_ai_learning()` hacia
+`v_predicted_prob := (v_ai->'probabilidades'->>'home_win')::NUMERIC / 100` **para CUALQUIER pick**.
+Con un Over 2.5, un BTTS o un "gana visitante", `ai_predicted_prob` era la probabilidad de otro
+evento distinto, y `calibration_error` la comparaba contra el resultado del PICK. **327 de 401
+picks de la muestra NO son ML.**
 
-**Segundo defecto en el mismo análisis:** `goles_esperados` es `{local 1.1, visitante 1.1}`,
-simétrico. Con lambdas simétricas el 1X2 tendría que salir simétrico, no 29.6/29.4/41.0. **El 1X2
-no salió de esas lambdas.** Cualquier BTTS u Over derivado de ellas no es confiable.
+**CARGA 2 — el origen.** Mapear bien el lado no salva nada si el bloque viene invertido de fabrica.
+Los 36 analisis `inferred_from_picks` quedan **vetados con NULL estricto**, por dos razones
+independientes: son circulares (medir calibracion contra un numero derivado de los propios picks es
+medir el modelo contra si mismo) y son los que cruzan los lados.
+
+**NO CONTAMINO NADA — pero no porque el sistema lo evitara.** `pick_learning_data`, 401 filas:
+`ai_analysis_id` 0, `ai_predicted_prob` 0, `ai_confidence` 0, `ai_edge_total` 0, `ai_veredicto` 0,
+`score_compuesto` 0, `calibration_error` 0. Todos vacios. La causa esta abajo, en RETENCION.
+**Por eso se arreglo AHORA, con la tabla inerte**: el dia que alguien alargue la retencion, la
+funcion habria empezado a meter basura sin que nada avisara.
+
+**EL PARCHE.** Extraccion por lado del pick, NULL estricto cuando no se puede afirmar:
+`home_win` / `away_win` / `draw` / `over_prob` / `under_prob`, todas en escala 0-100.
+- **Veto a `_odds_provider = 'inferred_from_picks'`** antes de cualquier mapeo.
+- **Doble oportunidad, handicap y BTTS van primero y devuelven NULL**: no tienen probabilidad
+  propia. El orden importa para que "Empate o Chicago Fire" no se clasifique como empate.
+- **En totales se exige que `over_line` del analisis sea LA MISMA linea del pick** (viene en 135 de
+  165: 1.5, 2.5, 8, 9, 11.5). Sin linea o con otra, NULL: es el error que costo un +81% de EV
+  inventado en `momio_real_de_mercado`.
+- Se elimina el fallback a `(v_ai->>'predicted_prob')`: esa clave no existe en ningun analisis.
+- Sin ancla `^` en over/under: "Total Mas de 2.5" es un pick real y el ancla lo dejaba sin mapear.
+
+**Verificado** contra los `pick_desc` reales: under 6, home 4, away 4, over 2, draw 1,
+NULL-sin-prob-propia 2, NULL-no-mapeado 7. Analisis utilizables tras el veto: **129 de 165**.
+
+**RESIDUAL.** Los 7 sin mapear no contaminan (NULL es seguro) y son de dos clases:
+1. **ML con abreviatura**: "BOS Red Sox ML" contra `espn_home_team='Boston Red Sox'`; el LIKE no
+   casa. **La tabla de alias de #71/#111 lo resolveria.** No se metio para no ampliar el alcance, y
+   porque hoy la funcion esta inerte: el costo es cobertura, no contaminacion.
+2. **Picks sin `espn_home_team`/`espn_away_team`**: "Fiorentina Gana", "FK Bodo Glimt 1X2".
+
+**NOTA DE METODO.** Yo mismo reporte primero que `inferred_from_picks` "no existe". Existe, pero
+como VALOR de `probabilidades._odds_provider`, no como clave de primer nivel de `analisis_json`:
+busque en el nivel equivocado. Al inspeccionar un JSON, listar las claves de primer nivel NO
+descarta que el dato viva como valor un nivel abajo.
+
+### RETENCION DE `analisis_partidos` — abierto, a dimensionar aparte
+**Este es el motivo real de que `pick_learning_data` este vacia de predicciones**, no el mapeo.
+`analisis_partidos` cubre 2 dias (2-sep a 3-sep); `pick_learning_data` cubre 40 (24-jul a 2-sep).
+Solo **20 de 383** picks cruzan con un analisis: cuando el trigger dispara al calificar, el analisis
+de ese partido ya se purgo.
+Ya es SEGURO alargarla (las dos cargas de #173 quedaron desarmadas), pero **antes hay que medir**:
+cuanto pesa un `analisis_json`, cuantos se generan al dia, y cuantos dias de ventana hacen falta
+para que el trigger alcance a los picks, que se califican dias despues del analisis. Es un frente
+operativo con costo de almacenamiento, no una grieta funcional: **no entra en la Fase 2 previa al
+kickoff.**
 
 **No se pudo determinar si es sistemático:** solo n=4 cruces útiles (2 bien, 2 invertidos), y de 49
 análisis con momio, 15 (31%) discrepan del mercado sobre quién es favorito — alto pero no prueba.
