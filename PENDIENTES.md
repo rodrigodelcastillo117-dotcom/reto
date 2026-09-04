@@ -2557,3 +2557,74 @@ Sigo sin desplegar nada. Regla 14.
     Yo mismo lo clasifique como "track record, no es fuga" mirando unicamente el SELECT.
     La pregunta correcta no es de donde sale el numero, sino en que clausula termina: en el
     SELECT informa, en el WHERE veta, y en el ORDER BY decide.
+
+### #213 (cont. 2) — Los 6 barridos cerraron. TRES huecos y DOS bugs de identidad
+
+#### HUECO 3 (nuevo): un motor de probabilidad corriendo en el navegador
+`src/lib/momentum-opportunities.ts` calcula probabilidad con una CDF de Poisson **en el
+cliente**, con constantes a mano:
+```
+:62   let prob = poissonCDF * 100;
+:121  let prob = (1 - poissonCDF) * 100;
+:153  let prob = 30;      <- constante
+:177  let prob = 40;      <- constante
+:214  let prob = 25;      <- constante
+```
+`src/lib/live-universal-prob.ts` hace lo mismo para en vivo:
+```
+:168  const edge = diff + 1.4  * (rem / 60);
+:227  const edge = diff + 0.16 * Math.min(1, rem / 9);
+```
+Alimentan `RadarEnVivo` y `useMomentumAlerts`. Son oportunidades presentadas al usuario con
+probabilidad **inventada en el navegador**, fuera de todo motor canonico y fuera de
+cualquier calibracion. Tambien `src/lib/kelly-calculator.ts` y
+`src/components/reto/KellyCriterion.tsx` calculan Kelly en el front.
+
+#### BUG DE IDENTIDAD 1 — `findLegColor` (src/hooks/use-leg-colors.ts)
+Su propio comentario lo confiesa: *"Falls back to index or first match by event id."*
+```ts
+const exact = colors.find(c => String(c.espn_event_id) === eid && c.pick_desc === leg.pick_desc);
+if (exact) return exact;                 // 1. correcto
+const byId = colors.find(c => String(c.espn_event_id) === eid);
+if (byId) return byId;                   // 2. OTRO MERCADO del mismo partido
+if (typeof index === "number" && colors[index]) return colors[index];
+                                         // 3. OTRO PARTIDO, por posicion en el arreglo
+```
+El nivel 3 es el peor: si los arreglos se desalinean, una pata pinta el color de un evento
+que no tiene nada que ver. Esto decide el circulo verde/rojo de cada pata del parlay.
+
+#### BUG DE IDENTIDAD 2 — `pickPorEvento` en `src/pages/MLB.tsx`
+```ts
+const pickPorEvento = new Map<string, MejorPickMlb>();
+if (!pickPorEvento.has(id)) pickPorEvento.set(id, p);   // se queda con el PRIMERO
+const pickDelPartido = pickPorEvento.get(String(r.espn_event_id));
+```
+Misma enfermedad que el `canonPorEvento` que quite del Oraculo: llave solo por evento, se
+queda con el primer pick, y lo pega a la fila del partido. Si un partido tiene pick en dos
+mercados, la tarjeta ensena uno arbitrario.
+
+#### LO QUE **NO** ES UN BUG (para no inflar la lista)
+`OraculoBanner.porEvento` agrupa los picks de un evento **en un arreglo** y los pinta todos
+(`match.picks = picks`). Eso es agrupacion legitima, no sustitucion. No se toca.
+
+### Estado tras cerrar los barridos
+| Area | Estado |
+|---|---|
+| Oraculo, Mejor pick, Favoritos, Accion del dia, MLB radar | VERDE |
+| Premium (`v_picks_premium`) | ROJO — bypass, 0 filas hoy |
+| Parlays (`v_picks_para_parlay`, 37 legs) | ROJO — bypass activo |
+| `nicho_roi` de ai_pro en WHERE/ORDER BY | ROJO — elegibilidad y ranking |
+| Radar/Momentum (prob en el navegador) | ROJO — motor en el cliente |
+| `findLegColor` (color de pata) | ROJO — fallback a otro mercado y a otro partido |
+| `MLB.tsx pickPorEvento` | ROJO — primer pick del evento |
+| MLB mejores, FUT PRO, NFL, Destacados, Value/EV | AMARILLO — falta rastrear a la UI |
+| Matematica | CONGELADA, correcto |
+
+Sigo sin desplegar. Regla 14.
+
+## Leccion nueva
+40. **Un fallback documentado sigue siendo un fallback.** `findLegColor` no era un descuido:
+    su docstring dice "Falls back to index or first match by event id". Alguien lo escribio
+    a proposito para que la card nunca se quedara sin color. El resultado es que preferimos
+    ensenar un color equivocado antes que ninguno — exactamente al reves de la regla que
+    acabamos de fijar: sin correspondencia canonica, no se sustituye, se muestra vacio.
