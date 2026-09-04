@@ -1892,3 +1892,85 @@ n=3). Se pospone hasta tener muestra, y la muestra se junta sola con el tiempo.
 30. **El mismo defecto de muestra chica duele mas segun DONDE se muestra.** Lo habiamos
     cazado en tendencias y en alertas; aqui estaba en la pantalla principal, en letras
     grandes, donde influye directo en cuanto dinero se arriesga.
+
+---
+
+## #207 Llegaban TRES push por el mismo evento. Eran tres emisores vivos a la vez
+
+Foto del usuario (4-sep, 12:23, Tommy Paul 1-1 Bublik, US Open): tres avisos del MISMO
+set, con un minuto de diferencia. Rastreado uno por uno:
+
+| # | Emisor | Cron | Titulo que mandaba |
+|---|--------|------|--------------------|
+| 1 | `check-score-updates` (edge, v39) manda push DIRECTO | 37, cada 2 min | `🎾 Tommy Paul vs Alexander Bublik` / `1 – 1` / `🎾 SET 2 para Alexander Bublik` |
+| 2 | `detectar_cambios_marcador()` -> `enviar_alerta()` | 242, cada 3 min | `🎾 SET: Tommy Paul 1-1 Alexander Bublik` / `ATP Tour` |
+| 3 | `procesar_notificaciones_marcador()` (puente #155) -> trigger `trg_notificacion_push` | 407, cada minuto | `Tommy Paul 1 - 1 Alexander Bublik` / `Alexander Bublik +1.5 Sets · 3rd` |
+
+**El #3 lo puse yo ayer, sobre una premisa falsa.** En #155 conclui que
+`score_notifications` no tenia consumidor. Falso: la MISMA edge function que escribe esa
+tabla manda el push por su cuenta, en la misma pasada. El puente no destapo un canal
+muerto, agrego una tercera copia de un canal que ya iba doble desde #80.
+
+### Quien sobrevive y por que
+Gana `check-score-updates`: es el unico con apodos cortos (`equipos_cortos_lote`), circulos
+de avance del parlay, enlace directo al pick, semantica por deporte (TD vs gol de campo,
+un grand slam en UN aviso y no cuatro) y la guarda de coherencia de sets del #85.
+
+### Cambios aplicados (2 funciones, cirugia con candados)
+```diff
+ trigger_enviar_push_notificacion()
+-  IF NEW.tipo IN ('parlay_ganado','parlay_perdido') THEN
++  IF NEW.tipo IN ('parlay_ganado','parlay_perdido')
++     OR (NEW.tipo = 'marcador' AND NEW.data->>'origen' = 'score_notifications') THEN
+```
+Mismo patron que ya existia para parlays: la fila se queda para la campana dentro de la
+app, lo que se retira es el push. La guarda apunta al `origen` que solo escribe el puente,
+asi que ningun otro tipo de aviso se toca.
+
+```diff
+ detectar_cambios_marcador()
+-      IF v_avisar THEN
++      IF false AND v_avisar THEN
+         PERFORM enviar_alerta(r.apodo, 'marcador', v_clave, ...);
+```
+Reversible quitando el `false AND`.
+
+### Lo que NO se toco, y por que
+El bloque de FINAL de `detectar_cambios_marcador` **se conserva**. Medido a 30 dias:
+
+```
+finales que aviso la ruta SQL ....... 28
+finales que vio la edge function .... 15
+en las dos ......................... 10
+solo la SQL ........................ 18   <- se perderian si la apago
+solo la edge ........................ 5
+```
+Apagarla habria dejado sin aviso de final 18 de 33 partidos. El `¡Arrancó!` tambien se
+queda: la edge function no manda inicio, y ese si esta descontado contra
+`alertar_inicio_partidos` por la llave de `alertas_enviadas`.
+
+### Residual conocido (NO cerrado)
+Al FINAL de un partido todavia pueden llegar **dos** avisos, en los 10 de 33 casos donde
+las dos rutas ven el mismo cierre. El arreglo propuesto es que la ruta SQL espere ~6
+minutos y solo mande si `score_notifications` no registro ya ese final; asi se matan los 10
+duplicados sin perder los 18 que solo ella ve. Es un cambio aparte, no se hizo hoy.
+
+Tambien medido de paso: la notificacion del Oraculo salio **3 veces identica** el 4-sep a
+las 18:00:18 (tres filas en `notificaciones` con 130 ms de diferencia). Es una triplicacion
+distinta, del lado del que INSERTA, no del que manda. Queda abierta.
+
+### Verificacion (10 de 10)
+```
+T1 guarda del puente puesta ....... true    M1 marcador apagado ........... true
+T2 parlays siguen guardados ....... true    M2 FINAL sigue vivo ........... true
+T3 el push del resto sigue ........ true    M3 INICIO sigue vivo .......... true
+C1/C2/C3 los tres crons activos ... true    M4 memoria sigue guardandose .. true
+```
+
+## Leccion nueva
+31. **"Nadie lee esta tabla" no se prueba buscando lectores en la base de datos.** El
+    consumidor de `score_notifications` no era una funcion SQL ni un cron: era la misma
+    edge function que la escribia, mandando el push por su cuenta tres lineas mas abajo.
+    Buscar escritores/lectores solo en `pg_proc` deja fuera todo el codigo de las edge
+    functions. Es la misma familia de error que `push_log` (#155): confundir "no encuentro
+    quien lo use" con "nadie lo usa".
