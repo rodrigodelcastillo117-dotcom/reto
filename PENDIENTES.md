@@ -3122,3 +3122,53 @@ sin fila en `limites_usuario`. No se cambio `verificar_limites`. No hacia falta.
 47. **Un techo agresivo escrito es mejor que ningun techo.** El RETO 13M es agresivo a
     proposito. La respuesta no era eximirlo del candado sino darle un numero propio,
     alto y visible en `config_staking`. Una excepcion se olvida; un numero se audita.
+
+## HALLAZGO POSTERIOR AL CANDADO — la ruta del RETO no pasa por la puerta
+
+Lovable dijo que `AddPickForm` no tiene variable de RETO 13M. Lo verifique en vez de
+aceptarlo, y la consecuencia es mas grande que un detalle de props.
+
+**`SmartUploadButton.tsx` es la ruta que crea las apuestas del RETO 13M:**
+```
+2544:  supabase.from("picks").insert({ ... apuesta: data.apuesta, es_reto_13m: ... })
+2762:  supabase.from("parlays").insert({ ... apuesta: data.apuesta, es_reto_13m: esReto13m })
+2783:  .from("picks").update({ es_reto_13m: true }) ... .eq("es_pata_parlay", true)
+ 878:  // Freno de tamano: todo lo calcula la base (revisar_tamano_apuesta). Solo informa.
+```
+**Nunca llama a `revisar_apuesta`.** La puerta de riesgo que acabo de blindar no cubre
+la ruta por la que entraron las 4 apuestas del RETO que rebasaban el techo.
+
+Cobertura real hoy:
+
+| ruta | puerta de riesgo | candado del trigger |
+|---|---|---|
+| AddPickForm (pick manual) | SI (`revisar_apuesta`) | SI |
+| SmartUploadButton — pick | **NO** | SI |
+| SmartUploadButton — parlay | **NO** | SI |
+| patas de parlay | n/a | exentas (el parlay ya se reviso) |
+
+El candado estructural SI las cubre, que es lo que impide la perdida de dinero. Lo que
+falta en esa ruta es el aviso y la razon escrita.
+
+### Y la pregunta que esto abre, que no puedo contestar desde el codigo
+
+`SmartUploadButton` **escanea un boleto**, y guarda `bet_id_casa` (el folio de la casa).
+32 de 34 picks lo tienen. Eso apunta a que la app **registra apuestas YA COLOCADAS**,
+no que las cree.
+
+Si eso es asi, el candado esta bien puesto en `AddPickForm` (decidir y apostar) y esta
+MAL puesto en `SmartUploadButton` (registrar lo que ya se aposto): ahi rechazar el
+INSERT no evita el riesgo, solo hace que el libro mienta y que el bankroll se separe
+de la realidad.
+
+**Estado actual: falla del lado seguro.** Ninguna apuesta mala puede entrar callada.
+El riesgo que queda no es de dinero, es de fidelidad del registro.
+
+## Lecciones nuevas
+48. **Verificar lo que dice el agente que edita, aunque suene menor.** "AddPickForm no
+    tiene variable de RETO" parecia un detalle de props. Era la senal de que la ruta
+    que mueve el dinero del RETO es otra pantalla, y que esa pantalla no tiene puerta.
+49. **Un candado correcto puede estar en la pared equivocada.** Bloquear el INSERT
+    protege cuando el INSERT es la decision de apostar. Cuando el INSERT es el ACTA de
+    una apuesta ya hecha, bloquearlo no protege nada: destruye el registro. La misma
+    linea de codigo es proteccion o dano segun lo que signifique la fila.
