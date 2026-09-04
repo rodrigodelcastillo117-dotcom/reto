@@ -3172,3 +3172,49 @@ El riesgo que queda no es de dinero, es de fidelidad del registro.
     protege cuando el INSERT es la decision de apostar. Cuando el INSERT es el ACTA de
     una apuesta ya hecha, bloquearlo no protege nada: destruye el registro. La misma
     linea de codigo es proteccion o dano segun lo que signifique la fila.
+
+## ARREGLADO — el candado pasa de "rechaza" a "no entra callado"
+
+El candado v1 era correcto para *decidir y apostar* y danino para *anotar un boleto ya
+pagado*. La regla nueva sirve para las dos lecturas sin tener que adivinar la intencion:
+
+**Un monto por encima del techo NO ENTRA CALLADO. Entra FIRMADO.**
+
+### Columnas nuevas (con lector, no decorativas)
+```
+picks.stake_sobre_techo_razon    text     <- la escribe el usuario, la exige el trigger
+picks.stake_techo_al_guardar     numeric  <- la ESTAMPA el trigger, el cliente no la puede falsear
+parlays.stake_sobre_techo_razon  text
+parlays.stake_techo_al_guardar   numeric
+```
+No se secuestro `manual_override` (que existe y tiene 0 lectores en SQL): ese nombre ya
+significa "corregi el RESULTADO". Columna propia, un solo lector, un solo significado.
+
+### La regla
+```
+apuesta <= techo                        -> entra, sin estampa
+apuesta >  techo, sin razon o <15 car.  -> RECHAZADO, con el mensaje y el hint
+apuesta >  techo, razon de 15+ car.     -> entra, y el trigger estampa el techo vigente
+es_prueba / es_pata_parlay              -> exentos
+```
+
+### Pruebas v2 — ninguna fila real escrita (picks 34, parlays 51, cero basura)
+
+| caso | resultado | techo estampado |
+|---|---|---|
+| $535 sin razon | **RECHAZADO** | — |
+| $535 razon corta (9 car.) | **RECHAZADO** | — |
+| $535 con razon valida | paso | **356.47** |
+| parlay $10,000 sin razon | **RECHAZADO** | — |
+| parlay $10,000 con razon valida | paso | **356.47** |
+| $300 dentro del techo | paso | ninguna (correcto) |
+| RETO $3,774 sin razon | **RECHAZADO** (techo 1,069.40) | — |
+| `es_prueba` $9,420 | paso (exento) | — |
+
+## Leccion nueva
+50. **Cuando no sabes que significa una fila, no elijas entre bloquear y dejar pasar:
+    exige una firma.** La duda era si el INSERT es la decision de apostar o el acta de
+    una apuesta ya hecha. Bloquear rompia el libro; dejar pasar rompia el control. La
+    razon escrita obligatoria resuelve las dos: el registro nunca se pierde y ningun
+    sobregiro entra sin que alguien lo declare. La ambiguedad se resuelve pidiendo el
+    dato que falta, no adivinandolo.
