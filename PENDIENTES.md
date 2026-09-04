@@ -3218,3 +3218,44 @@ es_prueba / es_pata_parlay              -> exentos
     razon escrita obligatoria resuelve las dos: el registro nunca se pierde y ningun
     sobregiro entra sin que alguien lo declare. La ambiguedad se resuelve pidiendo el
     dato que falta, no adivinandolo.
+
+## 4.2D DESPLEGADA — 4-sep-2026
+
+Lovable `66c3823` (SmartUploadButton) sobre `c7c41e4` (las otras cuatro pantallas),
+`tsgo` limpio en las dos. `deploy_project` ejecutado; `reto13.lovable.app` sirviendo
+`66c3823`. Triggers verificados vivos en `picks` y `parlays` con sus dos columnas.
+
+### Por que se desplego, y no solo por gusto
+**Los cambios de base NUNCA estuvieron en preview.** No existe base de preview:
+`apply_migration` escribe directo al proyecto de produccion. El trigger llevaba horas
+vivo mientras el frontend que lo explica seguia sin subir. Eso dejaba la app partida:
+una apuesta sobre el techo fallaba en produccion con un error crudo de Postgres y sin
+ninguna forma de escribir la razon. No era riesgo de dinero -- fallaba del lado seguro --
+era la app inutilizable para una apuesta grande. Desplegar cerro la asimetria.
+
+### Cobertura final de las cuatro rutas de escritura
+
+| ruta | avisa antes | exige razon | candado |
+|---|---|---|---|
+| AddPickForm (pick manual) | si (`revisar_apuesta`) | si (gate + diario) | si |
+| SmartUploadButton — pick | no (no llama la RPC) | si (modal al rebotar) | si |
+| SmartUploadButton — parlay | no | si (modal al rebotar) | si |
+| patas de parlay | n/a | n/a | exentas |
+
+Las dos rutas de SmartUploadButton avisan DESPUES, no antes: el trigger rebota, el modal
+pide la razon y reintenta. Es peor UX que la de AddPickForm pero el control es el mismo.
+Unificarlo pide meter `revisar_apuesta` en SmartUploadButton, que es trabajo de otra fase.
+
+### Lo que NO pude verificar y le toca al usuario
+El comportamiento en el navegador. Mi proxy bloquea `reto13.lovable.app`, asi que
+probe la cadena entera en la base (8 casos, sin escribir una fila real) pero **no** vi
+el modal renderizado ni el reintento con la razon. La prueba de humo que falta es:
+1. una apuesta chica dentro del techo -> debe guardar sin friccion
+2. una sobre el techo -> debe pedir la razon y guardarla firmada
+
+### Estado de los techos vigentes (`rodelcast`, bankroll disponible $7,129.36)
+```
+normal    5%  -> $356.47
+RETO 13M 15%  -> $1,069.40
+```
+Se cambian con un UPDATE a `config_staking`, sin tocar codigo.
