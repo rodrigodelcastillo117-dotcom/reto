@@ -2826,18 +2826,109 @@ muestra de 33. → **B. BLOQUEAR**.
 Nota util para la deuda del contrato: `destacados_cache.linea` demuestra que la columna
 `line` SI se puede tener estructurada. El canonico deberia adoptarla, no al reves.
 
-#### KELLY FRONTEND — respuesta parcial, honesta
-`src/lib/kelly-calculator.ts` **es una calculadora de sizing completa e independiente**:
+#### KELLY FRONTEND — RESPUESTA BINARIA: **SI**. Llega a la apuesta real.
+
+El `montoRecomendado` que calcula el navegador **si llega a la operacion de apuesta**.
+No es informativo. La cadena esta completa y medida:
+
 ```
-edge = (probabilidadReal * momioDecimal) - 1
-kelly = (edge / b) * 0.25                    <- cuarto de Kelly
-topes propios: ELITE 8%, SOLIDO 5%, MARGINAL 3%, parlay 5%, momio<1.30 -> 5%
-devuelve montoRecomendado en PESOS
+KellyCriterion.tsx:26   calculateKelly(prob, momio, bankrollDisponible)   <- 100% navegador
+KellyCriterion.tsx:83   onClick={() => onUseKelly(kelly.montoRecomendado)}
+AddPickForm.tsx:960     onUseKelly={(kellyCupo) => setApuesta(kellyCupo.toFixed(2))}
+AddPickForm.tsx:530     const apuestaNum = parseFloat(apuesta)
+AddPickForm.tsx:611/706 apuesta: apuestaNum        <- INSERT en picks / parlays
+AddPickForm.tsx:542/575 p_stake: apuestaNum        <- lo que ven las RPC de riesgo
 ```
-El backend tiene sus propios `tamano_apuesta` y `revisar_tamano_apuesta`. **O sea que
-existen dos calculadoras.** Lo que falta para responder la pregunta binaria es si el
-`montoRecomendado` del navegador SE GUARDA al crear una apuesta o solo se muestra.
-El rastreo esta corriendo; **no lo declaro en ningun sentido hasta verlo**.
+
+##### Hay DOS puertas de backend, y ninguna de las dos puede frenar un tamano hoy
+
+`handleSave` si llama al backend antes de guardar, y si aborta el guardado cuando la
+llamada truena ("Es dinero real: si no podemos verificar el riesgo, NO guardamos").
+Eso esta bien hecho. El problema es lo que las dos puertas contestan:
+
+**Puerta 1 — `verificar_limites(apodo, stake, momio)`.** SI bloquea duro por
+`limites_usuario.stake_max`. Pero:
+
+| apodo | activo | fila en limites_usuario |
+|---|---|---|
+| el dos | si | **0** |
+| rodelcast | si | **0** |
+| rongo | **no** | 1 (stake_max=300) |
+
+Los dos usuarios activos no tienen limites. La funcion arranca con
+`IF l.apodo IS NULL THEN RETURN permitir=true`. Hoy, en produccion, **siempre deja pasar**.
+
+**Puerta 2 — `revisar_apuesta(...)`.** Aqui esta el hallazgo. `kelly_stake` SI emite el
+veto correcto cuando el monto propuesto rebasa el techo:
+
+```sql
+IF p_stake_propuesto > stake_techo THEN
+  veredicto := 'BLOQUEADO';
+```
+
+pero `revisar_apuesta` **lo degrada al recibirlo**:
+
+```sql
+IF (v_kelly->>'veredicto') IN ('BLOQUEADO','NO APOSTAR') THEN
+  IF nivel = 'ok' THEN nivel := 'advertencia'; END IF;   -- <- nunca 'bloqueado'
+...
+'permitir', nivel <> 'bloqueado'
+```
+
+Los unicos que ponen `nivel='bloqueado'` son `rongol_veto` y `estado_tilt` nivel alto.
+**Ninguno de los dos habla de tamano.** O sea: el motor de stake del backend no tiene
+poder de veto sobre el stake. Su veredicto mas fuerte se convierte en aviso.
+
+Y el aviso es saltable por diseno: `StakeGateModal.tsx` solo esconde el boton cuando
+`blocked===true`; con `advertencia` pinta **"Apostar de todos modos"**, cuyo `onConfirm`
+hace `setSkipRiskGate(true)` y vuelve a llamar `handleSave()`, que ya se salta la puerta.
+
+##### Las dos calculadoras no dan lo mismo — medido con el bankroll real
+
+Mismo pick, mismo momio, mismo instante. Bankroll vivo de `rodelcast`: **$7,129.36**.
+Entrada: probabilidad declarada 65%, momio 2.00, mercado Over/Under.
+
+| | probabilidad que decide | monto |
+|---|---|---|
+| **Navegador** (`calculateKelly`) | 65.0% cruda | **$535** (tier ELITE, 7.5% del bankroll) |
+| **Backend** (`kelly_stake`) | **46.8%** | **$0 — "NO APOSTAR"** |
+
+El backend baja de 65% a 46.8% en tres pasos que el navegador no tiene ninguno:
+sesgo medido del tramo (+0.5 pp sobre 1,026 partidos), recorte bayesiano por
+incertidumbre (−1.9 pp) y el **tope duro por tasa base de #191** (`least(p, tasa_base)`).
+El navegador aplica la probabilidad cruda y le pone encima un tope del 8%.
+
+**No es que difieran un poco. El backend dice que no se apueste y el navegador
+ofrece un boton que carga $535.**
+
+##### Cuarta ruta, independiente de todo lo anterior
+
+`src/components/fut/AiCopilotBar.tsx:54` tiene **su propia** `kellyFraction(prob, decOdds, 0.25)`
+y en `:162` publica `suggestedStakePct` como "Stake sugerido (¼ Kelly)" en % de banca.
+Sin sesgo, sin recorte, sin tasa base, sin techo. No tiene boton "Usar" — no puede crear
+la apuesta sola — pero imprime en pantalla un porcentaje que el usuario puede teclear,
+y ademas lo mete al prompt del LLM ("si el stake X% es adecuado").
+
+##### La ruta que SI esta bien hecha
+`CalculadoraMonto.tsx:42` llama la RPC `tamano_apuesta` y su `onUse` escribe ese monto.
+Ese es el patron correcto: el monto nace en el backend. Es la unica de las cuatro que lo hace.
+
+##### Conteo de autoridades de sizing sobre la misma apuesta
+1. `calculateKelly` (navegador) — **puede crear la apuesta**
+2. `kelly_stake` via `revisar_apuesta` (backend) — **solo aconseja, su veto fue degradado**
+3. `kellyFraction` en AiCopilotBar (navegador) — solo pinta
+4. `tamano_apuesta` via CalculadoraMonto (backend) — correcta
+
+**Respuesta al control conceptual del auditor: NO existe una sola autoridad efectiva en
+la cadena probabilidad → EV → sizing → creacion de apuesta.** Hay dos motores capaces de
+mandar cantidades distintas a una apuesta real, y el que gana es el del navegador,
+que es el mas agresivo de los dos.
+
+##### Lo que NO se toco
+Nada. Esto es diagnostico. La correccion tiene dos piezas obvias y ninguna se aplico:
+(a) que `revisar_apuesta` deje de degradar `BLOQUEADO` de `kelly_stake`, y
+(b) que `KellyCriterion` deje de calcular y solo muestre `stake_recomendado` del backend.
+Las dos tocan dinero y necesitan diff explicito antes de desplegar.
 
 #### MATRIZ 4.2C — estado al cierre de este bloque
 | Superficie | Canonico | Decision |
@@ -2855,7 +2946,7 @@ El rastreo esta corriendo; **no lo declaro en ningun sentido hasta verlo**.
 | NFL | sin espn_event_id | **D. bloqueo estructural** |
 | Radar / Momentum | prob del navegador | **C. informativa** |
 | Favoritos MLB/NFL, cartelera NFL | n/a | **NO ES SUPERFICIE DE PICK** |
-| **Kelly frontend** | — | **ULTIMO PENDIENTE** |
+| **Kelly frontend** | — | **FUGA CONFIRMADA: el navegador crea el stake** |
 
 Produccion sigue sin tocar: no se ha llamado `deploy_project` en toda la fase.
 
@@ -2864,3 +2955,15 @@ Produccion sigue sin tocar: no se ha llamado `deploy_project` en toda la fase.
     `destacados_cache` tiene `linea` como columna propia, que es justo lo que le falta a
     `v_pick_canonico`. Estar fuera del motor no es lo mismo que estar mal modelado: al
     migrarla no hay que aplanarla al contrato pobre, hay que subir el contrato.
+
+44. **Un veto degradado en el intermediario anula al juez, aunque el juez este bien.**
+    `kelly_stake` calcula correctamente el techo y emite `BLOQUEADO`. `revisar_apuesta`
+    lo recibe y lo convierte en `advertencia`. Auditar la funcion que decide no basta:
+    hay que auditar a QUIEN LEE su veredicto. El error no estaba en la matematica,
+    estaba en una linea de traduccion.
+
+45. **"Tiene puerta de backend" no es lo mismo que "la puerta puede cerrar".**
+    `verificar_limites` bloquea de verdad por `stake_max`, y por eso parecia cobertura.
+    Pero los dos usuarios activos no tienen fila en `limites_usuario`, asi que la funcion
+    retorna `permitir=true` en la primera linea. La cobertura de un guardia depende del
+    DATO que lo habilita, no de su codigo. Siempre contar las filas.
