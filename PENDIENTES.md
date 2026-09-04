@@ -2152,3 +2152,48 @@ esta puesto y verificado, pero no esta conectado.
     `v_pick_canonico` era aguas abajo del Oraculo. Es al reves en parte: el Oraculo es
     UNO DE SUS INSUMOS. El candado no va en la fuente, va en una vista nueva aguas abajo.
     Un `pg_depend` de 5 segundos me habria ahorrado tirar produccion.
+
+---
+
+## #210 Frontend conectado: Oráculo canónico, marcadores en vivo y badge del pick
+
+### Fase 1 — El Oráculo lee la vista canónica (commit `3dd7e33` + `3515df9`)
+`OraculoRecomendados.tsx` y `OraculoBanner.tsx` ahora leen `v_oraculo_canonico`.
+Borrado el fallback que mezclaba mercados, y borrado el código muerto del LLM.
+
+### Fase 2 — CAUSA RAIZ de las tarjetas ciegas (commit `645927c`)
+**El código comparaba `status` contra el vocabulario de `minute`.** Medido en `live_scores`,
+últimas 24h:
+```
+scheduled, sin_confirmar, pre  -> no empezo
+in, live                        -> EN VIVO   (⚽ 11, ⚾ 1, 🎾 25)
+final, post                     -> termino   (⚽ 25, ⚾ 9, 🎾 431, 🏈 2)
+```
+`1H`, `2H`, `HT`, `FT`, `AET` NO son valores de `status`: son valores de `minute`
+(`minute="HT"`, `minute="84'"`). El `LIVE_STATES = ["1H","2H","HT","ET","P","BT","LIVE"]`
+que yo mismo puse en #207 **no acertaba nunca**. Por eso salían tarjetas ciegas.
+
+Nueva `src/utils/estadoPartido.ts` como juez único, aplicada en `MatchFeed.tsx`,
+`MatchCard.tsx`, `MLB.tsx`, `NFL.tsx` y `use-live-now.ts`.
+
+### Fase 3 — Badge del pick canónico (commit `3515df9`)
+`BannerPickCanonico` en las 5 ramas de la Sección 1 del modal. Lee
+`1_el_resumen.mercados[]`, que ya viene filtrado por `es_pick` (hereda #201 y #206).
+Verde con el pick si hay; rojo "SIN RECOMENDACIÓN DE DINERO" si `mercados` está vacío.
+**NO usa `probabilidades[]`**: ese arreglo trae EV negativo y pintarlo como pick sería el
+error que estamos cerrando.
+
+### Dos defectos que devolvió Lovable y corregí (commit `823ee39`)
+1. **Regresión**: cambió `FINAL_STATUSES` de `["final","post"]` a la lista completa, que
+   incluye `postponed`. El comentario del propio archivo decía *"`postponed` NO va aqui: un
+   pospuesto no tiene resultado."* Un pospuesto se habría pintado como terminado con
+   marcador. Revertido a `["final","post"]`.
+2. **Dinero en pantalla**: el momio de la casa se pintaba con 0 decimales — un 4.80 salía
+   como "5". Corregido a 2 decimales.
+
+## Leccion nueva
+34. **Dos columnas distintas pueden usar vocabularios que se parecen, y ahi vive el bug.**
+    `status` dice `in`/`live`/`final`; `minute` dice `1H`/`HT`/`84'`/`FT`. Ambas describen
+    "en que va el partido", asi que es facil escribir la lista de una y compararla contra la
+    otra. Yo lo hice en #207 y quedo mudo cuatro dias. La unica defensa es leer los valores
+    REALES de la columna antes de escribir la lista, no deducirlos del nombre.
