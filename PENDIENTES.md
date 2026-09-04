@@ -2716,3 +2716,71 @@ Regla 14 incumplida a proposito: siguen vivos el bypass de Premium y la dependen
     esa señal DESCARTA 28 de 37 legs. Quitarla habria cuadruplicado los candidatos sin
     ninguna validacion — el opuesto exacto del objetivo. Una señal mal fundada puede estar
     tapando un hueco mas grande, y quitarla primero destapa el hueco.
+
+### #214 (cont.) — MATRIZ DEFINITIVA con cobertura medida
+
+#### RETRACTACION: tres "sospechosos" no eran superficies de pick
+Marque en ambar a `v_favorito_mlb`, `v_favorito_nfl` y `nfl_tablero` por referenciar
+`espn_event_id` sin `mercado`. Revisado el esquema, **ninguna de las tres tiene mercado,
+pick, EV ni probabilidad**: son la etiqueta de "quien es favorito" y la cartelera del dia.
+Unir por evento ahi es correcto. Falsa alarma mia, retirada.
+
+#### Cobertura canonica medida, superficie por superficie
+```
+superficie                                filas   sobreviven es_pick
+v_mejores_picks_mlb  (MLB mejores)ercado      6         6      100%
+picks_premium        (FUT PRO premium)       84         4        5%
+v_motor_valor_proximos (Value/EV)           19         0        0%
+v_picks_futbol_limpio (FUT PRO limpio)       1         0        0%
+v_picks_premium      (Premium)               0         0        n/a
+v_picks_para_parlay  (Parlays)              37         0        0%
+```
+
+#### BLOQUEO ESTRUCTURAL EN NFL
+`nfl_picks_premium` tiene `mercado` y `pick` pero **NO tiene `espn_event_id`**. Sin evento
+no hay identidad posible: no se puede ni siquiera intentar el cruce canonico. Esto es
+anterior a cualquier decision de cobertura. Se documenta, no se fabrica el campo.
+
+#### MATRIZ FINAL
+| Superficie | Fuente | Identidad | Canonico | LLM decide | Fallback | Decision |
+|---|---|---|---|---|---|---|
+| El Oraculo | `v_oraculo_canonico` | ev+mercado+pick | SI | No | ninguno | **A. MIGRADA** |
+| Mejor pick / Favoritos / Accion del dia | `v_pick_canonico` | completa | SI | No | ninguno | **A. YA CANONICA** |
+| MLB radar | `v_radar_mlb` | completa | SI | No | ninguno | **A. YA CANONICA** |
+| **MLB mejores** | `v_mejores_picks_mlb` | ev+mercado+pick+EV+prob | **6 de 6** | No | (arreglado) | **A. MIGRAR — perdida CERO** |
+| `findLegColor` | edge `get-leg-colors` | ev+pick_desc exacto | n/a | No | **eliminado** | **A. ARREGLADA** |
+| `MLB.tsx` | `v_mejores_picks_mlb` | ev+mercado | n/a | No | **eliminado** | **A. ARREGLADA** |
+| FUT PRO premium | `picks_premium` | ev+mercado+pick | 4 de 84 | No | — | **B. BLOQUEAR** (95% no canonico) |
+| Value / EV | `v_motor_valor_proximos` | ev+mercado+pick | **0 de 19** | No | — | **B. BLOQUEAR** |
+| FUT PRO limpio | `v_picks_futbol_limpio` | ev+mercado+pick | 0 de 1 | No | — | **B. BLOQUEAR** |
+| Premium | `v_picks_premium` | ev+mercado+pick | 0 de 0 | **SI (ai_pro)** | — | **B. BLOQUEAR** |
+| Parlays / SGP | `v_picks_para_parlay` | ev+mercado+pick | **0 de 37** | indirecta (`nicho_roi`) | — | **D. CONGELADO** |
+| NFL | `nfl_picks_premium` | **SIN evento** | imposible | No | — | **D. BLOQUEO ESTRUCTURAL** |
+| Radar / Momentum | `momentum-opportunities.ts` | n/a | **prob del navegador** | No | — | **C. INFORMATIVA** |
+| Favoritos MLB/NFL, cartelera NFL | vistas de etiqueta | evento | n/a | No | ninguno | **NO ES SUPERFICIE DE PICK** |
+| Destacados / Tablero | rpc `destacados_del_dia`, `tablero_del_dia` | por rastrear | — | — | — | **D. PENDIENTE** |
+| Kelly frontend | `kelly-calculator.ts` | n/a | — | — | — | **D. PENDIENTE auditoria** |
+
+#### EL DIAGNOSTICO DE FONDO, EN UN NUMERO
+```
+MLB mejores ..... 100% coincide con el motor
+FUT PRO premium ...  5%
+Value/EV ..........  0%
+Parlays ...........  0%
+```
+El problema no es que existan fuentes paralelas. Es que **los universos de candidatos no
+coinciden**: cada superficie propone picks que el motor canonico no produce. MLB es la
+unica donde las dos partes hablan del mismo pick. Eso es trabajo de cobertura del motor,
+no de frontend, y es lo que hay que resolver antes de tocar el modelo.
+
+#### NO SE DESPLIEGA
+`findLegColor` y `MLB.tsx` estan en preview (commit Lovable `47b2241`, `tsgo` limpio).
+**No se llamo `deploy_project`**: produccion sigue en el deployment anterior.
+Reglas 14 incumplidas a proposito: Premium y `nicho_roi` siguen vivos.
+
+## Leccion nueva
+42. **Cuando una superficie coincide 100% con el motor, no es suerte: es que comparten el
+    origen.** MLB mejores da 6 de 6 porque `v_radar_mlb` ya era canonica y las dos beben
+    del mismo motor MLB. Las que dan 0% no estan "rotas": estan alimentadas por otro motor
+    que produce picks distintos. La pregunta util no es "por que no pasa el filtro" sino
+    "de que motor viene cada universo".
