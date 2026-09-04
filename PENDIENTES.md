@@ -2063,3 +2063,92 @@ que ya sabe.
     "por evento" y la peticion era por atleta. Copiar la llave que dice la orden, en vez de
     la que usa el sistema, habria producido una tabla imposible de llenar y un torniquete
     que no aprieta nada — con la apariencia de estar resuelto.
+
+---
+
+## #209 El Oráculo atado al motor canónico. Y el intento que rompió producción
+
+### Mapa (lo que pedía el punto 1 de la orden)
+```
+/oraculo -> src/pages/OraculoPage.tsx
+              |- OraculoBanner.tsx        -> invoca edge fn oraculo-diario (LLM)
+              |                              + lee picks_recomendados_hoy
+              |- OraculoRecomendados.tsx  -> lee picks_recomendados_hoy
+              |- OraculoStats.tsx
+```
+Los DOS componentes leen la misma vista. `picks_recomendados_hoy` viene de
+`picks_recomendados_hoy_raw`, que es lo que escribe `ai_pro`.
+
+### El fallo que encontre de paso (dinero)
+`OraculoRecomendados` ya cruzaba con `v_pick_canonico`, pero **no filtraba**, y ademas
+tenia este respaldo:
+```ts
+const c = canon.get(clave(evento, pick)) ?? canonPorEvento.get(evento) ?? null;
+```
+Cuando el pick exacto NO estaba en la vista canonica, tomaba los numeros de **otro mercado
+del mismo partido** y los pintaba como si fueran de este pick.
+
+### ERROR MIO: rompi produccion 4 minutos
+Meti el `EXISTS ... v_pick_canonico` dentro de `picks_recomendados_hoy`. Resultado:
+```
+ERROR: 42P17: infinite recursion detected in rules for relation "picks_recomendados_hoy"
+```
+**`v_pick_canonico` LEE `picks_recomendados_hoy`.** Es uno de sus tres motores de entrada,
+junto con `v_picks_futbol_calibrado` y `v_picks_mlb_modelo`. Filtrar la fuente con su
+propio consumidor es un ciclo. Revertido con reversa quirurgica; verificado que la vista
+volvio a responder (12 filas, `razon` de vuelta).
+
+### La solucion correcta: aguas ABAJO, no en la fuente
+```sql
+create or replace view public.v_oraculo_canonico as
+with sugerido as (
+  select o.*, regexp_replace(lower(coalesce(o.pick_nombre,o.pick_desc,'')),'[^a-z0-9]','','g') as k
+    from public.picks_recomendados_hoy o     -- el LLM SOLO propone
+), canon as (
+  select c.*, regexp_replace(lower(coalesce(c.pick_nombre,c.pick_desc,'')),'[^a-z0-9]','','g') as k
+    from public.v_pick_canonico c
+   where c.es_pick                            -- el motor canonico DECIDE
+)
+select s.espn_event_id, s.liga, s.created_at, s.score_combinado,
+       c.arranca_en, c.mercado, c.pick_nombre, c.pick_desc, c.home, c.away, c.deporte,
+       c.probabilidad_pct, c.ev_pct, c.edge_pct, c.momio_mercado, c.momio_justo, c.casa,
+       c.nivel_ventaja, c.zona, c.explicacion_precio,
+       c.muestra_calibracion, c.calibracion_confiable,
+       c.odds_apertura, c.odds_cierre, c.clv_pct,
+       c.clasificacion, c.confianza, c.fuente, c.favorito, c.favorito_pct,
+       c.rank_en_partido, c.etiqueta_cuando,
+       NULL::text    as razon,      -- texto libre del LLM: cortado
+       NULL::text    as resumen,    -- texto libre del LLM: cortado
+       NULL::numeric as kelly_pct   -- tamano de apuesta del LLM: cortado (#170, #178)
+  from sugerido s
+  join canon c on c.espn_event_id = s.espn_event_id and c.k = s.k;
+```
+`join` interno, no `left join`: **un pick que no sobrevive no aparece.** Todos los numeros
+salen del lado canonico, que ya trae dentro el veto de ligas, el piso de muestra (#201) y
+la guarda de discrepancia de 10pp (#206).
+
+### Impacto medido hoy
+```
+sugiere el LLM ..................... 12
+sobrevive el motor canonico ......... 5   (-58%)
+texto libre vivo (razon+resumen+kelly) 0
+con numeros canonicos ............... 5
+picks_recomendados_hoy intacta ..... 12   (no se toco: la usan otros lectores)
+```
+Los 5 que pasan: Under 3.5 Eredivisie (motor_picks), ML Royals, ML Yankees, Empate
+Eredivisie, ML Athletics. Fuentes: `motor_picks` y `motor_mlb_cuantitativo`. **Ninguno de
+ai_pro**: ai_pro propone, no decide.
+
+### Frontend (enviado a Lovable, pendiente de build)
+Los 4 cambios: `.from("picks_recomendados_hoy")` -> `.from("v_oraculo_canonico")` en los dos
+componentes, borrar el fallback `canonPorEvento`, y meter `BotonAnalisisCompleto` (el mismo
+RPC `analisis_completo` de Favoritos y FUT PRO) donde antes iba "Ver razon".
+
+**Hasta que ese build salga, la pantalla sigue leyendo la vista vieja.** El corte en SQL
+esta puesto y verificado, pero no esta conectado.
+
+## Leccion nueva
+33. **Antes de filtrar una vista con otra, mira quien lee a quien.** Di por hecho que
+    `v_pick_canonico` era aguas abajo del Oraculo. Es al reves en parte: el Oraculo es
+    UNO DE SUS INSUMOS. El candado no va en la fuente, va en una vista nueva aguas abajo.
+    Un `pg_depend` de 5 segundos me habria ahorrado tirar produccion.
