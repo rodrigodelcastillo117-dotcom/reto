@@ -2414,3 +2414,80 @@ terminado.
     definia `EARLY_HIGH` para exactamente eso. Inventar una palabra nueva no habria
     "fallado": habria hecho que la red revirtiera cada cierre en silencio, y el sintoma
     seria "el early grade no sirve" en vez de "use la llave equivocada".
+
+---
+
+## #213 FASE 4.2B en curso — genealogia por superficie. NADA desplegado
+
+Regla de la fase respetada: **cero cambios matematicos**. No se toco Kelly, haircut, de-vig,
+calibracion, CLV, odds, lambdas ni umbrales. El laboratorio `lab_kelly_haircut` queda como
+estaba, sin aplicar.
+
+### CORRECCION A LO QUE REPORTE EN #211
+Dije **"cero lectores de `ai_pro` / `picks_recomendados_hoy`"**. Eso era cierto SOLO del
+frontend. Del lado de la base hay objetos que mencionan `ai_pro`. Los revise uno por uno:
+
+| Objeto | Que hace con 'ai_pro' | ¿Es fuga? |
+|---|---|---|
+| `construir_parlay_v2` | filtra `nichos_rentables_v2.fuente='ai_pro'` para leer ROI historico | **No.** Es el track record del LLM, no sus picks |
+| `get_credibilidad_pick` | igual, `nichos_rentables_v2` + `v_ligas_rentables_v2` | **No** |
+| `get_oportunidades_hoy` | igual | **No** |
+| `predecir_mlb` | falso positivo de mi regex (`ai_pro` sin comillas dentro de otra palabra) | **No** |
+| **`v_picks_premium`** | `FROM oraculo_picks_tracking WHERE fuente IN ('ai_pro','oraculo','ai_parlay')` | **SI** |
+
+### LA FUGA REAL: `v_picks_premium` -> `Premium.tsx`
+```sql
+FROM oraculo_picks_tracking opt
+WHERE opt.resultado = 'pendiente'
+  AND opt.match_date BETWEEN now() AND now() + interval '36 hours'
+  AND opt.fuente = ANY (ARRAY['ai_pro','oraculo','ai_parlay'])
+  AND opt.momio_mercado BETWEEN 1.40 AND 5.00
+  AND NOT lower(opt.pick_desc) LIKE '%corner%' ...
+```
+Los picks del LLM van directo a la pantalla Premium **sin pasar por `v_pick_canonico`**:
+sin veto de ligas, sin piso de muestra (#201), sin la guarda de discrepancia de 10pp (#206)
+y sin piso de EV. Los unicos filtros son rango de momio y exclusion de corners/tarjetas.
+
+**Ahora mismo la vista devuelve 0 filas.** El hueco es estructural, no benigno: se llena
+solo en cuanto `ai_pro` produzca un pick pendiente en las proximas 36h.
+
+### Uniones por evento sin mercado (riesgo de contaminar la card)
+Medido sobre la definicion de cada objeto: `get_partidos_hoy_top`, `nfl_tablero` y
+`v_favorito_mlb` referencian `espn_event_id` sin referenciar `mercado`. Falta rastrear si
+eso llega a pintar probabilidad/EV de un mercado distinto, o si solo listan partidos.
+
+### Matriz 1 — genealogia (parcial, lo verificado hasta ahora)
+| Superficie | Fuente | Canonico | ¿Puede revivir un pick rechazado? | Accion |
+|---|---|---|---|---|
+| El Oraculo | `v_oraculo_canonico` | **SI** | No | Cerrado (#209/#210) |
+| Mejor pick hoy | `v_pick_canonico` | **SI** | No | Ya estaba |
+| Favoritos | `v_pick_canonico` | **SI** | No | Ya estaba |
+| Accion del dia | rpc `mejor_oportunidad_hoy` | **SI** | No | Ya estaba |
+| MLB radar | `v_radar_mlb` | **SI** | No | Ya estaba |
+| **Premium** | `v_picks_premium` (ai_pro) | **NO** | **SI** | **Bloquear tras la matriz** |
+| MLB mejores | `v_mejores_picks_mlb` | NO (motor MLB) | por verificar | pendiente |
+| FUT PRO | rpc `get_cached_league_picks` | NO | por verificar | pendiente |
+| NFL | `nfl_tablero`, `v_favorito_nfl` | NO | por verificar | documentar, NO forzar |
+| Destacados/Tablero | rpc `destacados_del_dia`, `tablero_del_dia` | NO | por verificar | pendiente |
+| Parlays/SGP | `construir_parlay_v2`, `sgp_exacto`, `parlay_ev_real` | NO | separado a proposito | auditar aparte |
+
+### Matriz 2 — quien decide
+| Superficie | ¿Usa LLM? | ¿El LLM DECIDE? | Prob canonica | EV canonico |
+|---|---|---|---|---|
+| El Oraculo | propone | **No** (join interno con es_pick) | Si | Si |
+| Premium | **si** | **SI — este es el problema** | No | No |
+| construir_parlay_v2 | solo ROI historico | No | por verificar | por verificar |
+| get_credibilidad_pick | solo ROI historico | No | n/a | n/a |
+| get_oportunidades_hoy | solo ROI historico | No | por verificar | por verificar |
+
+### LO QUE FALTA ANTES DE TOCAR NADA
+El grep global del repo (6 barridos: superficies, calculo de EV en front, fallbacks con
+`[0]`/`.find()`, uniones por event_id, residuos del LLM, e invocaciones desde hooks) sigue
+corriendo. **Por la regla 14 no se despliega nada hasta cerrar la matriz.**
+
+## Leccion nueva
+38. **"Cero lectores en el frontend" no es "cero lectores".** Un grep sobre `src/` deja
+    fuera todo lo que vive dentro de vistas y RPCs. La fuga del LLM a la pantalla Premium
+    no pasa por ningun `.from("picks_recomendados_hoy")` en React: pasa por una vista que
+    lee `oraculo_picks_tracking` filtrando por `fuente='ai_pro'`. La genealogia hay que
+    rastrearla en los dos lados o no vale.
