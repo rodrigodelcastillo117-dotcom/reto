@@ -2628,3 +2628,91 @@ Sigo sin desplegar. Regla 14.
     a proposito para que la card nunca se quedara sin color. El resultado es que preferimos
     ensenar un color equivocado antes que ninguno — exactamente al reves de la regla que
     acabamos de fijar: sin correspondencia canonica, no se sustituye, se muestra vacio.
+
+---
+
+## #214 FASE 4.2C — El corte. Contrato canonico, decisiones y consecuencias medidas
+
+Matematica congelada: cero cambios a Kelly, haircut, de-vig, calibracion, CLV, odds,
+lambdas, pesos ni umbrales.
+
+### 1. CONTRATO `CanonicalPick` — con campos que YA EXISTEN
+Sale tal cual de `v_pick_canonico`. No invento ninguno:
+```
+event_id ........... espn_event_id
+sport .............. deporte
+league ............. liga
+market ............. mercado
+selection .......... pick_nombre  (pick_desc como respaldo del MISMO registro)
+line ............... embebida en el texto del pick (NO existe columna propia)  <-- CARENCIA
+probability ........ probabilidad_pct
+fair_odds .......... momio_justo
+market_odds ........ momio_mercado   (+ casa)
+ev ................. ev_pct          (+ edge_pct)
+calibration_status . calibracion_confiable, nivel_ventaja, zona
+sample_size ........ muestra_calibracion
+engine ............. fuente
+is_pick ............ es_pick
+```
+**Carencia documentada, no inventada:** no hay columna `line`. La linea vive dentro del
+texto (`"Over 2.5 Goles"`). Mientras siga asi, la identidad se cierra con
+`event_id + mercado + texto normalizado del pick`, que es lo que ya use en
+`v_oraculo_canonico`. Una columna `linea` propia queda como deuda para la fase del motor.
+
+### 2. PARLAYS — la medicion que cambia la decision
+```
+legs candidatos hoy en v_picks_para_parlay ............ 37
+pasan la puerta actual (nicho/liga ai_pro) ............  9
+  de esos, por NICHO rentable ......................... 0   <- el unico nicho no matchea nada
+  de esos, por LIGA rentable .......................... 9   <- la puerta real son 3 ligas
+vetados por 'sangrante' ...............................  2
+```
+**Quitar `nicho_roi` NO reduce candidatos: los multiplica de 9 a 37.** Hoy esa señal actua
+como filtro RESTRICTIVO. Quitarla sin poner la puerta canonica en su lugar seria abrir la
+llave, no cerrarla. Ese matiz cambia el orden de las operaciones.
+
+Y la puerta canonica, medida:
+```
+legs que existen en v_pick_canonico ............ 0 de 37
+legs que sobreviven es_pick .................... 0 de 37
+```
+Descartado que sea choque de IDs: los dos lados usan el vocabulario `401...`, y hay
+**8 eventos en comun** (33 vs 62 eventos). O sea que en esos 8 partidos compartidos el
+constructor de parlays propone picks que el motor canonico **no aprueba**.
+
+**Consecuencia honesta: aplicar la puerta canonica a parlays hoy da 0 legs y 0 parlays.**
+No es una estimacion, es el conteo. Aceptaste explicitamente menos parlays; el numero
+exacto es cero mientras las dos fuentes no coincidan.
+
+### 3. DECISIONES POR SUPERFICIE
+| Superficie | Decision | Por que |
+|---|---|---|
+| El Oraculo | **A. MIGRADA** | ya en `v_oraculo_canonico` |
+| Mejor pick / Favoritos / Accion del dia / MLB radar | **A. YA CANONICAS** | verificadas |
+| `findLegColor` | **A. ARREGLADA** | se quitan los respaldos por evento y por indice |
+| `MLB.tsx pickPorEvento` | **A. ARREGLADA** | llave evento+mercado; si hay 2 mercados no se pinta pick |
+| Premium (`v_picks_premium`) | **B. BLOQUEAR** | no mapea a ningun registro canonico; el bypass se cierra aunque hoy de 0 filas |
+| Parlays (`construir_parlay_v2`) | **D. NO TOCAR TODAVIA** | quitar `nicho_roi` ABRE la puerta de 9 a 37; y la puerta canonica da 0. Cambiarlo hoy empeora en cualquiera de las dos direcciones |
+| Radar / Momentum | **C. INFORMATIVA** | probabilidad calculada en el navegador; se le quita el lenguaje de recomendacion, no la formula |
+| Kelly frontend | pendiente de auditoria | falta confirmar si hay segunda autoridad de sizing |
+| MLB mejores / FUT PRO / NFL / Destacados / Value | **D. PENDIENTE** | falta rastreo a la UI |
+
+### 4. POR QUE PARLAYS QUEDA EN "D" Y NO EN "A"
+Es la unica superficie donde las dos alternativas empeoran el sistema hoy:
+- quitar la señal ai_pro sin reemplazo -> 9 legs pasan a 37, todos sin validar
+- poner la puerta canonica -> 0 legs, la pantalla muere entera
+
+La salida correcta no es de arquitectura sino de cobertura: que el motor canonico produzca
+picks en los mercados que el parlay usa. Eso es fase de motor, no de esta. Lo dejo
+documentado y **sin tocar**, que es distinto de dejarlo aprobado.
+
+### 5. NO SE DESPLIEGA
+Regla 14 incumplida a proposito: siguen vivos el bypass de Premium y la dependencia de
+`nicho_roi`. Commit y push si; deployment no.
+
+## Leccion nueva
+41. **Antes de quitar un filtro sucio, mide en que direccion filtra.** Iba a quitar
+    `nicho_roi` porque su origen es un LLM y su muestra es mala. La medicion dice que hoy
+    esa señal DESCARTA 28 de 37 legs. Quitarla habria cuadruplicado los candidatos sin
+    ninguna validacion — el opuesto exacto del objetivo. Una señal mal fundada puede estar
+    tapando un hueco mas grande, y quitarla primero destapa el hueco.
