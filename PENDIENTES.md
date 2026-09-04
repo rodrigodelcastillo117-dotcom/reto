@@ -2294,3 +2294,77 @@ sigma de 2.5 pp, este backtest no puede distinguir un yield de +4% de uno de 0%.
     plano la diferencia real era de 2.5 pp, dentro del ruido. Cuando el drawdown se acerca
     a 100%, el orden de las apuestas domina al tamano de la ventaja: hay que medir sin
     compuesto ANTES de leer cualquier comparacion de banca final.
+
+---
+
+## #212 El pick de Bublik ya se gano y sigue pendiente. NO existe el "early grade"
+
+### Tu matematica es correcta
+```
+US Open = Grand Slam = al mejor de 5. El ganador llega a 3 sets.
+Ahora:  Tommy Paul 1 - 2 Alexander Bublik   (status=live, 4o set)
+Paul necesita 2 sets mas -> el peor final posible para Bublik es 3-2.
+Con 2 sets, el margen maximo en contra es 1.  Y 1 < 1.5.
+=> "Bublik +1.5 Sets" ES IMPOSIBLE DE PERDER. Ganancia bloqueada: +$475.53
+```
+Verificado contra `live_scores` (home_sets=1, away_sets=2, status='live').
+
+### El diagnostico NO es el que pensabas, y es peor
+No es que el early grade ignore que los Grand Slams son a 5 sets.
+**Es que NO EXISTE ningun early grade.** `autocalificar_picks_pendientes` (cron 118,
+cada 2 minutos) tiene esta linea como primer filtro del bucle:
+
+```sql
+IF r.status IS DISTINCT FROM 'final' THEN CONTINUE; END IF;
+```
+
+Un pick matematicamente cerrado NO se puede calificar hasta que ESPN diga `final`.
+No hay codigo que evalue "ya no puede perder". El pick se queda pendiente aunque el
+resultado sea imposible de revertir.
+
+### Lo que SI existe y no esta conectado
+`sets_coherentes_tenis(p_liga, p_status, p_home_sets, p_away_sets)` ya lleva la regla
+escrita, del #120:
+> ATP singles = al mejor de 5 -> el ganador SIEMPRE llega a 3 sets.
+> WTA singles y dobles = al mejor de 3 -> el ganador llega a 2.
+
+Pero solo corre cuando `status in ('final','post')`: es una guarda de dato sucio, no un
+calificador. El juez unico del best-of-5 ya existe; nadie lo usa para calificar.
+
+### Regla general del cierre anticipado con handicap de sets
+Con `+1.5`, la apuesta queda bloqueada en cuanto el jugador alcanza `sets_para_ganar - 1`:
+```
+best-of-5 (ATP singles):  2 sets  -> bloqueado
+best-of-3 (WTA, dobles):  1 set   -> bloqueado
+```
+
+### DIFF PROPUESTO — NO APLICADO (toca calificacion de dinero)
+```diff
+ autocalificar_picks_pendientes()
+-    IF r.status IS DISTINCT FROM 'final' THEN CONTINUE; END IF;
++    -- Cierre anticipado SOLO cuando el resultado es matematicamente imposible
++    -- de revertir. Reusa el juez unico del best-of-5 (sets_coherentes_tenis, #120).
++    IF r.status IS DISTINCT FROM 'final' THEN
++      v_bloqueado := public.pick_ya_imposible_de_perder(
++        r.pick_desc, r.liga, r.deporte, r.home_team, r.away_team,
++        r.home_sets, r.away_sets);
++      IF v_bloqueado IS NOT TRUE THEN CONTINUE; END IF;
++      v_eval := 'ganado';
++    ELSE
+       ... evaluacion normal ...
++    END IF;
+```
+mas una funcion nueva `pick_ya_imposible_de_perder()` que, por ahora, SOLO cubre
+handicap de sets en tenis y devuelve NULL en todo lo demas. Alcance minimo a proposito:
+un cierre anticipado mal hecho paga dinero que todavia no se gana.
+
+### Falta tu luz verde
+No lo apliqué ni marqué tu pick a mano. Mientras tanto, el lapiz de la tarjeta
+("Editar resultado manual") lo cierra en $475.53 sin esperar a ESPN.
+
+## Leccion nueva
+36. **"La funcion X no tiene la inteligencia Y" puede esconder que la funcion X no
+    existe.** Buscar por que el early grade no sabia de Grand Slams habria llevado a
+    parchear un calificador que nunca corre en vivo. La pregunta correcta no era "que le
+    falta saber" sino "cuando corre": la respuesta era `status = 'final'`, y ahi se acaba
+    la discusion sobre sets.
