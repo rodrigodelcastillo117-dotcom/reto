@@ -3259,3 +3259,27 @@ normal    5%  -> $356.47
 RETO 13M 15%  -> $1,069.40
 ```
 Se cambian con un UPDATE a `config_staking`, sin tocar codigo.
+
+### DATO DEL USUARIO QUE CAMBIA LA PRIORIDAD (4-sep-2026)
+"Nadie lo sube asi, lo suben por scan bet slip."
+
+Consecuencias, dichas sin adorno:
+
+1. **La puerta que avisa ANTES vive en la pantalla que nadie usa.** `revisar_apuesta`,
+   el techo en pantalla, la razon escrita cuando el motor dice NO APOSTAR: todo eso esta
+   en `AddPickForm`. El camino real es `SmartUploadButton`, que rebota DESPUES.
+2. **Un boleto escaneado es una apuesta YA PAGADA.** En el flujo real el techo nunca
+   puede impedir un sobregiro: el dinero ya salio cuando la app se entera. Lo que hace
+   hoy es obligar a declararlo y estampar el techo. Eso vale, pero es un ACTA, no un freno.
+3. **Un freno preventivo de verdad no va en el registro.** Va en las pantallas donde se
+   elige el pick, antes de ir a la casa. Es otro diseno, no una variante de este.
+
+Ofrecido y RECHAZADO por el usuario por ahora: meter `revisar_apuesta` en
+`SmartUploadButton` para que el aviso salga en la pantalla de confirmacion, con el
+boleto enfrente. Queda disponible, no urgente.
+
+## Leccion nueva
+51. **Preguntar quien usa la pantalla, no solo que hace la pantalla.** Audite las cuatro
+    rutas de escritura, medi su cobertura y puse el candado en todas. Lo que no pregunte
+    es cual usa el usuario de verdad. La proteccion mas fina quedo en el camino muerto y
+    la mas tosca en el unico vivo. El mapa del codigo no es el mapa del uso.
