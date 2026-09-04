@@ -2967,3 +2967,158 @@ Produccion sigue sin tocar: no se ha llamado `deploy_project` en toda la fase.
     Pero los dos usuarios activos no tienen fila en `limites_usuario`, asi que la funcion
     retorna `permitir=true` en la primera linea. La cobertura de un guardia depende del
     DATO que lo habilita, no de su codigo. Siempre contar las filas.
+
+---
+
+# #207 FASE 4.2D — AUTORIDAD UNICA DE SIZING (4-sep-2026)
+
+## La medicion que cambio el diseno
+
+Antes de escribir una linea, tres numeros:
+
+1. **CERO funciones SQL insertan en `picks` o `parlays`.** El unico escritor es el
+   cliente via PostgREST. Eso convierte un `BEFORE INSERT` en el punto de
+   estrangulamiento COMPLETO: no hay ruta interna que lo esquive.
+2. **`picks` tiene 34 filas, `parlays` 51.** Es el libro personal de apuestas, no un
+   almacen masivo. El radio de impacto de un candado es chico y auditable entero.
+3. **`picks` NO tiene columna de probabilidad.** Un trigger no puede recalcular Kelly
+   desde la fila. Lo que SI puede verificar siempre es el techo, que solo necesita
+   bankroll y politica. Por eso el candado es de TECHO, no de Kelly.
+
+Y el numero que obligo a preguntar antes de desplegar: con el tope por tasa base de
+#191 vivo, `kelly_stake` solo autoriza si el precio compensa.
+
+| mercado | momio minimo que autoriza | tope de prob |
+|---|---|---|
+| Moneyline / Ganador | 2.50 | 42.9% |
+| Over/Under | 2.25 | 46.8% |
+| Handicap | 2.00 | 52.0% |
+| BTTS Si | 1.90 | 56.4% |
+
+Convertir `NO APOSTAR` en bloqueo duro habria dejado **imposible cualquier Moneyline
+por debajo de momio 2.50**. Tres de las cuatro apuestas reales del RETO 13M por
+encima del techo iban a 1.55, 1.73 y 1.90.
+
+## Las dos decisiones del auditor
+1. **El techo bloquea duro. `NO APOSTAR` no bloquea, pero exige razon escrita.**
+2. **El RETO 13M lleva su propio techo explicito**, no una excepcion al candado.
+
+## Lo construido
+
+### `config_staking.stake_max_pct_reto` — COLUMNA NUEVA
+Sembrada en **15%** para `rodelcast`. No es una medicion, es una POLITICA: las 4
+apuestas reales del RETO por encima del 5% fueron 39%, 13%, 11% y 12% del bankroll.
+15% cubre tres y deja fuera la de 39%, que es la unica atipica. Se cambia con un
+UPDATE, no tocando codigo. NULL = el RETO hereda el techo general; nunca queda sin techo.
+
+### `public.stake_techo(p_apodo, p_es_reto)` — FUENTE UNICA DEL TECHO
+```
+normal      -> {techo_pct: 5,  techo_monto: 356.47,  bankroll: 7129.36}
+reto        -> {techo_pct: 15, techo_monto: 1069.40, bankroll: 7129.36}
+sin config  -> {techo_pct: 5,  techo_monto: 220.41}   <- el default PROTEGE, nunca abre
+```
+La leen el trigger y la RPC. Si vuelve a haber dos formas de calcular el techo,
+vuelve a haber dos autoridades.
+
+### `public.tg_autoridad_stake()` + trigger `zzz_autoridad_stake` — EL CANDADO
+`BEFORE INSERT OR UPDATE OF apuesta` en `picks` y `parlays`.
+- Lee la fila con `to_jsonb(NEW)` a proposito: **`parlays` no tiene `es_prueba`**.
+  Asi una sola funcion sirve a las dos tablas sin inventar columnas que nadie llena.
+- Exime `es_prueba` (no es dinero) y `es_pata_parlay` (no es apuesta independiente).
+- En UPDATE solo revisa si `apuesta` cambio: calificar, corregir marcador o cerrar un
+  cash out no vuelven a pasar por aqui.
+- Nombre con `zzz` a proposito: los triggers corren en orden alfabetico y este tiene
+  que ver el `apodo` ya asignado por `trg_apodo_dueno_picks`.
+
+### `public.revisar_apuesta(...)` — EL DIFF QUE IMPORTA
+```diff
+-  IF (v_kelly->>'veredicto') IN ('BLOQUEADO','NO APOSTAR') THEN
+-    IF nivel = 'ok' THEN nivel := 'advertencia'; END IF;
+-  ELSIF (v_kelly->>'veredicto') = 'ADVERTENCIA' AND nivel='ok' THEN nivel := 'advertencia'; END IF;
++  v_techo       := public.stake_techo(p_apodo, p_es_reto);
++  v_techo_monto := (v_techo->>'techo_monto')::numeric;
++  IF p_stake > v_techo_monto THEN
++    nivel := 'bloqueado';          -- TAMANO: bloquea. No hay boton.
++  END IF;
++  IF (v_kelly->>'veredicto') = 'NO APOSTAR' THEN
++    v_requiere_razon := true;      -- PRECIO: no bloquea, exige razon escrita.
++    IF nivel = 'ok' THEN nivel := 'advertencia'; END IF;
++  ELSIF (v_kelly->>'veredicto') IN ('ADVERTENCIA','BLOQUEADO') AND nivel='ok' THEN
++    nivel := 'advertencia';
++  END IF;
+```
+Se hizo `DROP` antes del `CREATE` a proposito: agregar un parametro con default a un
+`create or replace` **no reemplaza, crea una SOBRECARGA**, y con dos versiones vivas
+volveria a haber dos autoridades. Las llamadas de 7 argumentos del frontend siguen
+resolviendo aqui porque `p_es_reto` tiene default (verificado).
+
+El techo sale de `stake_techo()`, NO del que calcula `kelly_stake` por dentro:
+`kelly_stake` no sabe del RETO y su 5% bloquearia apuestas que la politica si autoriza.
+
+## Pruebas — 7 escenarios, ninguna fila real escrita
+Cada intento corrio dentro de una subtransaccion que se deshace sola. Verificado
+despues: `picks` sigue en 34, `parlays` en 51, cero filas de prueba.
+
+| # | caso | esperado | resultado |
+|---|---|---|---|
+| 1 | **$535 normal (techo $356.47)** | rechazado | **RECHAZADO** |
+| 2 | $400 > autorizado | rechazado | RECHAZADO |
+| 3 | $300 dentro del techo | pasa | paso |
+| 4 | RETO $900 (techo reto $1,069.40) | pasa | paso |
+| 5 | RETO $3,774 (la real de Cerundolo) | rechazado | RECHAZADO |
+| 6 | `es_prueba` $9,420 | pasa (exenta) | paso |
+| 7 | parlay $10,000 | rechazado | RECHAZADO |
+
+Y en la RPC:
+
+| caso | nivel | permitir | requiere_razon |
+|---|---|---|---|
+| 7 args (llamada actual del front) $535 | **bloqueado** | **false** | true |
+| RETO $900 | advertencia | true | true |
+| RETO $1,500 | **bloqueado** | **false** | true |
+| $200 con NO APOSTAR de precio | advertencia | true | true |
+
+`permitir=false` hace que `StakeGateModal` no pinte el boton de confirmar. El bypass
+de "Apostar de todos modos" deja de existir para un veto de tamano.
+
+## Clasificacion de autoridades — exactamente UNA A
+
+| pieza | clase | por que |
+|---|---|---|
+| **`stake_techo()`** | **A — autoridad efectiva** | unica fuente del techo; la leen el trigger y la RPC |
+| `tg_autoridad_stake` | A (ejecutor de A) | aplica el techo de `stake_techo`, no calcula el suyo |
+| `kelly_stake` | B — recomendacion backend | propone monto y veredicto de precio; ya no bloquea por si solo |
+| `revisar_apuesta` | B (mensajero) | traduce; su unico bloqueo de tamano viene de `stake_techo` |
+| `calculateKelly` (navegador) | **B — preview** | pierde el boton "Usar"; queda etiquetada "Estimacion" |
+| `kellyFraction` (AiCopilotBar) | B — preview | solo pinta; etiquetada "Estimacion" |
+| `tamano_apuesta` (CalculadoraMonto) | B — backend | el monto nace en la base; ruta correcta desde antes |
+| `revisar_tamano_apuesta` | C — informativa | freno que solo informa |
+
+## `verificar_limites` — la respuesta, sin inventar politica
+`IF l.apodo IS NULL THEN RETURN permitir=true` es correcto para lo que esa funcion
+mide: **limites personales autoimpuestos**. Ausencia de fila significa "no me puse un
+limite personal", no "no hay proteccion". Lo que estaba mal era que **la proteccion de
+tamano dependia de esa tabla**, y los dos usuarios activos (`el dos`, `rodelcast`) no
+tienen fila; la unica es de `rongo`, que esta inactivo.
+
+Ya no depende: el techo vive en `config_staking` + trigger, que aplican SIEMPRE, con o
+sin fila en `limites_usuario`. No se cambio `verificar_limites`. No hacia falta.
+
+## Deuda que queda marcada
+- **`parlays` no tiene `es_prueba`.** Hoy toda fila de parlay se trata como dinero real.
+  Es el lado seguro, pero es asimetrico con `picks`.
+- **Un cliente que se salte `revisar_apuesta` sigue llegando hasta el techo.** El trigger
+  lo frena en el techo, pero no puede exigir la razon escrita ni el veredicto de precio,
+  porque `picks` no guarda probabilidad. Cerrarlo del todo pide un ticket de
+  autorizacion guardado. NO se construyo: pediria censar las rutas de escritura de las
+  132 edge functions primero.
+- **`linea` estructurada al contrato `CanonicalPick`**, como pidio el auditor.
+
+## Lecciones nuevas
+46. **Preguntar el numero, no solo la regla.** "BLOQUEADO nunca se degrada" suena
+    obviamente correcto hasta que se mide que dejaria imposible todo Moneyline bajo
+    momio 2.50. La regla era buena; el alcance no. Medir la consecuencia ANTES de
+    aplicar una orden correcta es parte de cumplirla.
+47. **Un techo agresivo escrito es mejor que ningun techo.** El RETO 13M es agresivo a
+    proposito. La respuesta no era eximirlo del candado sino darle un numero propio,
+    alto y visible en `config_staking`. Una excepcion se olvida; un numero se audita.
