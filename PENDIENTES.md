@@ -2491,3 +2491,69 @@ corriendo. **Por la regla 14 no se despliega nada hasta cerrar la matriz.**
     no pasa por ningun `.from("picks_recomendados_hoy")` en React: pasa por una vista que
     lee `oraculo_picks_tracking` filtrando por `fuente='ai_pro'`. La genealogia hay que
     rastrearla en los dos lados o no vale.
+
+### #213 (cont.) — Tu sospecha del ROI indirecto era correcta. Y hay un segundo hueco, VIVO
+
+Pediste demostrar qué función cumple `nichos_rentables_v2.fuente='ai_pro'` en
+`construir_parlay_v2`. **No es estadistica de adorno: filtra y ordena.**
+
+```sql
+-- 1. FILTRO de elegibilidad (excluye legs del parlay):
+WHERE nicho_sangrante_roi IS NULL
+  AND (nicho_roi IS NOT NULL OR liga_roi IS NOT NULL)
+
+-- 2. RANKING (decide cuales entran y en que orden):
+ORDER BY CASE WHEN nicho_roi IS NOT NULL THEN 1 ELSE 2 END,
+         COALESCE(nicho_roi, liga_roi) DESC NULLS LAST,
+         ev_pct DESC          -- <- el EV es el TERCER criterio
+```
+`get_oportunidades_hoy` repite el mismo patron (nicho en WHERE y en ORDER BY).
+
+Asi que mi "**No es fuga**" de hace un rato estaba mal. Corregido: el LLM no escoge el leg,
+pero **su ROI historico decide que legs son elegibles y en que orden**, por encima del EV.
+
+### Y el tamano de muestra que sostiene ese filtro (#179 otra vez)
+`nichos_rentables_v2` con `fuente='ai_pro'`:
+```
+veredicto      nichos   n_min   n_mediana   n_max   con n<20
+rentable ....... 1        36        36        36       0
+sangrante ...... 5         9        40       211       2
+marginal ....... 7         9        11       108       6
+sin_muestra .... 6         5         7         7       6
+```
+`nicho_roi` solo existe cuando el veredicto es `rentable`: **hay UN solo nicho en toda la
+tabla**. La capa A del ranking descansa sobre n=36. Y el veto por `sangrante` incluye
+nichos juzgados con n=9.
+
+El respaldo real es `v_ligas_rentables_v2`, que tiene **3 ligas rentables** (n=22, 40, 179).
+O sea que la puerta efectiva es "la liga es una de esas 3".
+
+### SEGUNDO HUECO, y este SI esta vivo
+```
+oraculo_picks_tracking  (LLM)
+        v
+v_picks_para_parlay     -> pasa_por_canonico = FALSE,  lee_llm = TRUE
+        v
+construir_parlay_v2  ->  Dashboard.tsx  y  ParlayDelDia.tsx
+```
+**`v_picks_para_parlay` devuelve 37 legs candidatos AHORA MISMO.**
+
+Comparado con Premium: Premium es una puerta trasera cerrada (0 filas hoy). El constructor
+de parlays es una puerta principal abierta, con 37 legs pasando por ella, y tampoco toca
+`v_pick_canonico`.
+
+### Estado corregido
+| Superficie | Estado | Nota |
+|---|---|---|
+| Premium | ROJO | bypass estructural, 0 filas hoy |
+| **Parlays / SGP** | **ROJO** | bypass estructural, **37 legs vivos** |
+| Oraculo, Mejor pick, Favoritos, Accion del dia, MLB radar | VERDE | ya verificados |
+| MLB mejores, MLB prediccion, FUT PRO, NFL, Destacados, Radar live, Value/EV | AMARILLO | el grep global sigue corriendo |
+
+Sigo sin desplegar nada. Regla 14.
+
+## Leccion nueva
+39. **Un dato "solo historico" deja de serlo en cuanto aparece en un WHERE o un ORDER BY.**
+    Yo mismo lo clasifique como "track record, no es fuga" mirando unicamente el SELECT.
+    La pregunta correcta no es de donde sale el numero, sino en que clausula termina: en el
+    SELECT informa, en el WHERE veta, y en el ORDER BY decide.
