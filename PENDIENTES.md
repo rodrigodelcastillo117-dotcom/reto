@@ -2368,3 +2368,49 @@ No lo apliqué ni marqué tu pick a mano. Mientras tanto, el lapiz de la tarjeta
     parchear un calificador que nunca corre en vivo. La pregunta correcta no era "que le
     falta saber" sino "cuando corre": la respuesta era `status = 'final'`, y ahi se acaba
     la discusion sobre sets.
+
+### #212 DESPLEGADO — tu pick esta cerrado en $475.53
+
+```
+V1 resultado ................ ganado
+V2 ganancia_neta ............ 475.53
+V3 marcador ................. 1-2
+V4 marca .................... EARLY_HIGH
+V5 pendientes que quedan .... 0
+V6 otros cerrados por error . 0
+```
+
+**Dos errores mios en el camino, los dos cazados por medicion antes de causar dano:**
+
+**1) La liga que decide no era la que yo leia.** El juez recibia `picks.liga`, que trae
+`'ATP Tour'` a secas. Mi regla decia "ATP y no es Grand Slam -> best-of-3", y con
+`'ATP Tour'` concluia best-of-3 en un partido del US Open. Devolvia NULL y no cerraba nada.
+El nombre del torneo vive en `live_scores.liga` (`'ATP — US Open'`), y
+`buscar_marcador_v2` **no devuelve liga**. Arreglo: ya no se deduce best-of-3 por descarte.
+Solo se baja a 2 sets con certeza POSITIVA (WTA o dobles); todo lo demas asume best-of-5,
+que es el lado seguro porque pide MAS sets para declarar bloqueado. Costo: se dejan pasar
+cierres legitimos de ATP 250. Beneficio: no se paga nada temprano.
+
+**2) Ya existia una red de seguridad y casi la rodeo.** El trigger
+`protect_picks_premature_grading` revirtio mi primera escritura y dejo el pick en
+`BLOQUEADO_PREMATURO` con `ganancia_neta = NULL`. Ese trigger YA tenia la puerta correcta:
+```sql
+IF NOT v_is_final THEN
+  IF NEW.confianza_calificacion = 'EARLY_HIGH' THEN RETURN NEW; END IF;
+```
+`EARLY_HIGH` es la unica palabra que la red acepta para un cierre en vivo. Yo habia
+inventado `AUTO_ANTICIPADO:`. **La red no se debilito ni se rodeo: se uso el contrato que
+ya existia.**
+
+### Mesa de pruebas del juez: 12 de 12
+Cierra: tu caso con liga generica y con liga rica, WTA con 1 set, dobles con 1 set.
+NO cierra: 1 solo set en Grand Slam, ATP 250 con 1 set (lado seguro), linea entera +2
+(push posible), Over/Under de juegos, futbol, sets nulos, nombre ambiguo, partido ya
+terminado.
+
+## Leccion nueva
+37. **Antes de abrir una puerta nueva, busca si ya hay una cerradura con llave.** Iba a
+    escribir mi propio marcador de cierre anticipado cuando el trigger de proteccion ya
+    definia `EARLY_HIGH` para exactamente eso. Inventar una palabra nueva no habria
+    "fallado": habria hecho que la red revirtiera cada cierre en silencio, y el sintoma
+    seria "el early grade no sirve" en vez de "use la llave equivocada".
