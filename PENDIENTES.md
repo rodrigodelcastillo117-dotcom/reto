@@ -2197,3 +2197,100 @@ error que estamos cerrando.
     "en que va el partido", asi que es facil escribir la lista de una y compararla contra la
     otra. Yo lo hice en #207 y quedo mudo cuatro dias. La unica defensa es leer los valores
     REALES de la columna antes de escribir la lista, no deducirlos del nombre.
+
+---
+
+## #211 Matriz de cobertura de superficies + laboratorio de Kelly
+
+### 4.1 — MATRIZ (grep del repo completo + pg_depend, no deduccion)
+
+**Hallazgo principal: CERO lectores de `picks_recomendados_hoy`, `picks_recomendados_hoy_raw`
+o `ai_pro` en todo `src/`.** La fuga que buscabamos ya no existe en el frontend.
+
+| Superficie | Componente | Fuente hoy | ¿Canónico? | ¿Fallback? | Acción |
+|---|---|---|---|---|---|
+| El Oráculo | `OraculoRecomendados` + `OraculoBanner` | `v_oraculo_canonico` | **SÍ** | No (borrado) | Conectado y verificado |
+| Mejor pick hoy | `MejorPickHoy` | `v_pick_canonico` | **SÍ** | No | Ya estaba |
+| Favoritos (probabilidad) | `PicksProbabilidadFavoritos` | `v_pick_canonico` | **SÍ** | No | Ya estaba |
+| Acción del día | `AccionDelDia` | rpc `mejor_oportunidad_hoy` | **SÍ** | No | Ya estaba |
+| MLB (radar) | `MLB.tsx` | `v_radar_mlb` | **SÍ** | No | Ya estaba |
+| MLB (mejores) | `MejoresPicksMlb` | `v_mejores_picks_mlb`, `v_favorito_mlb` | NO | — | **Pendiente** |
+| MLB (predicción) | `use-mlb-prediccion` | rpc `predecir_mlb` | NO | — | **Pendiente** |
+| FUT PRO | `Fut.tsx` | rpc `get_cached_league_picks` | NO | — | **Pendiente** |
+| FUT PRO (limpio) | `PicksFutbolLimpio` | `v_picks_futbol_limpio` | NO | — | **Pendiente** |
+| FUT PRO (premium) | `PremiumPicksSection` | `picks_premium` | NO | — | **Pendiente** |
+| NFL | `NFL.tsx` | `nfl_tablero`, `v_favorito_nfl`, rpc `nfl_dossier` | NO | — | **Pendiente** |
+| NFL (premium) | `NflPremiumPicks` | `nfl_picks_premium` | NO | — | **Pendiente** |
+| NBA / Tenis | — | no hay superficie de picks | n/a | n/a | Nada que redirigir |
+| Destacados / Tablero | `Hoy.tsx`, `Tablero.tsx` | rpc `destacados_del_dia`, `tablero_del_dia` | NO | — | **Pendiente** |
+| Radar en vivo | `RadarEnVivo` | edge `radar-en-vivo` | NO | — | **Pendiente** |
+| Value / EV | `MotorValueSection` | `v_motor_valor_proximos` | NO | — | **Pendiente** |
+| Premium | `Premium.tsx` | `v_picks_premium` | NO | — | **Pendiente** |
+| Parlays / SGP | `Dashboard`, `SgpExactPanel` | rpc `construir_parlay_v2`, `sgp_exacto`, `parlay_ev_real` | NO | — | **Pendiente** |
+
+### POR QUE NO REDIRIGI LAS 12 PENDIENTES HOY
+`v_pick_canonico`, para partidos futuros, contiene EXACTAMENTE esto:
+```
+baseball / motor_mlb_cuantitativo .... 180 filas,  8 picks
+soccer   / motor_futbol_calibrado .... 120 filas,  8 picks
+soccer   / motor_picks ................. 1 fila,   1 pick
+```
+**No hay una sola fila de NFL, NBA ni tenis.** Redirigir `nfl_tablero` o `NflPremiumPicks`
+a la vista canonica hoy deja la pestaña NFL EN BLANCO cuatro dias antes del arranque del
+10-sep. Eso viola "nunca quitar funcionalidad que ya sirve". El orden correcto es: primero
+que el motor canonico PRODUZCA NFL (#118), despues se redirige la pantalla.
+
+### 4.2 — LABORATORIO KELLY (tabla `lab_kelly_haircut`, NADA aplicado a produccion)
+
+**Primer hallazgo, bloqueante: `features_json` NO tiene N de muestra en ninguna de sus 6
+variantes.** Claves reales: clasificacion, confianza, confianza_desglose, edge,
+edge_calculado, ev_estimado, mercado, momio_ia, momio_justo, momio_mercado,
+momio_verificado, pick, prob, prob_source, razon, kelly_pct, score_compuesto. La formula
+`min(1, sqrt(N/300))` no tiene N que leer en el historico.
+
+N reconstruida sin mirar al futuro: **picks calificados previos del mismo bucket
+(liga, mercado)**. Disponible al 100%. La N por profundidad de equipo NO sirve: el 72% de
+la muestra es MLB y no cruza con `historico_partidos_espn` (que es de futbol).
+
+Muestra: 2,862 picks calificados (13-abr a 4-sep), 2,395 con Kelly > 0. N mediana 317.
+
+**Simulacion compuesta (la que pediste):**
+```
+                                banca_final   ROI      DrawdownMax   yield
+BASELINE (Kelly tope 5%)          2.4881    +148.81%     99.43%      0.09%
+HAIRCUT  min(1,sqrt(N/300))       0.5305     -46.95%     97.72%     -0.26%
+```
+**Estos numeros NO se pueden usar para decidir.** Un drawdown de 99.43% con ROI +148%
+describe una curva que se disparo y se desplomo: la diferencia de banca es camino
+compuesto, no ventaja. El yield de ambos es practicamente cero.
+
+**Simulacion a monto plano (aisla el sizing del compuesto) + barrido de 6 denominadores:**
+```
+ den    yield_base   yield_haircut   delta_pp   exposicion
+  50      4.128%        1.352%        -2.776      80.1%
+ 100      4.128%        1.775%        -2.353      75.1%
+ 200      4.128%        1.949%        -2.179      69.5%
+ 300      4.128%        1.630%        -2.498      65.5%
+ 500      4.128%        1.212%        -2.916      59.8%
+1000      4.128%        1.157%        -2.972      48.4%
+```
+El haircut sale peor en los 6. Pero el veredicto real es el error estandar:
+```
+yield baseline  = +4.128%  ±2.484 pp   ->  t = 1.66
+yield haircut   = +1.630%  ±2.662 pp   ->  t = 0.61
+```
+**Ninguno de los dos es distinguible de cero.** t=1.66 no llega a significancia, y la
+diferencia de -2.5 pp cabe dentro de un error estandar de cualquiera de los dos.
+
+### VEREDICTO
+**El haircut NO se despliega**, por tu propia regla de la Fase 4. Pero la razon honesta no
+es "el haircut es peor": es **"el instrumento no alcanza a medirlo"**. Con n=2,395 y
+sigma de 2.5 pp, este backtest no puede distinguir un yield de +4% de uno de 0%. Decir
+"el baseline gana" seria el mismo error de muestra chica que venimos cazando desde #106.
+
+## Leccion nueva
+35. **Un ROI compuesto con drawdown de 99% no es un resultado, es un artefacto.** La
+    primera corrida daba +148.81% vs -46.95% y parecia un veredicto aplastante. A monto
+    plano la diferencia real era de 2.5 pp, dentro del ruido. Cuando el drawdown se acerca
+    a 100%, el orden de las apuestas domina al tamano de la ventaja: hay que medir sin
+    compuesto ANTES de leer cualquier comparacion de banca final.
