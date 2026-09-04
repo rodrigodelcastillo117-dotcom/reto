@@ -1974,3 +1974,92 @@ C1/C2/C3 los tres crons activos ... true    M4 memoria sigue guardandose .. true
     Buscar escritores/lectores solo en `pg_proc` deja fuera todo el codigo de las edge
     functions. Es la misma familia de error que `push_log` (#155): confundir "no encuentro
     quien lo use" con "nadie lo usa".
+
+---
+
+## #208 Memoria de los 404 de ESPN. La llave NO era el evento
+
+El 43% del trafico saliente eran 404s identicos. Medido en 2 horas:
+
+```
+200 ....... 918
+404 ....... 703   <- {"error":{"message":"No stats found.","code":404}}
+429 ........ 10   <- la consecuencia: cuota saturada
+```
+
+### Correccion a la orden: la llave
+La orden pedia una tabla `eventos_sin_stats_jugador (evento_id TEXT PRIMARY KEY)`.
+**La URL de ESPN no lleva evento**:
+
+```
+sports.core.api.espn.com/v2/sports/soccer/leagues/{liga}/seasons/{temporada}
+                        /types/1/athletes/{jugador_id}/statistics
+```
+
+Una lista negra por `evento_id` seria una columna que nada puede llenar — la enfermedad
+del BTTS otra vez. La llave correcta es **(jugador_id, liga, temporada)**.
+
+### El bucle, exacto
+`futbol_jugador_recoger()` solo miraba `status_code = 200` y hacia `continue` en todo lo
+demas **sin borrar la fila de pendiente**. El 404 no dejaba huella. Como el jugador nunca
+llegaba a `futbol_jugador_temporada`, la condicion `t.jugador_id is null` seguia siendo
+verdadera para siempre, y `futbol_jugador_pedir` lo volvia a pedir cada 10 minutos.
+
+```
+candidatos elegibles ......... 24,382
+de esos, con stats cargadas ... 1,352
+pendientes al momento del corte . 703  <- las 703 eran 404. Cero en vuelo.
+```
+
+### Cambios (1 tabla + 2 funciones)
+```sql
+create table public.futbol_jugador_sin_stats (
+  jugador_id text, liga text, temporada integer,
+  visto_404_at timestamptz default now(), veces integer default 1,
+  reintentar_despues timestamptz default now() + interval '30 days',
+  primary key (jugador_id, liga, temporada));
+```
+```diff
+ futbol_jugador_recoger()
+-  select content::jsonb into j from net._http_response where id=p.req_id and status_code=200;
+-  if j is null or j->'splits' is null then continue; end if;
++  select r.status_code, r.content into v_status, v_body from net._http_response r where r.id=p.req_id;
++  if not found then continue; end if;                    -- sigue en vuelo, no se toca
++  if v_status = 404 and v_body like '%No stats found%' then
++    insert into futbol_jugador_sin_stats ... on conflict do update set veces = veces+1 ...;
++    delete from futbol_jugador_pendiente where req_id = p.req_id;
++    continue;
++  end if;
++  if v_status <> 200 then continue; end if;              -- 5xx/429 = transitorio, NO se anota
+```
+```diff
+ futbol_jugador_pedir()
+        and not exists (select 1 from futbol_jugador_pendiente p ...)
++       and not exists (select 1 from futbol_jugador_sin_stats z
++                        where z.jugador_id = v.jugador_id and z.liga = v.liga
++                          and z.temporada = v_temp and z.reintentar_despues > now())
+```
+
+**La lista caduca a los 30 dias a proposito.** Un jugador que debuta en octubre no tiene
+stats en septiembre; una lista negra permanente lo dejaria fuera toda la temporada. Con el
+reintento se pide 1 vez al mes en vez de 144 veces al dia.
+
+### Verificacion
+```
+V1 anotados sin stats ........ 700   (703 pendientes, 3 eran req_id repetidos de la misma llave)
+V2 pendientes que quedaron ..... 0
+V3 stats reales conservadas .. 1,202 (la funcion nunca borra de futbol_jugador_temporada)
+V4 filtro presente en pedir .. true
+V5 URL de ESPN intacta ....... true
+V6 pozo elegible ......... 23,681   (era 24,382)
+```
+
+El pozo baja 701 de golpe y sigue bajando ~360/hora conforme la memoria se llena, porque el
+cron cataloga 60 jugadores cada 10 minutos. No es un apagon: es que deja de preguntar lo
+que ya sabe.
+
+## Leccion nueva
+32. **Antes de crear una lista negra, lee la URL que se esta llamando.** La orden decia
+    "por evento" y la peticion era por atleta. Copiar la llave que dice la orden, en vez de
+    la que usa el sistema, habria producido una tabla imposible de llenar y un torniquete
+    que no aprieta nada — con la apariencia de estar resuelto.
