@@ -2784,3 +2784,83 @@ Reglas 14 incumplidas a proposito: Premium y `nicho_roi` siguen vivos.
     del mismo motor MLB. Las que dan 0% no estan "rotas": estan alimentadas por otro motor
     que produce picks distintos. La pregunta util no es "por que no pasa el filtro" sino
     "de que motor viene cada universo".
+
+### #214 (cont. 2) — Destacados y Tablero rastreados. Kelly, pendiente del ultimo trazo
+
+Correccion de lenguaje aceptada: donde escribi "MLB es la unica superficie donde las dos
+partes hablan del mismo pick" debe decir **"la unica superficie AUDITADA HASTA AHORA cuyo
+universo coincide completamente con el universo canonico medido"**.
+
+#### TABLERO (`tablero_del_dia`) — NO es superficie de recomendacion
+Devuelve: `fecha, liga, partido, mercado, h2h, local_en_casa, visita_fuera, base_liga,
+frecuencia_pct, ventaja_vs_liga, muestra_total`.
+**Sin probabilidad, sin EV, sin stake, sin seleccion.** Es un tablero de tendencias y
+frecuencias historicas. Unir por evento ahi es legitimo. → **NO ES SUPERFICIE DE PICK**.
+
+#### DESTACADOS (`destacados_del_dia` -> `destacados_cache`) — SI lo es, y NO es canonica
+```
+espn_event_id, mercado, linea, cuota, casa,
+prob_cruda, prob_calibrada, necesitas_pct, ev_pct, muestra, respaldo
+```
+Trae probabilidad calibrada, EV, cuota y casa: es una recomendacion monetaria completa.
+Y el `mercado` SI codifica el lado ("Menos de 2.5", "Mas de 2.5"), asi que su identidad es
+**mas completa que la del canonico**: es la unica superficie con columna `linea` propia.
+
+Muestra real de lo que publica:
+```
+mercado          linea  prob    EV      cuota  casa        muestra
+Menos de 2.5      2.5   63.2%  +35.8%   2.150  DraftKings    33
+Menos de 2.5      2.5   50.0%  +20.0%   2.400  DraftKings    35
+Mas de 2.5        2.5   59.1%  +18.2%   2.000  DraftKings    39
+Mas de 2.5        2.5   62.9%  +15.3%   1.833  DraftKings    21
+```
+Cobertura canonica:
+```
+filas en destacados ............... 125
+eventos que existen en canonico ...   8
+eventos con pick canonico vivo ....   6
+```
+**94% de sus eventos no estan en el universo canonico.** Ademas publica EV de +35.8% con
+muestra de 33. → **B. BLOQUEAR**.
+
+Nota util para la deuda del contrato: `destacados_cache.linea` demuestra que la columna
+`line` SI se puede tener estructurada. El canonico deberia adoptarla, no al reves.
+
+#### KELLY FRONTEND — respuesta parcial, honesta
+`src/lib/kelly-calculator.ts` **es una calculadora de sizing completa e independiente**:
+```
+edge = (probabilidadReal * momioDecimal) - 1
+kelly = (edge / b) * 0.25                    <- cuarto de Kelly
+topes propios: ELITE 8%, SOLIDO 5%, MARGINAL 3%, parlay 5%, momio<1.30 -> 5%
+devuelve montoRecomendado en PESOS
+```
+El backend tiene sus propios `tamano_apuesta` y `revisar_tamano_apuesta`. **O sea que
+existen dos calculadoras.** Lo que falta para responder la pregunta binaria es si el
+`montoRecomendado` del navegador SE GUARDA al crear una apuesta o solo se muestra.
+El rastreo esta corriendo; **no lo declaro en ningun sentido hasta verlo**.
+
+#### MATRIZ 4.2C — estado al cierre de este bloque
+| Superficie | Canonico | Decision |
+|---|---|---|
+| Oraculo, Mejor pick, Favoritos, Accion del dia, MLB radar | SI | **A. ya canonicas** |
+| MLB mejores | 6 de 6 | **A. migrar, perdida cero** |
+| findLegColor, MLB.tsx | n/a | **A. arregladas (preview)** |
+| FUT PRO premium | 4 de 84 | **B. bloquear** |
+| Value/EV | 0 de 19 | **B. bloquear** |
+| FUT PRO limpio | 0 de 1 | **B. bloquear** |
+| Premium | 0, bypass ai_pro | **B. bloquear** |
+| **Destacados** | **8 de 125 eventos** | **B. bloquear** |
+| **Tablero** | n/a | **NO ES SUPERFICIE DE PICK** |
+| Parlays / SGP | 0 de 37 | **D. congelado** |
+| NFL | sin espn_event_id | **D. bloqueo estructural** |
+| Radar / Momentum | prob del navegador | **C. informativa** |
+| Favoritos MLB/NFL, cartelera NFL | n/a | **NO ES SUPERFICIE DE PICK** |
+| **Kelly frontend** | — | **ULTIMO PENDIENTE** |
+
+Produccion sigue sin tocar: no se ha llamado `deploy_project` en toda la fase.
+
+## Leccion nueva
+43. **La superficie menos canonica resulto ser la que mejor identifica su pick.**
+    `destacados_cache` tiene `linea` como columna propia, que es justo lo que le falta a
+    `v_pick_canonico`. Estar fuera del motor no es lo mismo que estar mal modelado: al
+    migrarla no hay que aplanarla al contrato pobre, hay que subir el contrato.
