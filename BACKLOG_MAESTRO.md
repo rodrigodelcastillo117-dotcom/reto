@@ -2423,3 +2423,239 @@ corridas del modelo por peticion y no arregla el costo.
 **Riesgo de no arreglarlo:** la app ensena "SIN PRECIO" y "Margen de la casa: —"
 sobre partidos que **si tienen precio**, en la misma tarjeta donde el aviso cita
 ese precio. Es la app mintiendo sobre el mercado, no una falta de dato.
+
+---
+
+## #258-B HOTFIX MLB: primera puerta cerrada, SEGUNDA PUERTA descubierta
+
+**Hecho (autorizado y aplicado):** `v_radar_mlb` ya no llama `predecir_mlb`
+directamente. Se retiro el `LEFT JOIN LATERAL m2`.
+
+**Contrato: IDENTICO.** 26 columnas, mismos nombres, mismos tipos, mismo orden.
+`position('predecir_mlb' in pg_get_viewdef(...))` = **0**.
+
+Se eligio la **opcion A** del auditor para `carreras_esp` y `diff_total`:
+quedan como `NULL::numeric` deprecadas. Se descarto sustituirlas por la formula
+L5 que ya vivia en el `COALESCE` porque **cambiaba las 25 filas**, con
+diferencia media absoluta de **1.657 carreras** y maxima de **4.35**. Eso habria
+sido meter un numero distinto bajo el mismo nombre: exactamente el defecto que
+este hotfix corrige. Ninguna de las dos columnas tiene consumidor en base ni se
+pinta en el front. Queda `COMMENT ON VIEW` con la prohibicion de reintroducirlo.
+
+**NO se concedio `EXECUTE ... TO anon` sobre `predecir_mlb`.** Verificado:
+`proacl = postgres=X | service_role=X | authenticated=X`. Sin cambios.
+
+### SEGUNDA PUERTA (hallazgo nuevo, NO tocada)
+
+Tras el arreglo, `select=*` como `anon` **sigue devolviendo 401 / 42501
+permission denied for function predecir_mlb**. Cadena medida:
+
+```
+v_radar_mlb
+  -> LEFT JOIN LATERAL m  (columnas mod_home / mod_away / mod_over)
+      -> v_pick_canonico
+          -> v_picks_mlb_modelo
+              -> predecir_mlb()
+```
+
+Comprobacion aislada como `anon`:
+- `select count(dec_home), count(overround_ml) from v_radar_mlb` -> **25 / 25 OK**
+- `select count(mod_home) from v_radar_mlb` -> **ERROR 42501**
+
+O sea: **el precio ya viaja; lo que rompe es la probabilidad del modelo.**
+
+**Costo real, peor de lo reportado antes.** `EXPLAIN ANALYZE select * from
+v_radar_mlb`: **4,279 ms** (planning 35 ms). El plan muestra que
+`v_picks_mlb_modelo` evalua un CTE sobre `agenda_espn` de **61 eventos de
+baseball**, no 25: la cartelera dispara ~61 corridas del modelo, no una por
+partido mostrado.
+
+`mod_home/mod_away/mod_over` **SI se consumen**: 29 de 29 filas los traen, y
+`desdeMlb` los mapea a `model.home/away/over`, que `GameCard` pinta como el
+"% modelo" de cada equipo y que `mejorVentaja` usa para el badge
+"Ventaja del modelo · +X% EV". Quitarlos NO es neutral: borra numero de
+pantalla en una tarjeta de dinero.
+
+**Opciones (ninguna ejecutada, todas cruzan una linea que el auditor trazo):**
+- **A.** Quitar `m` de `v_radar_mlb` -> cartelera 100% dato puro y anon-safe,
+  pero desaparecen el "% modelo" y el badge de ventaja de cada tarjeta de MLB.
+- **B.** Tocar `v_picks_mlb_modelo` / `v_pick_canonico` -> zona prohibida
+  (V2 / logica de picks / riesgo conocido de recursion 42P17).
+- **C.** Materializar la prediccion MLB en tabla + cron; la vista lee la tabla.
+  No pierde pantalla y no edita logica de picks, pero es infraestructura nueva
+  y exige politica de frescura.
+- **D.** `grant execute to anon` -> **prohibido explicitamente**.
+
+### FIX 2 (frontend) enviado a Lovable
+
+`src/pages/MLB.tsx` pasa de `data ?? []` a tres estados: exito con filas ->
+radar; exito con 0 filas -> unico caso que permite el respaldo de `live_scores`;
+error -> `ErrorCarga` reintentable y **prohibido** caer al respaldo. Las filas
+del respaldo se marcan `source = "live_scores_fallback"`. Esto mata la mentira
+"SIN PRECIO" con independencia de cual opcion se elija arriba.
+
+---
+
+## #259 BLOQUE A ECONOMICO: los bounds matan apuestas GANADORAS, y el sesgo solo sirve en Corners
+
+**Reconstruccion verificada.** Se rehizo el walk-forward estricto en la tabla de
+laboratorio `public.lab_bloque_a_wf` (24,618 filas). Brier reproducido contra lo
+ya aceptado: A 0.22362 (antes 0.22343), B 0.22169 (antes 0.22151), H 0.23067
+(antes 0.23051). Delta <= 2e-4; H sigue **7o de 8**. Orden completo:
+**B < A < F < E < D < C < H < G**.
+
+### BLOQUEO METODOLOGICO: no existe el momio historico
+
+`modelo_backtest` **no tiene columna de precio**. Cobertura medida de las 1,550
+fixtures del walk-forward:
+
+| fuente | fixtures cubiertas |
+|---|---|
+| `radar_odds_snapshots` (via puente ESPN) | 81 |
+| `fut_odds_history` (por `fixture_id`) | 82 |
+| `odds_pro_snapshots` (por `fixture_id`) | 36 |
+| `futbol_5ligas_2526` (cierre, via puente ESPN) | **0** |
+
+Maximo **5.3%**, y concentrado en el tramo reciente (la ingesta de momios es
+nueva): usarlo seria sesgo de seleccion puro. **A-ECO-1/2/6 tal como estan
+escritos NO son computables con dato real.** Se sustituyo por un barrido de
+6 precios sinteticos, y se reporta lo que ese barrido SI puede decir.
+
+**Ademas, el ROI del barrido no informa nada.** Con precio plano fijo `q`,
+`ROI = hit x q - 1`: es una reescala monotona del hit rate. Los ROI de +117%
+a cuota 4.00 son artefacto del precio inventado, no economia. Se descartan.
+
+### ESTRUCTURA DE LA MUESTRA (hallazgo que cambia la lectura)
+
+`modelo_backtest` **no es un registro de apuestas: es una rejilla de resultados
+enumerados**. Filas por fixture y aciertos por fixture, exactos:
+
+| mercado | filas/fixture | aciertos/fixture |
+|---|---|---|
+| Moneyline | 3.000 | **1.000** |
+| Corners | 8.000 | **4.000** |
+| Tarjetas | 6.000 | **3.000** |
+| Total Equipo | 3.000 | 1.872 |
+| Over/Under | 5.000 | 2.723 |
+| Doble Oportunidad | 2.000 | 1.241 |
+| BTTS | 1.000 | 0.511 |
+
+Es la poblacion correcta para medir CALIBRACION. No es una poblacion de
+apuestas tomadas.
+
+### A-ECO-1 — cuantos mata cada bound (barrido de precio)
+
+Filas con EV>0 sobre 24,618. `pos->neg` respecto de A:
+
+| cuota | A | B | E (=B+Beta) | H (produccion) | mata Beta (B->E) | mata Wilson (E->H) |
+|---|---|---|---|---|---|---|
+| 1.50 | 7,115 | 6,435 | 4,931 | 3,866 | 1,504 | 1,065 |
+| 1.80 | 11,062 | 10,981 | 8,891 | 7,406 | 2,090 | 1,485 |
+| 2.00 | 13,208 | 13,593 | 11,407 | 9,392 | 2,186 | 2,015 |
+| 2.50 | 17,260 | 17,785 | 15,884 | 13,856 | 1,901 | 2,028 |
+| 3.00 | 19,377 | 19,650 | 18,098 | 16,645 | 1,552 | 1,453 |
+| 4.00 | 22,435 | 22,739 | 21,023 | 19,509 | 1,716 | 1,514 |
+
+H mata entre **2,569 y 4,186** candidatos respecto de B segun el precio.
+
+### A-ECO-3 — LA PREGUNTA CENTRAL: los que matan, ¿eran peores?
+
+Grupos formados sobre B (mejor variante probabilistica). `gap` = hit real - P
+previa de B.
+
+| cuota | grupo | N | P previa B | hit real | gap | Brier previo | breakeven |
+|---|---|---|---|---|---|---|---|
+| 1.80 | SURVIVE_BETA | 8,891 | 72.34% | 70.24% | -2.11 | 0.20637 | 55.56% |
+| 1.80 | **KILLED_BY_BETA** | 2,090 | 58.63% | **57.51%** | -1.12 | 0.24428 | **55.56%** |
+| 1.80 | **KILLED_BY_WILSON** | 1,485 | 64.71% | **63.64%** | -1.07 | 0.22973 | **55.56%** |
+| 2.00 | SURVIVE_BETA | 11,407 | 69.05% | 67.17% | -1.88 | 0.21494 | 50.00% |
+| 2.00 | **KILLED_BY_BETA** | 2,186 | 53.14% | **54.03%** | **+0.89** | 0.24905 | **50.00%** |
+| 2.00 | **KILLED_BY_WILSON** | 2,015 | 58.87% | **57.42%** | -1.45 | 0.24377 | **50.00%** |
+| 2.50 | SURVIVE_BETA | 15,884 | 63.61% | 62.23% | -1.38 | 0.22447 | 40.00% |
+| 2.50 | **KILLED_BY_BETA** | 1,901 | 43.81% | **44.50%** | **+0.70** | 0.24588 | **40.00%** |
+| 2.50 | **KILLED_BY_WILSON** | 2,028 | 49.07% | **48.37%** | -0.70 | 0.24735 | **40.00%** |
+
+**En los 6 grupos eliminados, el hit real queda POR ENCIMA del breakeven del
+precio al que se eliminaron.** Beta y Wilson no estan cortando apuestas
+perdedoras: estan cortando apuestas ganadoras.
+
+Peor: a cuotas 2.00 y 2.50, el grupo que Beta mata tiene gap **POSITIVO**
+(+0.89 y +0.70: el modelo los SUBESTIMABA) mientras el grupo que sobrevive
+tiene gap negativo (-1.88 y -1.38: los SOBREESTIMABA). **Beta aplica su
+correccion a la baja justo donde el modelo ya iba corto, y conserva el segmento
+donde va largo.** Va al reves.
+
+Es cierto que el grupo eliminado tiene peor Brier previo (0.249 vs 0.215): son
+predicciones de menor calidad. Pero "menor calidad" no es "expectativa
+negativa": a los precios probados siguen por encima del breakeven.
+
+### A-ECO-5 — POR MERCADO: el sesgo global es un espejismo de Corners
+
+Delta de Brier x1000, negativo = mejora. t pareado.
+
+| mercado | N | sesgo x1000 | t | Beta x1000 | t | Wilson x1000 | t |
+|---|---|---|---|---|---|---|---|
+| Over/Under | 6,775 | **+0.495** | +1.68 | +1.944 | +3.91 | +4.790 | +11.12 |
+| Moneyline | 4,065 | -0.250 | -0.93 | +2.102 | +3.19 | +4.362 | +8.38 |
+| Total Equipo | 4,065 | **+0.361** | +1.14 | +2.288 | +3.05 | +6.336 | +9.58 |
+| **Corners** | 3,272 | **-15.810** | **-6.95** | +3.872 | +3.39 | +6.642 | +7.03 |
+| Doble Oportunidad | 2,710 | -0.309 | -0.82 | +2.477 | +2.54 | +7.025 | +7.98 |
+| Tarjetas | 2,376 | **+1.124** | +1.41 | +4.678 | +3.32 | +8.716 | +7.49 |
+| BTTS | 1,355 | -0.975 | -0.52 | +5.172 | +2.52 | +11.183 | +6.68 |
+| **TOTAL** | 24,618 | -1.926 | -5.51 | +2.783 | +8.33 | +6.198 | +21.94 |
+
+**Corners aporta -15.810 x 3272/24618 = -2.10 x1000, mas que TODA la mejora
+global (-1.926).** Sin Corners, `v_sesgo` no mejora nada; en los tres mercados
+de mayor volumen el efecto es de +-0.5 x1000 y en dos de tres va en contra.
+
+**Confundidor a vigilar:** Corners es justo la rejilla simetrica perfecta
+(8 filas / 4 aciertos exactos por fixture, prob media 0.5000, bias 0.00). La
+ganancia del sesgo ahi puede ser artefacto de la complementariedad determinista
+de la rejilla, no habilidad transferible. **NO se declara SOPORTADA_OOS.**
+
+Beta y Wilson: **empeoran en los 7 mercados, sin excepcion**, con t entre
++2.52 y +11.18.
+
+Sesgo de produccion H por mercado: **+6.29 a +11.68 pp** de subestimacion
+sistematica. En todos.
+
+### CLASIFICACION POR MERCADO
+
+| mercado | v_sesgo | Beta | Wilson |
+|---|---|---|---|
+| Over/Under | NO_APORTA_OOS | DANINA_OOS | DANINA_OOS |
+| Moneyline | NO_APORTA_OOS | DANINA_OOS | DANINA_OOS |
+| Total Equipo | NO_APORTA_OOS | DANINA_OOS | DANINA_OOS |
+| Corners | SOPORTADA_OOS_CON_CONFUNDIDOR_DE_REJILLA | DANINA_OOS | DANINA_OOS |
+| Doble Oportunidad | INCONCLUSO_MUESTRA | DANINA_OOS | DANINA_OOS |
+| Tarjetas | NO_APORTA_OOS | DANINA_OOS | DANINA_OOS |
+| BTTS | INCONCLUSO_MUESTRA | DANINA_OOS | DANINA_OOS |
+
+`v_sesgo` global baja de `SOPORTADA_OOS_GLOBAL_SOCCER_PROVISIONAL` a
+**`NO_SOPORTADA_FUERA_DE_CORNERS`**.
+
+### RESPUESTA A LAS DOS PREGUNTAS DEL BLOQUE A
+
+1. **¿Beta o Wilson mejoran la seleccion economica OOS aunque empeoren la
+   probabilidad?** **NO.** A los 3 precios probados, todo grupo que eliminan
+   tiene hit real por encima del breakeven. Empeoran probabilidad Y seleccion.
+
+2. **¿Su efecto parece calibracion o politica de abstencion/riesgo?** **Ninguna
+   de las dos.** Como calibracion van al reves del signo del error (corrigen a
+   la baja donde el modelo ya subestima). Como abstencion serian defendibles si
+   recortaran cola perdedora, y no lo hacen: recortan por encima del breakeven.
+   Lo que hacen es **reducir volumen de forma no informativa**.
+
+**Conclusion: caso A del auditor** — empeoran probabilidad y economia. Beta y
+Wilson son candidatos fuertes a salir de V2. **NO SE TOCA PRODUCCION.**
+
+### LO QUE FALTA Y POR QUE
+
+- **A-ECO-2 y A-ECO-6 (Kelly) quedan ABIERTOS por falta de precio historico.**
+  No se simulan con precio inventado.
+- **A-ECO-4** queda cubierto parcialmente (mercado + tramo de probabilidad via
+  las celdas + precio via el barrido). Falta estratificar por `n` de celda.
+- **Desbloqueo propuesto:** empezar a persistir el momio del mercado junto a
+  cada fila de backtest desde hoy, para que dentro de N semanas exista una
+  poblacion con precio real. Sin eso, la pregunta economica es estructuralmente
+  incontestable, no dificil.
