@@ -3371,3 +3371,94 @@ Se resolvieron como compatibles, y la distincion es la que importa:
     "el precio no compensa, no apuestes" y "hay ventaja pero es mas chica que tu minimo".
     Presentarlos juntos no era desorden visual: convertia un rechazo en una invitacion.
     Antes de pintar un valor, preguntar cuantas cosas distintas puede estar diciendo.
+
+---
+
+# #210 EXPERIMENTO OVER/UNDER — ¿senal mal calibrada, o no hay edge? (5-sep-2026)
+
+Muestra congelada en `lab_ou_experimento`. n=1,361. Split TEMPORAL en 2026-07-26:
+**train 949 (abr-jul), test 412 (jul-sep)**. La calibracion se ajusta SOLO en train,
+por criterio ESTADISTICO (igualar media declarada a tasa observada). Ningun ROI
+participo en el ajuste, por regla del auditor.
+
+## Calibradores (ajustados solo en train)
+- **A — desplazamiento en log-odds**: `logit(p_cal) = logit(p) − 0.352`.
+- **B — por tramos**: deciles de train -> tasa observada del decil.
+
+## Tabla principal — TODO fuera de muestra (n=412)
+
+| modelo | prob media | tasa obs | exceso | Brier | Log Loss |
+|---|---|---|---|---|---|
+| **calibrada B (tramos)** | 0.4331 | 0.4369 | **−0.004** | **0.24502** | **0.68315** |
+| calibrada A (log-odds) | 0.4587 | 0.4369 | +0.022 | 0.24672 | 0.68693 |
+| baseline tasa base | 0.4700 | 0.4369 | +0.033 | 0.24711 | 0.68736 |
+| baseline mercado (1/momio) | 0.4969 | 0.4369 | +0.060 | 0.25399 | 0.70139 |
+| **cruda** | 0.5426 | 0.4369 | **+0.106** | 0.25837 | 0.70937 |
+
+## Prueba pareada — LA QUE DECIDE
+
+| comparacion | ventaja | IC 95% | t | veredicto |
+|---|---|---|---|---|
+| calibrada B vs mercado | +0.00897 | [−0.0015, +0.0195] | 1.67 | no significativo |
+| **calibrada B vs tasa base** | **+0.00209** | [−0.0033, +0.0075] | **0.76** | **no significativo** |
+| calibrada A vs tasa base | +0.00039 | [−0.0090, +0.0098] | 0.08 | no significativo |
+| **cruda vs tasa base** | **−0.01126** | [−0.0228, +0.0003] | −1.91 | no significativo |
+
+## RESPUESTA: ninguna de las dos, y la tercera es la correcta
+El "edge" crudo **es un artefacto de exceso de confianza**, no una senal escondida.
+La calibracion **quita el dano** (de −0.011 a +0.002) pero **no crea ventaja
+demostrable**: el intervalo cruza el cero. Calibrar deja el modelo a la par de la tasa
+base, no por encima.
+
+## Calibracion por bandas — el problema SI esta concentrado
+
+| banda | n | declara | acierta | exceso crudo | exceso calibrado | Brier crudo | Brier calib |
+|---|---|---|---|---|---|---|---|
+| <45% | 45 | 0.317 | 0.422 | −0.105 | −0.001 | 0.2550 | 0.2440 |
+| 45-55% | 39 | 0.501 | 0.385 | +0.117 | +0.036 | 0.2559 | 0.2380 |
+| **55-65%** | **298** | 0.560 | 0.423 | **+0.137** | +0.012 | 0.2636 | 0.2435 |
+| 65-75% | 21 | 0.721 | 0.667 | +0.054 | −0.220 | 0.2160 | **0.2706** |
+| >=75% | 9 | 0.858 | 0.667 | +0.191 | −0.220 | 0.2108 | **0.2706** |
+
+**72% del volumen (298 de 412) vive en 55-65%, con +13.7 pp de exceso.** Ahi la
+calibracion funciona. En las bandas altas el calibrador por tramos APLANA y EMPEORA
+(0.216 -> 0.271), porque el decil superior de train solo acerto 44.7%. n=30 combinado:
+**no concluye**, pero queda anotado como riesgo del calibrador por tramos.
+
+## Validacion economica — apuesta plana de 1 unidad cuando EV>0
+
+| estrategia | apuestas | momio medio | yield real | IC 95% | t |
+|---|---|---|---|---|---|
+| tasa base | 69 | 3.21 | +35.07% | [−4.2, +74.4] | 1.75 |
+| calibrada B | 73 | 3.04 | +33.93% | [−2.9, +70.7] | 1.81 |
+| calibrada A | 53 | 1.79 | −1.20% | [−25.3, +22.9] | −0.10 |
+| **cruda** | **410 de 412** | 2.12 | **−8.37%** | [−19.2, +2.4] | −1.52 |
+
+**NO vender el +34%.** Es un artefacto de longshots: esas "estrategias" apuestan a
+momio medio 3.0-3.2 y sus intervalos abarcan ~75 puntos. La tasa base constante da
+practicamente lo mismo, que es la senal de que ahi no hay modelo, hay un filtro de
+precio largo.
+
+**El efecto economico REAL de calibrar es que te impide apostar.** El modelo crudo
+apuesta **410 de 412** (99.5%) porque sus probabilidades inflan todo a +EV, y rinde
+−8.37%. Calibrado apuesta entre 53 y 73.
+
+## CLV — insuficiente para concluir, y con una senal contradictoria
+Test: n=247 (60% de cobertura), CLV medio +6.615%, sd 38.0, t=2.73.
+Parece positivo, **pero no me fio**:
+- `clv_en_ganados` = 2.26 y `clv_en_perdidos` = **10.60**. Al reves de lo esperado: si
+  el CLV midiera habilidad, los ganados deberian tener MEJOR CLV.
+- Cobertura brutalmente disparuja: 60% en test contra **4.1%** en train.
+Esto conecta con #157/#187: hay que acumular precios limpios y re-medir.
+
+## Lecciones nuevas
+53. **Un yield alto con intervalo de 75 puntos no es un hallazgo, es un longshot.**
+    La prueba diagnostica: si la tasa base constante rinde practicamente lo mismo,
+    lo que se midio fue el filtro de precio, no el modelo.
+54. **Calibrar no crea informacion; deja de destruirla.** El modelo crudo apostaba
+    410 de 412 porque su exceso de confianza pintaba todo como +EV. El valor de
+    calibrar aparecio como ABSTENCION, no como aciertos.
+55. **Un calibrador por tramos hereda el ruido de sus tramos extremos.** El decil
+    superior de train tenia n chico y una tasa baja; el calibrador aplano ahi y
+    empeoro justo donde el modelo crudo iba bien. Antes de desplegar un calibrador,
+    mirar que hace en las COLAS, no solo en el promedio.
