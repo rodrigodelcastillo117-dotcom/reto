@@ -1657,3 +1657,58 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
      1.01-1.50**. Hoy son 2 filas, 0 `es_pick`, pero es consecuencia de la decision.
      **NO se modifico nada:** `rongol_veto`, `lecciones_aprendidas`, Kelly, caps, V2,
      `EXP_OFF` y produccion intactos. Solo medicion.
+
+123. **#247 CERRADO — RONGOL corregido y desplegado. Solo veta donde tiene evidencia OOS.**
+     **Condicionante previo, demostrado:** existe un guard de autoridad economica
+     SEPARADO de `rongol_veto` que impide que un pick sin precio autorice dinero, en
+     dos capas independientes:
+     - `v_pick_canonico.es_pick` arranca con `c.momio_mercado IS NOT NULL`. Medido:
+       **0 de 15** `es_pick` tienen momio NULL.
+     - `kelly_stake` responde `{"ok":false,"error":"Momio invalido"}` con momio
+       NULL / 0 / 1, y `"Probabilidad invalida"` con prob NULL.
+     Ademas `es_senal` es explicitamente la rama sin precio (`momio_mercado IS NULL`).
+     Ninguna de las dos vive dentro de `rongol_veto`.
+     **Diff aplicado a `rongol_veto`:**
+     - `v_rango_lec`: tramos de `lecciones_aprendidas` (`1.01-1.50 / 1.50-1.80 /
+       1.80-2.20 / 2.20-3.00 / 3.00-5.00 / 5.00+`), distintos de los de
+       `rongol_hallazgos` (`<1.40 / 1.40-1.80 / 1.80-2.50 / ...`). Mezclarlos era el bug.
+     - El bucle que BLOQUEA ahora exige coincidencia real de deporte + mercado + liga
+       + tramo. Con momio NULL el tramo no casa y **no veta**.
+     - Bucle nuevo de OBSERVACION: lecciones activas sin `bloqueo_total` **con liga
+       propia** y coincidencia estricta -> `advertencia`, no veto.
+       **Las lecciones globales (liga NULL) quedan FUERA a proposito:** medido, un loop
+       generico ponia **15 de 15 `es_pick` en advertencia** (148 de 277 filas) y el
+       aviso se volvia ruido. Acotado a liga propia: 2 filas, 0 `es_pick`.
+     - `RANGO_NO_EVALUABLE` cuando no hay momio: alerta + `advertencia`, nunca veto.
+     - La respuesta ahora expone `rango_momio` y `rango_evaluable`.
+     **Lecciones 11 y 13 -> `bloqueo_total = false`, siguen `activa`.** No se creo
+     ningun veto sustituto. Unica regla con veto duro: **12 (MLB / ML / 1.50-1.80 /
+     n=42 / OOS train -37.7% -> test -44.8%)**.
+     **PRUEBAS A-J, todas PASS:**
+     | | caso | nivel | alertas |
+     |---|---|---|---|
+     | A | MLB ML 1.65 | **bloqueado** | bloqueo [MLB/1.50-1.80] |
+     | B | MLB ML 1.95 | permitido | solo fuga preexistente |
+     | C | MLB ML 2.40 | permitido | solo fuga preexistente |
+     | D | MLB ML 1.30 | permitido | **observacion** [MLB/1.01-1.50] (leccion 13) |
+     | E | MLB O/U 1.30 | permitido | **observacion** [MLB/1.01-1.50] (leccion 11) |
+     | F | soccer ML 1.65 | **ok** | ninguna |
+     | G | momio NULL | permitido | **rango_no_evaluable** |
+     | H | los `es_pick` de hoy | **0 bloqueados** (eran 13) | — |
+     | I | leccion 12 | intacta, `bloqueo_total=true` | bloquea solo su poblacion |
+     | J | EXP_OFF 0.50 · kelly md5 `f8f6f398` · candado advisory presente | sin cambios | — |
+     **REPARTO:**
+     | | veto duro | warning | libres | total |
+     |---|---|---|---|---|
+     | universo `v_pick_canonico` | **16** | 143 | 118 | 277 |
+     | `es_pick` | **0** | 13 | 2 | 15 |
+     **MATIZ IMPORTANTE: los 13 pasaron de `bloqueado` a `advertencia`, no a `ok`.**
+     El warning viene del bucle de FUGAS que ya existia (`baseball · Moneyline`,
+     n=25, 40%, -6.38 unidades), no de nada que yo agregara. `requiere_confirmacion`
+     sigue en true para ellos: la app pedira confirmar. Ya no se les quita el dinero,
+     pero quedan marcados.
+     **Sin residuos.** La exposicion de "el dos" bajo de 250.00 a 0.00 por una
+     calificacion legitima del cron: pick `7975e41c` (Volos NFC - Olympiacos, Menos de
+     2.5) marcado **ganado +$190** a las 18:07 con `AUTO_DET:live_scores`. Bankroll
+     3,908.19 -> 4,098.19. Nada que ver con las pruebas: `residuos_prueba = 0`.
+     **No se optimizo ninguna regla ni se creo bloqueo alguno desde ROI in-sample.**
