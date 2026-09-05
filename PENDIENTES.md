@@ -3283,3 +3283,91 @@ boleto enfrente. Queda disponible, no urgente.
     rutas de escritura, medi su cobertura y puse el candado en todas. Lo que no pregunte
     es cual usa el usuario de verdad. La proteccion mas fina quedo en el camino muerto y
     la mas tosca en el unico vivo. El mapa del codigo no es el mapa del uso.
+
+---
+
+# #208 EL TERMOMETRO — `v_termometro_motor` (5-sep-2026)
+
+La unica pregunta que decide si la plataforma sirve: **¿el motor le gana a predecir
+siempre la tasa base de su mercado?** Ahora se contesta sola.
+
+VISTA, no tabla, a proposito: `lab_kelly_haircut` era una foto que arme a mano y no se
+actualizaba, asi que responder pedia arqueologia. Fuente viva: `oraculo_picks_tracking`.
+Guardas: excluye probabilidades en 0.000/1.000 (dato sucio, no pronostico) y partidos
+futuros ya sembrados. Por debajo de 100 picks devuelve "MUESTRA CHICA — no concluye".
+
+## Lo que dice hoy
+
+| ventana | n | exceso de confianza | ventaja vs tasa base | t | veredicto |
+|---|---|---|---|---|---|
+| 7 dias | 151 | +3.5 pp | −0.019 | −1.34 | empate |
+| 30 dias | 714 | +5.5 pp | −0.007 | −1.27 | empate |
+| 90 dias | 2,073 | +5.1 pp | −0.010 | −3.27 | **pierde** |
+| todo | 2,908 | +3.9 pp | −0.011 | −4.20 | **pierde** |
+
+**RETRACTACION.** Mi lectura optimista de septiembre venia de `lab_kelly_haircut` con
+n=50 y **no se replica** en la fuente viva con n=151. Lo honesto: el motor paso de
+*perder claramente* (t=−4.20 historico) a *empatar* (t=−1.27 en 30 dias). Es mejoria
+real. **Empate no es ventaja.**
+
+## Por mercado, 90 dias — el hallazgo accionable
+
+| mercado | n | exceso de confianza | veredicto |
+|---|---|---|---|
+| **Moneyline** | 852 | **−0.6 pp** | empate |
+| **Over/Under** | **1,021** | **+10.6 pp** | **PIERDE (t=−2.97)** |
+| BTTS | 126 | −5.1 pp | empate |
+| Corners | 74 | +12.1 pp | muestra chica |
+
+**Moneyline ya esta honesto**: declara 41.5%, acierta 42.1%. **Over/Under es la fuga**:
+mayor volumen y 10.6 puntos de sobreestimacion sostenida.
+
+## REGLA DEL AUDITOR, adoptada
+`t = −2.97` prueba **mala calibracion o mala especificacion del mercado**, NO ausencia
+de capacidad predictiva. Son cosas distintas y no se deben confundir. El backtest
+out-of-sample de Over/Under es justo el experimento que las separa. Prohibido volver a
+escribir "el motor no sirve" a partir de un Brier.
+
+---
+
+# #209 RETO 13M — separar recomendacion, diagnostico y rechazo
+
+La pantalla mezclaba las tres: 28 picks, 21 diciendo "$0.00". Y ese cero significaba dos
+cosas OPUESTAS, ninguna de las cuales es "un pick de $0".
+
+## `public.reto_picks_hoy(p_apodo)` — CREADA
+Clasifica en el BACKEND. La pantalla ya no decide nada. **No cambia ninguna matematica:**
+solo LEE `kelly_stake` y le pone nombre a su respuesta.
+
+```
+apostable            -> stake_recomendado > 0
+ventaja_insuficiente -> hay ventaja, pero el monto cae bajo el minimo
+descartado           -> veredicto NO APOSTAR, o sin datos para dimensionar
+puede_apostar        -> (monto_autorizado > 0). Regla dura: un 0 NUNCA lleva boton,
+                        ni aunque el usuario teclee el monto a mano.
+```
+
+Medido hoy (5-sep) para `rodelcast`:
+
+| categoria | cuantos | con boton |
+|---|---|---|
+| apostable | 8 | 8 |
+| ventaja_insuficiente | 4 | 0 |
+| descartado | 13 | 0 |
+
+## CHOQUE RESUELTO, dejado por escrito
+El auditor pidio que `NO APOSTAR` "quede bloqueado por la misma barrera backend de
+4.2D". Pero el 4-sep el mismo auditor decidio que `NO APOSTAR` **no bloquea**, solo
+exige razon escrita, porque `SmartUploadButton` registra **boletos ya pagados** y
+bloquear ahi rompe el libro sin evitar el riesgo.
+
+Se resolvieron como compatibles, y la distincion es la que importa:
+- **RETO 13M es superficie de RECOMENDACION** -> sin boton "Apostar" cuando el monto
+  autorizado es 0. Regla de presentacion.
+- **El registro es el LIBRO** -> el contrato de la firma queda intacto.
+
+## Leccion nueva
+52. **Un mismo numero puede ser dos veredictos opuestos.** "$0.00" significaba a la vez
+    "el precio no compensa, no apuestes" y "hay ventaja pero es mas chica que tu minimo".
+    Presentarlos juntos no era desorden visual: convertia un rechazo en una invitacion.
+    Antes de pintar un valor, preguntar cuantas cosas distintas puede estar diciendo.
