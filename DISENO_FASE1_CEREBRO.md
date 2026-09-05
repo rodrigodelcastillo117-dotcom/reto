@@ -2156,3 +2156,250 @@ lo etiqueta y no lo presenta como accionable.
    deben coincidir en Reto13M y en `mejor_oportunidad_hoy`. Hoy fallan en 4 de 16.
 6. **Sin fallback mudo**: si no hay calibracion valida, la salida es un
    `reason_code`, nunca la probabilidad cruda disfrazada.
+
+---
+
+## 2A.16 — MAPA DE POBLACIONES
+
+| dataset | clase | N | fechas | mercados | incluye rechazados | seleccion depende de P/EV/momio | resultado en todas | version modelo | corte temporal |
+|---|---|---|---|---|---|---|---|---|---|
+| **`bt_mlb_ml`** | **A. universo completo** | **1,056** | 2026-05-20 a 2026-08-30 | MLB Moneyline, **lado LOCAL de cada juego** | si (no hay seleccion) | **no** | si (1056/1056) | no | implicito |
+| **`badrino_backtest`** | **A. universo completo** | 2,580 | 2026-07-31 a 2026-08-19 | MLB: Total Equipo 1032, ML 516, Run Line 516, O/U 516 | si | **no** | si | no | implicito |
+| `modelo_backtest` | A. universo completo | 30,876 | 2026-02-12 a 2026-08-26 | 7 mercados, **100% soccer** | si | no | si | no | implicito, **congelado el 26-ago** |
+| `modelo_backtest_v2` | A. universo completo | 61,321 | **2023-07-01 a 2024-11-03** | 6 mercados | si | no | si | no | historico viejo |
+| **`oraculo_picks_tracking`** | **B. picks publicados** | 3,462 (2,152 MLB) | 2026-05-04 a 2026-09-05 | ML 1101, O/U 1049 (MLB) | **NO** | **SI** | no (resueltos 2,152) | no | `match_date` |
+| `mlb_shadow_predicciones` | **D. shadow** | 800 (400+400) | 2026-07-29 a 2026-08-30 | MLB ML | si | no | si | **si (`model_version`)** | `game_date` |
+| `predicciones_modelo` | A/E, con mercado | 1,633 (385 baseball) | — | 1X2 + mkt_prob_* | si | no | 1,536 | no | `capturado_at`, `horas_antes` |
+| `motor_snapshot` | A. universo, ventana corta | 2,640 | 2026-09-03 a 2026-09-06 | soccer 2112 / baseball 528 | si | no | 1,012 | no | `match_date` |
+| `nfl_backtest` | vacio | **0** | — | — | — | — | — | — | — |
+
+**Respuesta a la pregunta del auditor: SI existe el universo completo de MLB.**
+`bt_mlb_ml` (1,056 juegos, un lado fijo, sin seleccion) y `badrino_backtest`
+(2,580). Ese es el dataset correcto para calibrar, no `oraculo_picks_tracking`.
+
+Nota: los 1,056 de `bt_mlb_ml` son exactamente el `juegos: 1056` que
+`predecir_mlb` reporta en `rango_medido_pct`. Es la fuente del coeficiente id 6.
+
+## 2A.21 — EFECTO DE SELECCION EN MLB: medido, y es enorme
+
+| poblacion | N | P media | P sd | p10-p90 | tasa real | sesgo | Brier |
+|---|---|---|---|---|---|---|---|
+| **Universo** `bt_mlb_ml` | 1,056 | **0.5230** | 0.0455 | 0.467-0.582 | 0.5189 | **-0.41 pp** | 0.24732 |
+| **Publicados** tracking | 1,074 | **0.4278** | 0.0911 | 0.334-0.495 | 0.4479 | **+2.01 pp** | 0.25114 |
+
+- La media baja de **52.3% a 42.8%** y la dispersion **se duplica** (0.046 -> 0.091).
+  El sistema publica casi exclusivamente **no-favoritos**. Es la explicacion
+  mecanica de #126.
+- **En el universo el motor esta practicamente insesgado: -0.41 pp.** El +2.01 pp
+  de los publicados es **sesgo condicional a seleccion**.
+
+**El auditor tenia razon.** El -4% de MLB que medi en el turno anterior sale de
+`oraculo_picks_tracking`, o sea de `P(resultado | p_raw, publicado)`. **No puede
+usarse como calibrador universal.** Sigue siendo prueba suficiente de que el
++4.9 de futbol es indefendible, pero no es el numero que va al codigo.
+
+Salvedad de metodo: `bt_mlb_ml` es siempre el lado LOCAL; los publicados pueden ser
+cualquiera de los dos. El desplazamiento de la media (52.3 -> 42.8) no se explica
+solo por el lado: los rangos son comparables (37.6-65.4 local implica 34.6-62.4
+visitante). La seleccion es real.
+
+## 2A.17 — ¿MERECE EL P_CAL ACTUAL SER P_FAIR? **NO, EN NINGUN DEPORTE**
+
+### MLB Moneyline, sobre el universo completo (`bt_mlb_ml`)
+
+| ventana | n | Brier P_RAW | Brier P_CAL | tasa base | mejora de CAL | bias raw | bias cal |
+|---|---|---|---|---|---|---|---|
+| may-jun | 335 | 0.24846 | 0.25006 | 0.24998 | **-0.00160** | -1.50 | -2.73 |
+| jul | 354 | 0.24739 | 0.24886 | 0.24980 | **-0.00147** | -1.20 | -2.14 |
+| ago | 367 | 0.24620 | 0.24674 | 0.24865 | **-0.00054** | +1.35 | +0.28 |
+| **TODO** | **1,056** | **0.24732** | **0.24850** | 0.24964 | **-0.00119** | **-0.41** | **-1.49** |
+
+**P_CAL pierde en 3 de 3 ventanas** y empeora el sesgo de -0.41 a -1.49 pp.
+**Veredicto MLB Moneyline: C — P_CAL empeora. No usar como P_FAIR.**
+
+### Futbol, sobre `modelo_backtest` (**en muestra**: el coeficiente id 7 se ajusto
+sobre jul-2023 a sep-2026, que incluye este periodo. Es una **cota superior** de su
+desempeno)
+
+| mercado | n | Brier raw | Brier cal | tasa base | mejora |
+|---|---|---|---|---|---|
+| Moneyline | 4,065 | 0.20936 | 0.20993 | 0.22222 | **-0.00058** |
+| Over/Under | 6,775 | 0.20993 | 0.21025 | 0.24802 | **-0.00032** |
+| Doble Oportunidad | 2,710 | 0.22265 | 0.22275 | 0.23544 | -0.00010 |
+| Total Equipo | 4,065 | 0.20945 | 0.20942 | 0.23466 | +0.00003 |
+| BTTS | 1,355 | 0.25304 | 0.25229 | 0.24989 | +0.00075 |
+| **TODOS** | **18,970** | **0.21460** | **0.21479** | 0.24939 | **-0.00019** |
+
+**Ni siquiera en muestra la calibracion de futbol aporta.** Es indistinguible de la
+identidad, con signo ligeramente negativo. Y el sesgo crudo de Moneyline es
+**0.00 pp exacto**: el motor de futbol ya esta insesgado; calibrarlo lo desvia a
+-0.87.
+
+**Veredicto futbol: B — indistinguible. Preferir la solucion mas simple: identidad.**
+
+Dato que si importa y conviene no perder de vista: en futbol el motor **si tiene
+discriminacion real** (Brier 0.2146 contra tasa base 0.2494). En MLB apenas
+(0.24732 contra 0.24964). Son dos motores de calidad muy distinta.
+
+## 2A.18 — CONTRATO DE P_FAIR
+
+```
+P_FAIR = mejor estimacion probabilistica disponible del evento antes del partido
+```
+
+En [0,1], con significado probabilistico intacto, y con provenance obligatoria:
+`modelo`, `calibrador`, `version`, `data_cutoff`, `as_of`, `mercado`, `deporte`.
+
+**Estado hoy, con la evidencia medida:**
+
+| deporte / mercado | P_FAIR | `calibration_status` |
+|---|---|---|
+| MLB Moneyline | **P_RAW** | `CALIBRACION_RECHAZADA_OOS` (pierde 3/3 ventanas) |
+| MLB Over/Under | **P_RAW** | `SIN_CALIBRACION_DEMOSTRADA` |
+| Futbol (todos) | **P_RAW** | `SIN_CALIBRACION_DEMOSTRADA` (indistinguible incluso en muestra) |
+| NFL | **P_RAW** | `SIN_MODELO` (dinero apagado, `nfl_backtest` vacio) |
+
+Identidad explicita **no es un error**: es la conclusion honesta de la medicion.
+`P_CAL2` no existe. Ninguna superficie recalibra.
+
+## 2A.19 — DISEÑO DE `confidence`
+
+**Definicion:** cuanta exposicion economica estamos dispuestos a asumir dada la
+evidencia sobre la estimacion. **No toca P_FAIR.** `0 <= confidence <= 1`.
+
+```
+stake_pre_portfolio = kelly_base * confidence
+stake_final         = stake_pre_portfolio * risk_multiplier   (cartera, CDaR, vetos)
+```
+
+Regla estructural que garantiza R1/R2: **`confidence` no puede tener a P_FAIR entre
+sus argumentos.** Si no depende de P, no puede introducir no monotonicidad ni
+fronteras. Eso es exactamente lo que rompio `zonas_confiables`.
+
+### Fuentes candidatas, y si hay evidencia HOY para cada una
+
+| fuente | evidencia disponible | veredicto |
+|---|---|---|
+| error OOS del calibrador | **ninguna**: no sobrevive ningun calibrador | **no usable** |
+| discriminacion OOS del motor (Brier vs tasa base) | **si**: futbol 0.2146 vs 0.2494; MLB 0.24732 vs 0.24964 | **usable, y separa bien los dos motores** |
+| tamano efectivo de muestra por deporte/mercado | si: 4,065 ML futbol / 1,056 ML MLB / 516 O/U MLB | usable |
+| estabilidad entre ventanas walk-forward | si: la acabo de medir por ventana | usable |
+| antiguedad / drift | si: `modelo_backtest` congelado el 26-ago (10 dias); `bt_mlb_ml` al 30-ago | usable |
+| cobertura de mercado/liga | si | usable |
+| calidad de inputs (`data_completeness_pct`) | **diseñada en Fase 1 y NUNCA poblada** | **no usable todavia** |
+| `calibration_status` | si | usable como puerta, no como escala |
+
+### Forma propuesta
+
+```
+confidence = min( c_skill , c_muestra , c_estabilidad , c_frescura )
+```
+
+- Un **minimo**, no un producto: cuatro factores multiplicandose producen recortes
+  compuestos que nadie sabe explicar. Con `min` siempre hay **una** razon dominante,
+  y esa razon es el `confidence_reason`.
+- Cada factor es una funcion **continua y monotona de su propia evidencia**, acotada
+  en [0,1], y **constante respecto a P_FAIR**.
+- Cada factor se calcula **por (deporte, mercado)**, nunca compartido entre deportes.
+- **Ningun factor se ajusta para maximizar ROI.** `c_skill` sale de la comparacion
+  contra la tasa base, `c_muestra` del tamano efectivo, `c_estabilidad` de la
+  dispersion entre ventanas walk-forward, `c_frescura` de la antiguedad del ultimo
+  dato de entrenamiento.
+
+Consecuencia directa y deseada de lo medido: MLB tendria `c_skill` bajo (su motor
+apenas le gana a la tasa base) y futbol alto. **Eso es lo que hoy hace mal
+`zonas_confiables`: castiga por banda de probabilidad en vez de por calidad del
+motor.**
+
+Lo que queda pendiente de medir antes de fijar cualquier forma funcional: la
+relacion entre cada factor y el desempeño OOS. **No propongo numeros todavia.**
+
+## 2A.20 — DESCOMPOSICION DE KELLY
+
+`kelly_full = (P_FAIR*(momio-1) - (1-P_FAIR)) / (momio-1)`, y nada mas.
+Entrada: `P_FAIR`, `momio`. Sin calibracion, sin Wilson, sin Beta, sin sesgo, sin
+confidence, sin caps, sin cartera.
+
+Mapa de lo que hoy vive dentro de `kelly_stake` y a que capa pertenece:
+
+| componente actual | capa correcta |
+|---|---|
+| `p := p_prob/100` | 1. probability estimation |
+| `zona_realidad` + `v_sesgo` (sesgo del tramo) | 1. probability estimation — **y queda DEPRECADO** |
+| `v_recorte` (Beta p10, Jeffreys) | **3. confidence** (hoy mal ubicado: reescribe P) |
+| `v_factor_n` (Wilson) | **3. confidence** (hoy mal ubicado: reescribe P) |
+| `f_full` | **2. Kelly** |
+| `v_fraccion` (0.25) | 2. Kelly (fraccional) |
+| `stake_techo` = bankroll * `stake_max_pct` | 4. bankroll/risk caps |
+| `v_min` (piso $20 -> 0) | 4. bankroll/risk caps |
+| `bankroll_disponible()` | 4. bankroll/risk caps |
+| `p_techo_custom` (solo aprieta) | 4. bankroll/risk caps |
+| CDaR / `exposicion_viva` (en `reto_picks_hoy`) | 5. portfolio risk |
+| `rongol_veto` | 5. portfolio risk |
+
+**El defecto de arquitectura en una linea:** hoy las capas 1 y 3 estan fusionadas —
+la incertidumbre reescribe la probabilidad en vez de reducir la exposicion. Por eso
+`prob_que_decide_pct` no es una probabilidad, y por eso la cadena no es auditable.
+
+## 2A.22 — OBJETO CANONICO
+
+| campo | definicion unica |
+|---|---|
+| `p_raw` | salida del motor del deporte, sin transformar, en [0,1] |
+| `p_fair` | mejor estimacion disponible. Hoy = `p_raw` en todos los deportes |
+| `calibration_status` | `SIN_CALIBRACION_DEMOSTRADA` / `CALIBRACION_RECHAZADA_OOS` / `CALIBRADO` / `SIN_MODELO` |
+| `calibration_version` | id del calibrador aplicado, NULL si identidad |
+| `calibration_data_cutoff` | hasta que fecha llegan los datos del calibrador |
+| `momio` | precio decimal usado, del lado del pick |
+| `odds_source` | casa / tabla origen |
+| `odds_timestamp` | cuando se capturo ese precio |
+| `ev_fair` | `p_fair * momio - 1` |
+| `confidence` | [0,1], multiplicador de exposicion, independiente de `p_fair` |
+| `confidence_reason` | cual de los factores mando (el del `min`) |
+| `confidence_version` | version del motor de confianza |
+| `kelly_full` | Kelly puro sobre `p_fair` y `momio` |
+| `kelly_fractional` | `kelly_full * fraccion_kelly` |
+| `risk_multiplier` | producto de restricciones de cartera **con nombre** |
+| `stake_pre_portfolio` | `bankroll * kelly_fractional * confidence` |
+| `stake_final` | tras cap, floor y `risk_multiplier` |
+| `reason_code` | por que se bloqueo o recorto |
+| `as_of` | fecha de referencia usada (candado de Fase 1.5) |
+| `deporte`, `mercado`, `espn_event_id` | identidad |
+| `poblacion_evidencia` | **A/B/C/D**: de que poblacion salio la evidencia que sostiene `confidence` |
+
+`poblacion_evidencia` es campo nuevo y no cosmetico: es lo que impide volver a
+confundir `P(resultado|p)` con `P(resultado|p, publicado)`.
+
+## 2A.23 — PLAN DE MIGRACION
+
+| fase | que se hace | rollback |
+|---|---|---|
+| **A** | Crear `v_decision_canonica` (o funcion) que produzca el objeto completo **en paralelo**, sin que nadie lo lea. `p_fair = p_raw`, `confidence` en una version 0 conservadora | `DROP`; nada la lee |
+| **B** | Tabla de comparacion shadow: para cada pick vivo, guardar lado a lado lo que dice `kelly_stake` y lo que dice el canonico. **Acumular >= 2 semanas** | truncar la tabla |
+| **C** | Migrar superficies de LECTURA (`mejor_oportunidad_hoy`, `analisis_completo`, `destacados_cache`) a leer `ev_fair` del canonico. **El dinero sigue saliendo de `kelly_stake`** | revertir cada vista, una por una |
+| **D** | Migrar el sizing: `reto_picks_hoy` pasa a leer `stake_final` del canonico | `reto_picks_hoy` vuelve a `kelly_stake`; ambas coexisten |
+| **E** | Deprecar `zonas_confiables` de la cadena de dinero y borrar el sesgo aditivo de `kelly_stake` | la tabla sigue existiendo para diagnostico |
+
+**Ajuste al orden propuesto por el auditor:** C antes que D es correcto, pero
+**B debe durar lo suficiente para acumular picks resueltos**, no solo generados.
+Con ~16 picks vivos por dia, dos semanas dan ~220 observaciones: suficiente para
+detectar divergencias de decision, insuficiente para concluir sobre acierto. La
+comparacion de B es de **coherencia**, no de rendimiento.
+
+## PRUEBAS DE ACEPTACION (las 13, con su forma de verificacion)
+
+| # | prueba | como se verifica |
+|---|---|---|
+| 1 | P_FAIR monotona respecto del calibrador | malla P=1..99 por deporte/mercado |
+| 2 | Kelly base monotona | analitica + malla |
+| 3 | 49->50 no reduce stake | regresion registrada (hoy $110.07 -> $0) |
+| 4 | 59->60 no reduce stake | regresion registrada (hoy $145.70 -> $0) |
+| 5 | BTTS sin salto de -15.9 pp | regresion registrada |
+| 6 | soccer no mueve nada de MLB | inyectar sesgo extremo en calibracion soccer, medir 0 centavos de cambio en MLB |
+| 7 | `P_CAL2` inexistente | grep de catalogo: 0 superficies llaman `calibrar_prob_motor*` fuera de la autoridad |
+| 8 | ninguna superficie recalcula | idem, mas revision de las 5 superficies |
+| 9 | EV mostrado = EV que decide en superficies accionables | hoy fallan 4 de 16; debe ser 0 de N |
+| 10 | fallback explicito | `calibration_status` presente siempre; 0 casos de probabilidad cruda sin etiqueta |
+| 11 | corte temporal respetado | reusar la bateria A-E de Fase 1.5 |
+| 12 | no regresion de Fase 1.5 | `invariantes_temporales().ok = true` + event trigger activo |
+| 13 | `EXP_OFF = 0.50` | grep en `predecir_mlb` |

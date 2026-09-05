@@ -479,3 +479,29 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     Nota de metodo: `badrino_partidos.ml_home/ml_away` son momios AMERICANOS
     enteros. Mi primera medicion dio "0 partidos con ambos lados" por no convertir;
     el dato estaba bien y la consulta mal.
+
+61. **SI existe el universo completo de MLB, y el sesgo de seleccion es enorme.**
+    `bt_mlb_ml` (1,056 juegos, lado local de cada partido, sin seleccion) y
+    `badrino_backtest` (2,580) son las poblaciones correctas. Comparadas con los
+    picks publicados: la probabilidad media baja de **52.3% a 42.8%** y la
+    dispersion se **duplica** — el sistema publica casi solo no-favoritos, que es la
+    explicacion mecanica de #126. Y sobre todo: **en el universo el motor esta
+    practicamente insesgado (-0.41 pp)**, mientras que en los publicados marca
+    +2.01 pp. **El auditor tenia razon**: el -4% de MLB que medi el turno anterior
+    es sesgo condicional a seleccion y NO puede ir al codigo como calibrador.
+    Sigue siendo prueba de que el +4.9 de futbol es indefendible.
+
+62. **El P_CAL actual no merece ser P_FAIR en NINGUN deporte.** MLB Moneyline sobre
+    el universo completo: la calibracion **pierde en 3 de 3 ventanas** (Brier raw
+    0.24732 vs cal 0.24850) y empeora el sesgo de -0.41 a -1.49 pp. Futbol,
+    evaluado **en muestra** (el coeficiente se ajusto sobre ese mismo periodo, o sea
+    en condiciones favorables): mejora global **-0.00019**, es decir empeora; y el
+    sesgo crudo de Moneyline es **0.00 pp exacto** — el motor ya esta insesgado y
+    calibrarlo lo desvia a -0.87.
+    Conclusion: **P_FAIR = P_RAW** hoy, con `calibration_status` explicito
+    (`CALIBRACION_RECHAZADA_OOS` en MLB ML, `SIN_CALIBRACION_DEMOSTRADA` en el
+    resto). Identidad explicita no es un error: es el resultado de medir.
+    Dato que conviene no perder: en futbol el motor SI discrimina (Brier 0.2146
+    contra tasa base 0.2494); en MLB apenas (0.24732 contra 0.24964). Son dos
+    motores de calidad muy distinta, y eso es lo que `confidence` debe reflejar,
+    no la banda de probabilidad.
