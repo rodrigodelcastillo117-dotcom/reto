@@ -1282,3 +1282,36 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
      Moneyline, con momios de **1.909 a 3.01** — es decir, ninguno cae en un tramo
      medido. Las celdas n=6 (3-3) y n=8 (4-4) son 50% exacto: Wilson 95%
      [18.8, 81.2] y [21.5, 78.5]. No tienen soporte fuera de muestra.
+
+112. **#248 P0 CERRADO: cerrar una apuesta desde la app era IMPOSIBLE. Era RLS, no la logica de cierre.**
+     Sintoma reportado con captura: al cerrar un parlay de 2 patas la app devolvia
+     `new row violates row-level security policy for table "notificaciones"`.
+     **Causa.** `notificaciones` tiene RLS con politicas de `SELECT` y `UPDATE` para
+     `authenticated` y **ninguna de `INSERT`**. Y los dos triggers que escriben ahi al
+     calificar corrian como el usuario:
+     - `notify_parlay_graded()` (trigger `on_parlay_graded_notify` en `parlays`)
+     - `notify_pick_graded()` (trigger `on_pick_graded_notify` en `picks`)
+     Las otras cuatro funciones que insertan en `notificaciones`
+     (`procesar_notificaciones_marcador`, `alertar_picks_sin_marcador`,
+     `dispatch_pa_para_pick`, `dispatch_pa_para_pierna_parlay`) **si** eran
+     `SECURITY DEFINER`. Estas dos se quedaron fuera. Por eso el cron calificaba bien
+     (corre como `service_role`) y el cierre manual moria siempre — sencillas incluidas.
+     **Correccion.** `SECURITY DEFINER` en las dos. Se descarto la alternativa de dar
+     una politica de `INSERT` a `authenticated`: la notificacion es un efecto del
+     sistema, no una escritura del cliente, y esa politica le permitiria fabricar
+     notificaciones arbitrarias por PostgREST. Con DEFINER no puede: la RLS de
+     `parlays`/`picks` solo lo deja tocar filas con
+     `apodo = apodo_de_la_sesion()`, asi que `NEW.apodo` siempre es el suyo.
+     **Prueba adversarial, con rollback.** Con `set local role authenticated` y las
+     claims de rodelcast:
+     - parlay `0c20f6c6` -> **OK, 1 fila actualizada** (antes: violacion de RLS)
+     - pick `6e741cff` -> rechazado por `23514`: *"Todavia no se puede calificar:
+       Schalke 04 - Bayern Munich sigue en juego (29')"*. Esa es la guarda de
+       calificacion prematura haciendo su trabajo, no el bug.
+     Todo revertido: parlay y pick siguen `pendiente`, `updated_at` sin tocar, y
+     **0 notificaciones creadas** por la prueba.
+     **Residual (no tocado, mismo patron, hoy inofensivo):**
+     `auto_close_parlay_when_all_legs_decided` (escribe `parlays`) y
+     `marcar_patas_parlay` (escribe `picks`) siguen `SECURITY INVOKER`. No fallan
+     porque ambas tablas SI tienen politica `ALL` para el dueno; pero si un dia una
+     pata pertenece a otro apodo, no daran error: **no haran nada**.
