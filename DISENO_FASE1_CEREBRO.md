@@ -652,3 +652,248 @@ puede responder: solo el 3.8% de los cierres registrados es T-5 de verdad.
    exige la rejilla Dixon-Coles completa y queda pendiente.
 5. **Corners no se tocó.** Sigue con AUC 0.3109 (invertido, 3.56σ) en producción, y este
    backtest no lo mejora: la vista no trae proxy de corners esperados.
+
+---
+
+# ANEXO B — EJECUCIÓN DE LOS 5 PASOS (5-sep-2026)
+
+Regla 360°: inspección → diagnóstico previo → dependencias → cambio reversible → pruebas.
+
+## PASO 1 — Trazabilidad + candado anti-LLM. APLICADO
+
+**Diagnóstico previo:** `oraculo_picks_tracking` 3,458 filas (3,200 con `probabilidad_real`);
+`picks` 34 filas y **0 columnas de probabilidad**. 6 escritores SQL, todos INSERT,
+**ninguno hace UPDATE de `probabilidad_real`**; el único `ON CONFLICT` es `DO NOTHING`.
+
+**DDL:** columnas `features_input_json jsonb` + `data_completeness_pct numeric` en ambas
+tablas, `CHECK` de rango 0-100, índice GIN sobre `->'entradas'`, índice parcial de
+completitud, tabla `feature_pesos`, y `COMMENT ON` documentando la prohibición de
+reconstruir insumos a posteriori.
+
+**Validador** `features_input_valido(jsonb)`: exige `schema=1`, `motor`, `entradas`, y por
+cada hoja `{v, src, estado}` con `estado ∈ (ok|fallback|ausente|fuera_de_rango)`;
+`fallback` obliga `v_usada`; `ok` con `v` nulo se rechaza (el defecto de #107/#108).
+
+**Triggers:** `zzz_prob_solo_del_motor` (BEFORE INSERT OR UPDATE en
+`oraculo_picks_tracking`) y `zzz_valida_features_picks` (en `picks`).
+Regla central: **no se puede cambiar `probabilidad_real` sin cambiar
+`features_input_json`.** Escotilla documentada: `app.mantenimiento_trazabilidad='on'`.
+
+**Procesos AUTORIZADOS explícitamente** (probados, pasan sin fricción):
+calificación de resultado, escritura de CLV/`odds_cierre`, aprendizaje, recalibración
+(escriben en `calibracion_isotonica`, no aquí) y escritores aún no migrados
+(insert con `features_input_json` NULL).
+
+**Registros previos incompatibles: 0.** Las 3,458 filas quedan con `features_input_json`
+NULL, que el validador acepta.
+
+**Pruebas: 11 de 11.**
+
+| # | prueba | esperado | resultado |
+|---|---|---|---|
+| 1 | insert con sobre válido | PASA | PASÓ |
+| 2 | mover prob sin declarar insumos | BLOQUEA | `TRAZABILIDAD: no se puede cambiar probabilidad_real (0.55 -> 0.77)...` |
+| 3 | mover prob declarando insumos | PASA | PASÓ |
+| 4 | calificar resultado (legítimo) | PASA | PASÓ |
+| 5 | escribir CLV (legítimo) | PASA | PASÓ |
+| 6 | estado fuera de vocabulario | BLOQUEA | `...estado invalido: inventado` |
+| 7 | dice ok con valor nulo | BLOQUEA | `...dice ok con v nulo` |
+| 8 | fallback sin `v_usada` | BLOQUEA | `...dice fallback pero no declara v_usada` |
+| 9 | escritor no migrado (compat) | PASA | PASÓ |
+| 10 | escotilla de mantenimiento | PASA | PASÓ |
+| 11 | limpieza de filas de prueba | 2 borradas | 2 borradas |
+
+Nota: el primer arnés dio 4 falsos negativos porque `fuente='prueba'` viola
+`oraculo_picks_tracking_fuente_check` y el INSERT nunca ocurrió. Se corrigió con
+`fuente='oraculo'` y una guarda `IF v_id IS NULL THEN RAISE`.
+
+## PASO 2 — NFL OFF + Corners OFF. APLICADO
+
+Mecanismo: tabla `mercados_sin_modelo(etiqueta, patron_deporte, patron_mercado, motivo,
+evidencia, criterio_reingreso, desde, activo)` + `sin_modelo_independiente(deporte, mercado)`.
+**Reactivación = `activo=false`.** No se borró ni un registro histórico.
+
+| etiqueta | evidencia registrada | criterio de reingreso |
+|---|---|---|
+| `nfl_sin_modelo` | `nfl_predecir` líneas 40-47/57-62 escriben `'fuente','mercado'`; 15/15 picks con `prob_placeholder=true` | AUC ≥ 0.55, n ≥ 250, 2 temporadas, Y ganar en LogLoss a la línea sin vig |
+| `corners_sin_modelo` | AUC 0.3109, n=119, **z = −3.56** (invertido); banda ≥65% proyecta 81.6% y rinde 48.8% | AUC ≥ 0.55 con z ≥ 2 sobre backtest temporal con una fuente de corners esperados que hoy no existe |
+
+Cirugía con candado de aborto en 3 funciones (1 sola versión de cada una después):
+`revisar_apuesta` (nivel `bloqueado` + razón escrita), `reto_picks_hoy`
+(`bloqueado_por='sin_modelo'`, prioridad máxima), `nfl_predecir`
+(`"es_modelo": false` en el contexto **y entrada por entrada**).
+
+**Pruebas de vocabulario: 12/12.** Atrapa `football`, `football/nfl`,
+`🏈 Futbol Americano`, `NFL`, `NFL Pretemporada`, `Corners`, `Tiros de esquina`.
+**Falsos positivos: 0** sobre todas las ligas/endpoints de la base
+(`⚽ Fútbol`, `soccer`, `⚾ Beisbol`, `🏀 Baloncesto`, `🎾 Tenis` pasan).
+
+**Prueba funcional:** NFL ML → `bloqueado/permitir=false/nfl_sin_modelo`;
+Corners → `bloqueado/corners_sin_modelo`; control Fútbol O/U → `advertencia/permitir=true`
+(sin cambio). MLB ML sale `bloqueado` pero por el veto RONGOL preexistente (EV −10.51%),
+no por este cambio.
+
+`nfl_predecir()` re-ejecutada: **272 partidos**, 272 contextos con `es_modelo:false`,
+**1,376 entradas de mercado marcadas** una por una (solo 17 con `es_modelo:true`).
+
+## PASO 3 — CLV: infraestructura SÍ, operación NO
+
+`clv_real` creada con **4 garantías estructurales** (CHECK, no promesas):
+
+1. `snapshot_at_cierre < arranca_en` — imposible guardar un precio en vivo.
+2. `minutos_antes ∈ (0, 30]` — un precio de hace 30 horas **no cabe en la tabla**.
+3. `clv_pct` NULL ⟺ sin cierre válido — jamás aproximado.
+4. la calidad se deriva del reloj: `T-5` exige ≤5 min, `T-30` exige >5.
+
+**Pruebas: 6/6** (4 negativas rechazadas por el CHECK correcto, 2 positivas aceptadas).
+
+**COBERTURA REAL MEDIDA — NO declaro el CLV operativo:**
+
+| métrica | valor |
+|---|---|
+| eventos jugados en 30 días | 1,734 |
+| con algún snapshot | 466 (**26.9%**) |
+| **califican a T-30** | **119 (6.9%)** |
+| califican a T-5 | 25 (1.4%) |
+| mediana de retraso | **129.9 minutos** |
+
+Doble cuello de botella: el 73% de los eventos **no tiene ni un precio**, y de los que sí,
+solo una cuarta parte llega cerca del saque. `snapshot-odds` corre `15 */6 * * *`
+(cada 6 horas). **La infraestructura existente NO puede capturar T-30 de forma
+suficiente.** `q_clv` sigue NULL en el PQS.
+
+## PASO 4 — xG re-estimado SIN fuga. α=0.75 SE OFICIALIZA
+
+**Fecha de corte: 2024-10-05** (percentil 33 de las 32,184 filas equipo-partido).
+Ajuste de `a` y `b` por mínimos cuadrados **solo con datos anteriores** a esa fecha;
+prueba solo con datos posteriores.
+
+| | a (SOT) | b (tiros fuera) |
+|---|---|---|
+| **re-estimado limpio** (n entrenamiento = 10,588) | **0.353492** | **−0.024323** |
+| en producción hoy | 0.1994 | 0.0648 |
+
+El `b` sale **negativo**: con los mismos tiros a puerta, más tiros fuera predice MENOS
+goles. Plausible (disparo desperdiciado) pero cambia la naturaleza del objeto — ya no es
+"xG", es un índice de calidad de tiro. Se reporta, no se maquilla.
+
+### Peldaño 0 — RMSE, 5 folds, solo periodo de prueba (n = 3,491 por fold)
+
+| α | f1 | f2 | f3 | f4 | f5 | promedio | sd entre folds |
+|---|---|---|---|---|---|---|---|
+| **0.00** (motor actual) | 1.29525 | 1.26051 | 1.27915 | 1.22247 | 1.28799 | **1.26907** | 0.02911 |
+| 0.25 | 1.26173 | 1.23091 | 1.24747 | 1.19419 | 1.25763 | 1.23839 | 0.02742 |
+| 0.50 | 1.24149 | 1.21268 | 1.22869 | 1.17768 | 1.23887 | 1.21988 | 0.02616 |
+| **0.75** | **1.23462** | **1.20630** | **1.22292** | **1.17351** | **1.23199** | **1.21387** | **0.02513** |
+| 1.00 | 1.24100 | 1.21185 | 1.23010 | 1.18212 | 1.23712 | 1.22044 | 0.02417 |
+
+**α=0.75 es el mínimo en 5/5 folds.** t pareado (α=0 vs α=0.75): **18.13** con n=17,454.
+
+### Peldaño 1 — LogLoss
+
+| fold | O/U goles | O/U xG | tasa base (sin fuga) | BTTS goles | BTTS xG |
+|---|---|---|---|---|---|
+| 1 | 0.72448 | 0.70167 | 0.69315 | 0.72863 | 0.70232 |
+| 2 | 0.73010 | 0.69774 | 0.69143 | 0.73409 | 0.70413 |
+| 3 | 0.73862 | 0.69544 | 0.68752 | 0.72988 | 0.69922 |
+| 4 | 0.73663 | 0.69907 | 0.69022 | 0.73252 | 0.70058 |
+| 5 | 0.72272 | 0.68838 | 0.68402 | 0.72027 | 0.68592 |
+
+xG le gana al motor actual **5/5 en ambos mercados**. **Sin calibrar NO le gana a la tasa
+base en ningún fold (0/5)** — dato incómodo que se reporta tal cual.
+
+### Con calibración por temperatura ajustada fuera de muestra
+
+| fold | T | sin calibrar | **calibrada** | tasa base |
+|---|---|---|---|---|
+| 2 | 2.4 | 0.69774 | **0.68334** | 0.69143 |
+| 3 | 2.4 | 0.69544 | **0.68272** | 0.68752 |
+| 4 | 2.4 | 0.69907 | **0.68436** | 0.69022 |
+| 5 | 2.4 | 0.68838 | **0.67870** | 0.68402 |
+
+Criterio 1: **4/4**. Criterio 2 (gana a tasa base): **4/4**. Criterio 4: T = 2.4 idéntica
+en los cuatro folds. Brier calibrado 0.24283–0.24570, todos bajo 0.25.
+
+### Peldaño 2 — AUC (SE ≈ 0.012 por fold)
+
+| fold | AUC O/U | AUC BTTS | Brier O/U xG |
+|---|---|---|---|
+| 1 | 0.5674 | 0.5462 | 0.25204 |
+| 2 | 0.5713 | 0.5327 | 0.25132 |
+| 3 | 0.5722 | 0.5376 | 0.24988 |
+| 4 | 0.5605 | 0.5408 | 0.25236 |
+| 5 | 0.5841 | 0.5682 | 0.24631 |
+
+O/U pasa la puerta (≥0.55) en **5/5**. BTTS solo en **1/5** — BTTS **no** pasa el peldaño 2.
+
+### DECISIÓN
+
+**α = 0.75 SE OFICIALIZA**, solo para **Fútbol Over/Under 2.5**, y solo como hallazgo
+de backtest — **no se conectó a producción en esta interacción**. Cumple las cuatro
+reglas: mantiene superioridad fuera de muestra, gana 5/5 folds, la mejora no depende de
+un fold (sd 0.025, todos mejoran), y sobrevivió al reajuste limpio de `a,b`.
+
+**BTTS no se oficializa**: falla el peldaño 2 en 4 de 5 folds.
+**Peldaño 3 (contra el precio) sigue sin poder ejecutarse**: requiere el CLV del paso 3,
+que hoy cubre 6.9%.
+
+## PASO 5 — MLB, peldaño 0
+
+### Criterio de disponibilidad temporal — dos hallazgos
+
+1. **`mlb_stats_cache` SÍ prueba disponibilidad.** Tiene `cached_at`: **1,221 de 1,224
+   filas capturadas ANTES del juego**, mediana 12.08 horas antes. 3 filas contaminadas
+   (0.2%) excluidas.
+2. **`mlb_forma_temporada` NO puede usarse: es fuga.** Su esquema es
+   `(temporada, equipo, juegos, rpg, permitidas_pg)` — **sin fecha de corte**. Guarda el
+   agregado de la temporada EN CURSO. Usarla para un juego de junio mete resultados de
+   agosto. Y es la fuente del bloque de peso más alto en producción (`EXP_DEF = 0.50`,
+   documentado como "las carreras permitidas resultaron más confiables que la ofensiva").
+   Se **reconstruyó leak-free** desde el log de 7,323 juegos de `historico_partidos_espn`.
+
+Corpus limpio: **1,086 juegos** (2,172 filas equipo-juego), 434 por fold, 2026-05 a 2026-09.
+
+### Ablación incremental con los exponentes DE PRODUCCIÓN
+
+| modelo | RMSE promedio | sd entre folds |
+|---|---|---|
+| **M0 base liga (local/visita)** | **3.27214** | 0.14533 |
+| M1 + ofensiva propia | 3.28078 | 0.15569 |
+| M2 + defensa rival | 3.28155 | 0.16112 |
+| M3 + abridor rival FIP/ERA | 3.28485 | 0.15840 |
+| M4 + platoon L/R | 3.28483 | 0.15842 |
+| M5 + fatiga bullpen | 3.28969 | 0.15668 |
+| M6 + park factor | 3.28360 | 0.15554 |
+
+**Con los pesos de producción, TODAS las variables empeoran el modelo.** El platoon mueve
+el RMSE en −0.00002: es indistinguible de no existir.
+
+### Barrido del exponente — no era la variable, era el peso
+
+| exponente | RMSE global |
+|---|---|
+| 0.0 (constante) | 3.27472 |
+| **0.2** | **3.25892** |
+| 0.4 | 3.27158 |
+| **0.5 (PRODUCCIÓN HOY)** | 3.28237 |
+| 0.8 | 3.35100 |
+| 1.0 | 3.39340 |
+
+| modelo | f1 | f2 | f3 | f4 | f5 | prom | t pareado |
+|---|---|---|---|---|---|---|---|
+| exp 0.0 (constante) | 3.3592 | 3.4545 | 3.2690 | 3.0750 | 3.2030 | 3.27214 | — |
+| **exp 0.2** | **3.3549** | **3.4404** | **3.2590** | **3.0535** | **3.1729** | **3.25611** | **2.39** |
+| exp 0.5 (producción) | 3.3984 | 3.4683 | 3.2971 | 3.0776 | 3.1810 | 3.28448 | — |
+
+### Decisión MLB
+
+- **Hay señal, pero es pequeña**: exp 0.2 gana al constante en 5/5 folds, t = 2.39.
+- **Producción sobrepondera 2.5×**: con exp 0.5 el modelo es **peor que no pensar** en
+  4 de 5 folds.
+- **NINGUNA variable se conecta ni se reajusta hoy.** El exponente 0.2 se eligió barriendo
+  sobre **todos** los folds, así que ese 5/5 y ese t=2.39 son **optimistas por selección
+  sobre el conjunto de prueba**. Antes de oficializar hace falta un ajuste anidado
+  (elegir el exponente solo con folds anteriores). Queda pendiente y declarado.
+- Bullpen (`EXP_BULLPEN=0.00`) y alineación (`PESO_ALINEACION=0.00`) **ya estaban
+  apagados** en producción con medición previa (#150, #135). El backtest lo confirma:
+  ambos empeoran.
