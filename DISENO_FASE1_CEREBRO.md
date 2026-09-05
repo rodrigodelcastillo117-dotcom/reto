@@ -1127,3 +1127,160 @@ hoy. Por eso `prediction_timestamp > game_date` en las 800. Su integridad tempor
 del **corte de features en `game_date`**, no del reloj de generación. Las filas futuras,
 generadas antes del juego, sí tendrán `prediction_timestamp < game_date`. Ambas columnas
 se guardan precisamente para poder distinguirlo.
+
+---
+
+# ANEXO E — TURNO QUIRÚRGICO: #214, calibracion_coef, forense del CLV (5-sep-2026)
+
+## TAREA 1 — #214 CORREGIDO. PASS
+
+**Semántica verificada antes de tocar:** `snapshot` es `date` (no timestamp), servidor en
+UTC. Con granularidad de día **no se puede probar** que un snapshot del MISMO día del
+partido sea anterior al primer lanzamiento → el corte es **estricto (`<`)**.
+
+Solo existen **3 snapshots**: 2026-09-02 / 09-03 / 09-04.
+
+**Consumidores de `mlb_bateador_temporada`:**
+
+| objeto | tipo | ¿tenía corte? | acción |
+|---|---|---|---|
+| `fuerza_alineacion` | producción (vía `predecir_mlb`) | **NO** | **CORREGIDO** |
+| `mlb_bat_pedir` / `mlb_bat_recoger` | cargadores (ingesta) | N/A | sin cambio |
+| `mlb_shadow_generar` | observacional | **falso positivo**: 0 lecturas reales, el match era un literal de texto en `excluidas` | sin cambio |
+| `v_equipo_platoon` | vista | **0 consumidores** (muerta) | sin cambio |
+
+**Diff aplicado en `fuerza_alineacion`:**
+
+```diff
+-  select c.mlb_game_pk, ev.hid, ev.aid,
++  select c.mlb_game_pk, ev.hid, ev.aid, c.game_date,   -- corte_temporal_214
+
+-ult as (select max(snapshot) s from mlb_bateador_temporada),
++ult as (select max(b.snapshot) s from mlb_bateador_temporada b, ctx
++         where b.snapshot < (ctx.game_date at time zone 'UTC')::date),
+
+-   where al.lado = p_lado
++   where al.lado = p_lado and al.cargado_at < ctx.game_date   -- corte_temporal_214
+```
+
+**Segundo vector encontrado y cerrado:** la alineación misma. **459 de 936** filas de
+`mlb_alineacion` cruzables tenían `cargado_at` **posterior** al inicio del juego.
+Arreglar solo el snapshot de bateo habría dejado la feature contaminada por el otro lado.
+
+**Prueba adversarial (3 vectores simultáneos: 25 partidos futuros 40-0 + snapshot de bateo
+2026-12-31 + 9 bateadores cargados 5 días después del juego):**
+
+| partido | fecha | factor home A→B | factor away A→B | λ local | prob local | JSON completo |
+|---|---|---|---|---|---|---|
+| `401816798` Phillies-Braves | 4-sep | **1.1014 → 1.1014** | **0.8978 → 0.8978** | 3.865 = 3.865 | 46.3 = 46.3 | **IDÉNTICO** |
+| `401816712` Cardinals-Pirates | 29-ago | NULL → NULL | NULL → NULL | 4.524 = 4.524 | 54.5 = 54.5 | **IDÉNTICO** |
+
+Rollback: 0 residuo en `historico_partidos_espn`, `mlb_bateador_temporada` y
+`mlb_alineacion`; `max(snapshot)` de vuelta en 2026-09-04.
+
+**Costo honesto del arreglo:** los juegos con factor de alineación pasan de ~la mayoría a
+**14 de 1,224**. No es una regresión: es que la tabla de bateo guarda 3 días de historia y
+la mitad de las alineaciones se cargan después del juego. Antes ese hueco se tapaba con
+datos del futuro. Sin impacto en λ (`PESO_ALINEACION = 0.00`).
+
+## TAREA 2 — `calibracion_coef`. **FAIL**
+
+**Semántica temporal:** `calibracion_coef(id, ajustado_at, a, b, muestra, tasa_base,
+vigente, nota, rango_min, rango_max, deporte, origen)`. **NO tiene versionado temporal**:
+0 columnas `effective_from`/`effective_to`. 7 filas, 3 con `vigente=true`
+(soccer id 7, baseball id 6, football id 3), todas ajustadas entre el 30-ago y el 2-sep.
+
+`calibrar_prob_motor` selecciona así:
+
+```sql
+where c.vigente and c.deporte = p_deporte
+order by c.ajustado_at desc limit 1
+```
+
+**`ajustado_at` solo ORDENA. Nunca se compara contra `game_date`.** Una predicción de un
+partido de mayo usa el coeficiente ajustado el 2-sep, estimado sobre datos que incluyen
+partidos posteriores a ese partido.
+
+**Prueba adversarial** (coeficiente extremo a=0.90 b=0.02 fechado **2027-01-01**,
+cuatro meses después del partido):
+
+| partido | clave | A | B |
+|---|---|---|---|
+| `401816798` | `edge_vs_mercado.ev_local_pct` | **−17.51** | **+64.80** |
+| `401816798` | `edge_vs_mercado.ev_visita_pct` | **+10.09** | **−81.62** |
+| `401815421` | (sin diferencia) | — | — |
+
+**Es el EV: el número que decide dinero.** Cambia de signo. El partido del 20-may no se
+movió porque no tiene momios y su bloque `edge_vs_mercado` está vacío — ausencia de
+precio, no inmunidad.
+
+*Corrección de mi propia primera pasada:* el primer intento fechó el coeficiente extremo
+30 días después del partido de mayo, o sea **antes** del vigente del 2-sep, así que
+`ORDER BY ajustado_at DESC` ni lo eligió. Ese "idéntico" era un falso PASS del arnés, no
+un resultado. Repetí con fecha 2027-01-01.
+
+Rollback: 0 residuo, 7 filas, 3 vigentes.
+
+**NO se arregló** (requiere rediseño: versionado temporal de coeficientes). Severidad
+**ALTA**: es más grave que #214 porque #214 estaba dormido y este llega al EV.
+
+## TAREA 3 — Forense del precio de entrada del CLV
+
+**A) Cuándo se registra `momio_mercado`:** en el INSERT del pick. **B) Quién:**
+`sync_analisis_a_tracking`, `track_ai_pro_picks_from_analisis`, `track_oraculo_prob_pick`,
+`backfill_tracking_for_analisis`, `track_ai_generated_parlay`. **C) Fuente:** declarada en
+`odds_source`. **D) ¿Timestamp propio? NO** — solo existen `created_at` y `updated_at` de
+la fila. **E)** Por eso no se puede probar por columna si el precio se observó antes del
+saque; hay que cruzarlo contra `radar_odds_snapshots`. **F)** Sí es modificable después
+(`updated_at` existe y no hay candado sobre `momio_mercado`).
+
+**G) `momio_fantasma`** es booleano y lo pone `flag_momio_fantasma`:
+
+```sql
+NEW.momio_fantasma := (NEW.momio_mercado IN (1.91, 4.35)
+  AND coalesce(NEW.odds_source,'inventor') NOT IN (...lista de libros...)
+  AND coalesce(NEW.odds_source,'inventor') NOT LIKE 'libro:%');
+```
+
+**H)** Es un detector de **dos números mágicos**, los que inventaba el LLM. Que sea `false`
+NO prueba que el precio sea real: solo prueba que no es uno de esos dos.
+La prueba real de procedencia es `es_precio_de_libro(odds_source)`.
+**751 de 3,462 filas (21.7%)** tienen `momio_fantasma = true`.
+
+Dato adicional: `trg_clv_odds_apertura` hace `odds_apertura := momio_mercado` cuando está
+nula. **`odds_apertura` no es una apertura observada aparte: es una copia del mismo precio.**
+
+### MUESTRA FORENSE — las 153 filas (n = 153, no una muestra: el universo completo)
+
+Criterio ENTRY_VERIFICADO: `es_precio_de_libro(odds_source)` **Y** existe un snapshot real
+del mismo evento y lado con precio a ±0.011 en un `snapshot_at <= pick_created_at`.
+
+| categoría | n | % | CLV medio | mediana | p25 | p75 | p90 | mín | máx | sd | t vs 0 |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| **ENTRY_VERIFICADO** | **69** | **45.1%** | **−0.31** | −1.32 | −4.57 | 2.17 | 6.29 | −30.85 | 46.40 | 9.69 | **−0.26** |
+| ENTRY_NO_VERIFICABLE | 69 | 45.1% | **+8.98** | 1.68 | −5.58 | 13.13 | 36.37 | −41.82 | **225.58** | 36.79 | 2.03 |
+| ENTRY_FANTASMA | 9 | 5.9% | −2.08 | −2.55 | −4.50 | −0.83 | 1.82 | −7.28 | 3.80 | 3.37 | −1.85 |
+| TIMESTAMP_INCONSISTENTE | 6 | 3.9% | **+45.72** | 23.16 | 2.54 | 79.70 | 126.93 | −25.85 | 159.65 | 69.14 | 1.62 |
+| **TOTAL** | 153 | 100% | **+5.58** | **−0.53** | −4.65 | 7.09 | 30.05 | −41.82 | 225.58 | — | — |
+
+Dentro de los verificados, por calidad de cierre:
+T-5 (n=13): **−0.54**, t = −0.57. T-30 (n=56): **−0.25**, t = −0.18.
+
+### EXPLICACIÓN DEL +5.58% — DETERMINADA
+
+El +5.58% **no es señal**. Se explica por completo:
+
+1. Donde el precio de entrada está respaldado por un snapshot real de casa, el CLV es
+   **−0.31% con t = −0.26**: indistinguible de cero, ligeramente negativo. Es exactamente
+   lo que se espera de apostar sin ventaja pagando la comisión.
+2. Todo el exceso vive en las categorías que **no se pueden verificar**: 6 picks
+   registrados **después del saque** promedian **+45.72%**, y los 69 no verificables
+   **+8.98%** con 4 colas por encima de +50%.
+3. La **mediana global es −0.53%** contra una media de +5.58%: la media la arrastra una
+   cola derecha extrema (máximo +225.58%), no un desplazamiento del centro.
+4. Los verificados tienen **0 casos** por encima de +50%. Las otras categorías tienen 6.
+
+**Conclusión:** la tubería de CLV funciona. El CLV **no** mide todavía fielmente la calidad
+del precio de entrada, porque **el 54.9% de las filas tiene un precio de entrada que no se
+puede verificar contra un precio de casa realmente observado.** El termómetro estaba
+midiendo, en más de la mitad de los casos, su propio ruido.
