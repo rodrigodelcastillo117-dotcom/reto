@@ -1284,3 +1284,115 @@ El +5.58% **no es señal**. Se explica por completo:
 del precio de entrada, porque **el 54.9% de las filas tiene un precio de entrada que no se
 puede verificar contra un precio de casa realmente observado.** El termómetro estaba
 midiendo, en más de la mitad de los casos, su propio ruido.
+
+---
+
+## ANEXO F — CIERRE DEL BLOQUEANTE `calibracion_coef` (5-sep-2026)
+
+### F.1 DDL aplicado
+
+```sql
+ALTER TABLE public.calibracion_coef
+  ADD COLUMN IF NOT EXISTS effective_from          timestamptz,
+  ADD COLUMN IF NOT EXISTS data_cutoff_at          timestamptz,
+  ADD COLUMN IF NOT EXISTS data_cutoff_verificado  boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS cutoff_evidencia        text;
+
+UPDATE public.calibracion_coef SET effective_from = ajustado_at WHERE effective_from IS NULL;
+ALTER TABLE public.calibracion_coef ALTER COLUMN effective_from SET NOT NULL;
+
+ALTER TABLE public.calibracion_coef ADD CONSTRAINT chk_cal_cutoff_no_futuro
+  CHECK (data_cutoff_at IS NULL OR data_cutoff_at <= effective_from);
+ALTER TABLE public.calibracion_coef ADD CONSTRAINT chk_cal_verificado_exige_evidencia
+  CHECK (NOT data_cutoff_verificado OR (data_cutoff_at IS NOT NULL AND cutoff_evidencia IS NOT NULL));
+```
+
+### F.2 Definición de la selección temporal
+
+Un coeficiente es elegible para un partido con fecha `G` si y solo si:
+
+```
+effective_from                              <= G     (disponibilidad: ya existía)
+coalesce(data_cutoff_at, effective_from)     < G     (los datos terminaban antes)
+```
+
+Desempate: `ORDER BY coalesce(data_cutoff_at, effective_from) DESC, id DESC`.
+
+- `<=` en disponibilidad: un coeficiente desplegado exactamente al saque **sí** estaba
+  disponible.
+- `<` estricto en el corte de datos: datos que llegan hasta el instante del partido
+  podrían incluir el partido.
+- `coalesce(...)` usa `effective_from` como **cota superior demostrable** del corte real
+  cuando no hay evidencia: no se afirma equivalencia, se afirma `data_cutoff_at <= ajustado_at`.
+
+### F.3 Procedencia por coeficiente
+
+| id | deporte | vigente | `data_cutoff_at` | verificado | base |
+|----|---------|---------|------------------|------------|------|
+| 7 | soccer | sí | 2026-09-02 16:09 | **sí** | la `nota` documenta "21,252 partidos de 50 ligas (jul-2023 a sep-2026)" |
+| 6 | baseball | sí | NULL | no | declara tamaño de muestra, **no** rango de fechas |
+| 3 | football | sí | NULL | no | ídem |
+| 1,2,4,5 | — | no | NULL | no | no vigentes |
+
+Ninguna fecha fue inventada ni retro-fechada.
+
+### F.4 Prueba adversarial A→B (3 partidos, 15 pares)
+
+Baseline `a` y mutado `b` capturados espalda con espalda **dentro** de la misma
+subtransacción, que después se aborta. Diff sobre el JSON completo a dos niveles.
+
+| vector | condición inyectada | resultado |
+|--------|---------------------|-----------|
+| A | `effective_from` = G + 10 días | **JSON idéntico** en 3/3 |
+| B | `data_cutoff_at` = G + 5 días | **JSON idéntico** en 3/3 |
+| C | coeficiente legítimo (G − 1 día) | **cambia** en 3/3 (EV −17.51→+62.44, +5.55→+88.31, −20.56→+22.81) |
+| D | coeficiente fechado 2027-01-01 | **JSON idéntico** en 3/3 |
+| E | `data_cutoff_at` = G exacto (límite) | **JSON idéntico** en 3/3 |
+
+B y E además **no se pueden insertar**: los rechaza `chk_cal_cutoff_no_futuro`. Para
+auditar la compuerta del consumidor de forma independiente de la estructural, el CHECK
+se suspendió únicamente dentro de la subtransacción abortada.
+
+Vector C es la prueba de que el camino **no estaba dormido**: mueve EV y
+`prob_local_calibrada` en los tres partidos.
+
+### F.5 Defectos del arnés corregidos durante la prueba
+
+1. Los `INSERT` de diagnóstico se hacían dentro de la subtransacción abortada y se
+   revertían con ella. Solo sobrevivía lo escrito en el manejador de excepción. Se pasó
+   a acumular en variables PL/pgSQL (que **sí** sobreviven) y escribir al salir.
+2. La primera versión truncaba los valores a 220 caracteres y cortaba justo en la
+   sub-llave que difería. Por eso el diff decía "distinto" sin poder decir dónde.
+3. Vector C con fecha G − 10 días quedaba **dormido**: perdía el desempate contra el
+   coeficiente productivo (2026-09-02). Se re-fechó a G − 1 día.
+
+### F.6 Segundo lector sin compuerta (hallado por la prueba, corregido)
+
+`predecir_mlb` tenía un `SELECT` aparte a `calibracion_coef` con
+`ORDER BY c.ajustado_at DESC LIMIT 1` que alimenta `rango_medido_pct` y el texto de
+`motivo_sin_ev`. Alineado a la misma selección temporal. Sin este arreglo A/B/D/E
+seguían difiriendo en esa llave.
+
+### F.7 Escritor
+
+`reajustar_calibracion` no llenaba `effective_from` (ahora NOT NULL). Se parchó el
+escritor en vez de poner un DEFAULT: declara `effective_from = now()` y
+`data_cutoff_at = max(match_date)` de los mismos picks que estiman `a` y `b`, con
+`data_cutoff_verificado` y evidencia. Probado transaccionalmente bajando el piso de
+muestra solo dentro de la subtransacción: escribe cortes reales (2026-07-11 baseball,
+2026-08-19 soccer) y satisface los dos CHECK.
+
+### F.8 Integridad tras la prueba
+
+7 filas, `max(id) = 7`, 0 residuos `VECTOR%`, ambos CHECK presentes, 0
+`effective_from` nulos, piso de 300 intacto, `origen='backtest'` intacto en los 3
+vigentes, `EXP_OFF = 0.50`, shadow con 800 filas y **0 lectores** fuera de su propio
+generador, `picks`=34, `oraculo_picks_tracking`=3462, `clv_real`=153.
+
+### F.9 Riesgo residual declarado
+
+`filtro_pick` llama `calibrar_prob_motor(p, deporte)` con 2 argumentos, o sea `now()`.
+En producción es correcto (la decisión se toma en el presente) y su fallo es
+conservador: si no hay coeficiente vigente y válido devuelve NULL y **rechaza** el pick.
+Pero cualquier backtest que pase por `filtro_pick` sí tendría fuga. No se toca en este
+turno; queda declarado.

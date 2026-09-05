@@ -330,3 +330,34 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     `reto_13m_estado`) contra `clv_tracking.clv_pct` = **−7.54%** (n=30, este sí mide
     `momio_apostado` contra el cierre). El mensaje "le estamos ganando al cierre" se
     apoya en el número equivocado.
+
+53. **`calibracion_coef` era un vector de look-ahead vivo, y el arreglo destapó un
+    SEGUNDO lector sin compuerta.** La tabla no tenía ninguna noción de tiempo: 7
+    filas, 3 vigentes, cero columnas de versionado. `calibrar_prob_motor` elegía con
+    `ORDER BY ajustado_at DESC LIMIT 1`, así que un coeficiente ajustado DESPUÉS de un
+    partido cambiaba el EV de ese partido pasado (medido: `ev_local_pct` −17.51% →
+    +64.80%). Se separaron dos conceptos que se estaban confundiendo:
+    `effective_from` (desde cuándo el coeficiente existía y podía usarse) y
+    `data_cutoff_at` (hasta qué fecha llegan los datos con que se estimó).
+    Solo el coeficiente de fútbol (id 7) tiene evidencia documental del rango de datos
+    ("jul-2023 a sep-2026") y quedó `data_cutoff_verificado = true`. Los demás quedan
+    **NO verificables**, sin fecha inventada: la única afirmación defendible es la cota
+    `data_cutoff_at <= ajustado_at` (no se puede ajustar sobre datos que aún no existen),
+    y usar esa cota como puerta es estrictamente conservador — puede excluir un
+    coeficiente válido, nunca admitir uno contaminado.
+    Al re-correr la prueba adversarial apareció el segundo defecto: `predecir_mlb`
+    tenía **otro** `SELECT` a `calibracion_coef` (`ORDER BY c.ajustado_at DESC LIMIT 1`)
+    que alimenta `rango_medido_pct` y el texto de `motivo_sin_ev` **que ve el usuario**.
+    No movía el EV, pero sí cambiaba el rango mostrado de un partido pasado
+    ({43.2–62.2, n=1056} → {0.0–100.0, n=999}) y podía describir un coeficiente
+    DISTINTO del que realmente se aplicaba. Quedó alineado al mismo orden y a las
+    mismas dos condiciones que `calibrar_prob_motor`.
+    Impacto productivo medido: **30 de 30 partidos próximos conservan calibración**
+    (cero efecto sobre dinero vivo); 263 de 303 partidos de los últimos 30 días la
+    pierden, que es lo correcto — son anteriores al coeficiente y llamarlos
+    "calibrados" era ficción retroactiva.
+    Regresión propia detectada y corregida en el mismo turno: `effective_from` quedó
+    NOT NULL y el INSERT de `reajustar_calibracion` no la llenaba, así que el
+    recalibrado semanal habría reventado. Se parchó el **escritor** (no se puso un
+    DEFAULT que permitiera omitirla): ahora declara `effective_from = now()` y
+    `data_cutoff_at = max(match_date)` de los mismos picks que estiman `a` y `b`.
