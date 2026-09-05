@@ -1938,3 +1938,61 @@ usuario en `/?qa=zeus`. Puntos concretos a revisar: que la figura se lea sobre
 negro y no se pierda; que el fondo transparente sea real y no un recuadro
 blanco; y que en la epica el conjunto Zeus + VICTORY + monto + patas + boton
 CERRAR quepa en movil sin tapar el boton.
+
+---
+
+## 255. Celebraciones tematicas: ZEUS gana, HADES pierde. Un solo componente, tres variantes
+
+**Estado: DESPLEGADO en Lovable** — 5-sep-2026. SOLO capa visual.
+
+**Por que se unificaron.** Antes las dos celebraciones vivian en archivos
+distintos: Zeus en `ZeusWinOverlay.tsx` y el WASTED en `ResultadoOverlay.tsx`,
+cada uno con su propia estetica y sus propias constantes. "Ajustar intensidad"
+significaba tocar dos archivos que no compartian nada. Ahora hay UN componente,
+`CelebracionOverlay.tsx`, con UN bloque `PRESETS` de tres variantes.
+
+| variante | cuando | duracion | atmosfera |
+|---|---|---|---|
+| `zeus_pick_win` | pick sencillo ganado (legs = 1) | **1,800 ms** | 1 rayo, 40 confeti, sin sacudida, eyebrow "VICTORY" |
+| `zeus_parlay_win` | parlay ganado (legs >= 2) | **3,500 ms** | 5 rayos continuos, 3 destellos, 160 confeti, sacudida 9px, onda de choque, "VICTORY!" grande |
+| `hades_loss` | apuesta perdida | **2,600 ms** | sin rayos, 90 BRASAS ascendentes, velo rojo, vinetado, fondo en gris, entrada lenta sin rebote, "WASTED" en serif rojo |
+
+Duraciones dentro de los rangos que pidio el auditor (1.5-2s / 3-4s / 2-3s).
+
+**Motor de particulas con dos modos** en el mismo canvas: `confeti` cae desde
+arriba y rota; `brasas` suben desde abajo, brillan con `shadowBlur` y se
+desvanecen con la altura. Un solo `requestAnimationFrame`, DPR tope 2.
+
+**Assets:** `zeus-sereno.png`, `zeus-furioso.png` y `hades.png`, los tres en el
+mismo estilo splash art pintado.
+
+**Lo que NO se toco:** `useWinCelebration.ts` quedo intacto. El disparo ya
+distinguia `resultado === 'ganado'` de `=== 'perdido'` exactos, ya priorizaba
+parlay sobre sencilla, y ya traia el guard `primed` contra repeticiones. Lo
+unico que cambio es a que componente va cada estado: `victoria.variante` elige
+entre las dos de Zeus, y `derrota` entra fija como `hades_loss`.
+
+Tampoco se toco grading, bankroll, Kelly, RONGOL, el allocator ni ninguna RPC.
+
+**Secuencia ganada+perdida:** se conserva `derrota.open && !victoria.open`.
+Zeus corre primero y Hades entra cuando Zeus se cierra solo. Nunca se encinan.
+Total del peor caso: 3,500 + 2,600 = 6.1 s (antes eran 8.3 s).
+
+**Archivos:** NUEVO `CelebracionOverlay.tsx`; BORRADO `ZeusWinOverlay.tsx`;
+editados `Reto.tsx` y `ZeusQaPanel.tsx`. `ResultadoOverlay.tsx` se CONSERVA en
+el repo aunque ya nadie lo importe.
+
+**QA:** el panel de `?qa=zeus` gana un boton `7 · HADES (LOSS)`; la casilla de
+reduced motion pasa a `8`.
+
+**SIN VERIFICACION VISUAL.** No puedo abrir el navegador ni leer los PNG. Ni
+las tres ilustraciones ni las tres animaciones han sido vistas por nadie
+todavia. Lo tiene que mirar el usuario en `/?qa=zeus`.
+
+**PENDIENTES que siguen abiertos y NO se tocaron aqui:**
+- A. tipo real de entidad: hoy un parlay con `picks_data` corrupto se rotula
+  "PICK GANADO". 0 casos vivos medidos.
+- B. tope de 200 ids en `SEEN_WINS_KEY`: al pasar de 200 ganadas el FIFO expulsa
+  ids viejos y las celebraciones se repiten solas. Hoy van 14 ganadas.
+- C. `ScoreNotifBridge` en `App.tsx` lanza un toast "¡GANASTE $X!" por realtime
+  ademas del overlay. Duplicacion en la ganada real; el QA no la reproduce.
