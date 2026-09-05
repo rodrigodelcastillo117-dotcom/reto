@@ -1349,3 +1349,41 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
      el caso natural del usuario y hoy obliga a elegir entre dos botones que se
      sienten excluyentes. O el estado 'retirado' se ensena en las 107 lecturas, o el
      campo de cash out se ofrece tambien bajo PERDIDO/GANADO. Decision del usuario.
+
+114. **#250 El cash out deja de estar preso de `resultado='retirado'`.**
+     Decision del usuario (opcion 2 de #249): en vez de ensenar el estado 'retirado'
+     en las 107 lecturas que no lo conocen, se abre el campo de monto bajo GANADO y
+     PERDIDO. El caso real es "lo cerre antes Y iba perdiendo".
+     **Backend (desplegado):**
+     - `editar_resultado_parlay` y `editar_resultado_pick`: `cashout_monto` y
+       `cashout_fecha` ahora se escriben con `resultado IN ('retirado','ganado','perdido')`.
+       Con 'nulo' o 'pendiente' se rechaza con mensaje propio en vez de borrar el monto
+       en silencio. 'retirado' sigue exigiendo monto.
+     - `proteger_ganancia_cashout()`: **rama nueva de deshacer**. El diff de arriba abre
+       un hueco: antes, quitar un cash out obligaba a cambiar `resultado` (solo existia
+       con 'retirado') y eso disparaba `recalc_*_on_result_change`. Ahora se puede
+       guardar 'perdido' CON monto y volver a guardar 'perdido' SIN monto: el resultado
+       no cambia, recalc no dispara, y `ganancia_neta` se quedaria con el numero viejo.
+       La rama nueva reconstruye la ganancia por la regla normal, con
+       `TG_TABLE_NAME` para distinguir parlays (`ganancia_parlay_ganado`) de picks
+       (`apuesta * (momio - 1)`).
+     **Prueba adversarial como `authenticated`, con rollback, sobre el parlay real:**
+     | # | entrada | `ganancia_neta` | `cashout_monto` |
+     |---|---------|-----------------|-----------------|
+     | 1 | perdido + 75 | **-225.00** | 75 |
+     | 2 | perdido sin monto (deshacer) | **-300.00** | NULL |
+     | 3 | ganado + 500 | **+200.00** | 500 |
+     | 4 | nulo + 75 | **RECHAZADO** | — |
+     | 5 | pendiente | NULL | NULL |
+     Fila intacta despues de la prueba (`updated_at` 17:12:07, bankroll $4,322.45).
+     **Frontend:** enviado a Lovable un cambio acotado a
+     `src/components/reto/CorregirApuesta.tsx`: el input aparece con
+     `ACEPTA_CIERRE = ['retirado','ganado','perdido']`, obligatorio solo en 'retirado',
+     se limpia al elegir 'nulo'/'pendiente', y manda
+     `p_cashout_monto: aceptaCierre && hayMonto ? monto : null`. Pendiente de verificar
+     publicacion.
+     **Residual conocido (no tocado):** `bankroll_post` se calcula en un trigger que
+     corre ANTES de `zz_proteger_ganancia_cashout`, asi que en un boleto con cash out
+     queda desfasado por el delta (se vio $4,547.45 donde tocaba $4,322.45). Es la
+     columna basura de #95 y NO alimenta `get_bankroll_actual`; las seis lecturas de
+     dinero usan `ganancia_neta`.
