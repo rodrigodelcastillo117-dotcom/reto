@@ -159,3 +159,10 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
 42. **El termómetro cambió de veredicto al limpiar el corpus.** Toda conclusión previa
     basada en `t = −2.97` para Over/Under queda invalidada. Corners es el único mercado
     que pierde de verdad (t = −4.27, n=119) y ya está en abstención.
+43. **El contador `omitidos_por_candado` es invisible donde importa.** `sync_nfl_cdn_tick()`
+    lo devuelve en su texto de retorno, pero pg_cron guarda `return_message = "1 row"` para
+    un `SELECT`, así que en `cron.job_run_details` nunca se ve. Verificado el 5-sep:
+    11 corridas, 1 solo mensaje distinto, y es literalmente "1 row". Si en el kickoff
+    empiezan a omitirse filas por contención, nadie se va a enterar. Arreglo: que la
+    función escriba el contador en una tabla de salud (o `RAISE LOG`), no solo en el
+    retorno. NO urgente: la omisión es segura por diseño y se recupera al tick siguiente.
