@@ -1856,3 +1856,51 @@ ni la sacudida: solo texto y monto.
 **PENDIENTE:** prueba de humo en navegador. No puedo abrir `reto13.lovable.app`
 desde aqui (el proxy de salida lo bloquea con 403), asi que las dos variantes
 estan verificadas por codigo, no por vista.
+
+### 254-QA. Harness de prueba visual (andamio, se borra al cerrar #254)
+
+Frontend-only, para poder ver las variantes de Zeus sin tocar dinero.
+
+**Acceso:** `https://reto13.lovable.app/?qa=zeus` — en la RAIZ, no en `/reto`
+(`App.tsx` monta `Reto` en `<Route path="/">`; `/reto` cae en NotFound).
+Ademas exige `apodo === 'rodelcast'`. Sin el parametro, o con otro usuario,
+el panel ni se monta.
+
+**Archivos:**
+- NUEVO `src/components/reto/ZeusQaPanel.tsx` (171 lineas)
+- `src/components/reto/ZeusWinOverlay.tsx`: UNA prop opcional
+  `forzarReducedMotion?: boolean`. `undefined` = comportamiento normal.
+- `src/pages/Reto.tsx`: `useSearchParams`, `const qaZeus = ...`, y
+  `{qaZeus && <ZeusQaPanel />}`.
+
+**Candados verificados leyendo el diff aplicado:**
+- `ZeusQaPanel.tsx` importa SOLO `useState`, `ZeusWinOverlay` y
+  `ResultadoOverlay`. Cero imports de `supabase`, servicios o hooks de datos.
+- La cadena `localStorage` no aparece ni una vez en el archivo. No toca
+  `celebration_seen_win_ids_v1` ni `celebration_seen_loss_ids_v1`.
+- Todos los datos vienen de dos constantes literales (`FIX`, `DERROTA_FIX`)
+  y de tres `useState`. Nada sale de la base.
+- Reutiliza los componentes reales; no duplica ninguna animacion ni preset.
+- `useWinCelebration` NO se modifico.
+- Panel en z-index 1100, por debajo de los overlays (1200 y 1300).
+- `App.tsx` no se toco: no se creo ninguna ruta nueva.
+
+**MATIZ del boton 7:** el panel pasa `forzarReducedMotion={reducido}`, un
+booleano siempre definido. Casilla marcada = modo reducido FORZADO; casilla
+sin marcar = movimiento completo FORZADO, aunque el sistema del usuario tenga
+`prefers-reduced-motion` activado. Es lo util para QA (se prueban los dos
+lados a voluntad) pero NO es "leer el ajuste del sistema".
+
+**Lo que el harness NO puede probar** (es logica del hook, no visual):
+no repetir tras refresh, no repetir al reentrar, y que `nulo`/`retirado`/
+`perdido` jamas disparen Zeus. Eso necesita datos reales o una prueba
+unitaria de `useWinCelebration`.
+
+**Para borrarlo:** borrar `ZeusQaPanel.tsx`; quitar de `Reto.tsx` el import,
+`useSearchParams`, la linea `qaZeus` y el bloque `{qaZeus && ...}`; y quitar
+la prop `forzarReducedMotion` de `ZeusWinOverlay.tsx`.
+
+**OBSERVACION aparte (no tocada):** `ScoreNotifBridge` en `App.tsx` ya lanza
+un toast de sonner `"¡GANASTE $X!"` por realtime cuando la base marca un
+parlay como ganado. En una ganada REAL veras ESE toast **y** el overlay de
+Zeus. El harness no reproduce el toast, asi que esa duplicacion no se ve en QA.
