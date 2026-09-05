@@ -2744,3 +2744,101 @@ durante la peticion.
 **Riesgo residual asumido:** si el cron se cae, `mod_*` envejece hasta 10 min
 (o mas). Antes ese numero era siempre fresco pero la pantalla completa se caia.
 Se cambio frescura por disponibilidad, a proposito.
+
+---
+
+## #258 DEPLOY VERIFICADO EN EL DOMINIO PUBLICADO
+
+`deploy_project` ejecutado. Bundle principal **`index-BTsRc0Fq.js` ->
+`index-Ti1wAbJw.js`**. La pantalla de MLB va en chunk aparte (por eso la primera
+inspeccion del bundle principal no encontraba ni `v_radar_mlb`): chunk
+**`MLB-Ce2w7PKQ.js` -> `MLB-BlYR6T7Z.js`**.
+
+Marcadores de FIX 2 dentro de `MLB-BlYR6T7Z.js` (11,245 bytes):
+
+| marcador | posicion |
+|---|---|
+| `v_radar_mlb` (la consulta) | 6,230 |
+| `fallo al leer v_radar_mlb` (guard de error) | 6,283 |
+| `live_scores_fallback` (respaldo marcado) | 7,173 |
+| `No pudimos cargar los datos completos de MLB` | 8,565 |
+
+El orden de las posiciones confirma la estructura pedida: consulta -> guard de
+error -> respaldo -> render del error. En el bundle ANTERIOR los cuatro estaban
+en 0 salvo `v_radar_mlb`.
+
+**Cron vivo:** jobid 413, corrida `succeeded` 22:03:00 -> 22:03:05 (**5.3 s**),
+29 filas, edad del snapshot **4.1 min** al momento de medir.
+
+### Lo que NO puedo verificar y por que
+
+Los pasos 1, 2, 4 y 5 de la verificacion visual del auditor **requieren
+navegador**, que este entorno no tiene (el proxy bloquea `reto13.lovable.app`
+con 403; solo puedo leer el bundle via `net.http_get` desde Postgres). Lo que si
+quedo probado sin navegador: el dato que alimenta esos pasos (T3 por PostgREST)
+y que el codigo que los implementa esta en el bundle publicado.
+
+**Checklist para el auditor** (recargar con la app cerrada primero: hay service
+worker y puede servir bundle viejo):
+1. abrir MLB;
+2. el juego con odds reales NO debe decir "SIN PRECIO";
+3. PHI/ATL debe mostrar **1.602 / 2.370** y **margen 4.62%**;
+4. expandir el modelo: debe seguir el aviso de **11.9 puntos**;
+5. no hay forma limpia de forzar el error desde la UI; si aparece, debe salir
+   "No pudimos cargar los datos completos de MLB. Reintentar." y **nunca** una
+   cartelera con momios en guion.
+
+---
+
+## #259-B A-ECO-4 CERRADO: los bounds no filtran por calidad, filtran por TAMANO DE MUESTRA
+
+Estratificacion pedida por el auditor para descartar que "Beta protege" sea un
+artefacto de un mercado, un tramo o una cuota. Umbral cuota 2.00 (breakeven 50%).
+
+### Por mercado: 14 de 14 grupos eliminados quedan POR ENCIMA del breakeven
+
+| mercado | base B | mata Beta | hit | mata Wilson | hit | sobrevive H |
+|---|---|---|---|---|---|---|
+| Over/Under | 4,066 | 184 | **54.35%** | 311 | **59.49%** | 69.45% |
+| Total Equipo | 3,112 | 347 | **53.03%** | 181 | **63.54%** | 72.37% |
+| Doble Oportunidad | 2,371 | 362 | **54.70%** | 370 | **54.05%** | 69.98% |
+| Corners | 1,638 | 539 | **52.50%** | 454 | **57.27%** | 60.62% |
+| Tarjetas | 1,188 | 184 | **55.98%** | 291 | **59.45%** | 68.30% |
+| BTTS | 882 | 289 | **51.56%** | 356 | **53.09%** | 54.43% |
+| Moneyline | 336 | 281 | **58.36%** | 52 | **67.31%** | **33.33%** |
+
+No es un mercado: es todos. El confundidor que el auditor pidio descartar queda
+descartado.
+
+**Moneyline es el caso extremo.** De 336 candidatos de B, produccion H deja
+**3** (mata 281 con Beta y 52 mas con Wilson). Y esos 3 aciertan 1 (33.33%),
+peor que el 58.36% que Beta elimino. Con n=3 eso es ruido y **no se afirma como
+resultado**, pero el numero que si es solido es el otro: **H aniquila el 99% del
+mercado de Moneyline**.
+
+### Por tamano de celda: ahi esta el mecanismo
+
+| banda n | filas | base B | mata Beta | hit matados | mata Wilson | hit matados | sobrevive H |
+|---|---|---|---|---|---|---|---|
+| **n >= 1000** | 2,182 | 1,066 | **19** | 31.58% | 34 | 58.82% | 1,013 |
+| n 500-999 | 5,749 | 3,388 | 202 | 56.44% | 195 | 49.23% | 2,991 |
+| n 200-499 | 7,672 | 4,381 | 582 | 52.92% | 707 | 54.03% | 3,092 |
+| n 100-199 | 4,222 | 2,293 | **621** | 54.59% | 487 | 59.96% | 1,185 |
+| **sin medir (n=30)** | 4,793 | 2,465 | **762** | 54.33% | 592 | 61.99% | 1,111 |
+
+**Donde hay evidencia abundante (n >= 1000), Beta mata 19 de 1,066: el 1.8%.**
+Y esos 19 si estan por debajo del breakeven (31.58%, aunque con n=19 es ruido).
+**Donde la celda es delgada o no existe, Beta mata entre el 27% y el 31%**, y
+esos si estan por encima del breakeven.
+
+**Conclusion mecanica:** el recorte no discrimina apuestas buenas de malas.
+Discrimina celdas grandes de celdas chicas — que es exactamente lo que hace una
+penalizacion proporcional a 1/sqrt(n). **Beta y Wilson son un castigo por falta
+de muestra disfrazado de probabilidad.**
+
+Esto es la evidencia directa para la arquitectura que planteo el auditor: el
+tamano de muestra es informacion de **CONFIANZA**, y su lugar natural es el
+stake / risk_multiplier, no `P_FAIR`. Hoy vive dentro de P, donde decide si la
+apuesta existe, y ahi hace dano medible.
+
+**NO SE TOCA PRODUCCION.** Sigue siendo solo medicion.
