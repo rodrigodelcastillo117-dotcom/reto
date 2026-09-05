@@ -2659,3 +2659,88 @@ Wilson son candidatos fuertes a salir de V2. **NO SE TOCA PRODUCCION.**
   cada fila de backtest desde hoy, para que dentro de N semanas exista una
   poblacion con precio real. Sin eso, la pregunta economica es estructuralmente
   incontestable, no dificil.
+
+---
+
+## #258 CERRADO: la cartelera de MLB ya no ejecuta el modelo. 4,279 ms -> 2.4 ms
+
+Opcion **C autorizada por el auditor**: materializar. Implementada y verificada.
+
+### Lo construido
+
+**`public.mlb_modelo_snapshot`** (`espn_event_id` PK, `mod_home`, `mod_away`,
+`mod_over`, `actualizado`). SELECT concedido a `anon` y `authenticated`.
+
+**`public.refrescar_mlb_modelo_snapshot()`** — `SECURITY DEFINER`,
+`search_path = public`. Reproduce **letra por letra** el `LEFT JOIN LATERAL` que
+vivia dentro de `v_radar_mlb` sobre `v_pick_canonico` (los tres `max(case ...)`
+con `sin_acentos` y `~* '^(over|mas de)'`). Ventana -12h/+48h, mas ancha que la
+de la vista (-6h/+36h), para que la vista nunca dependa del borde del cron.
+`ON CONFLICT DO UPDATE` + purga a 7 dias.
+
+**Cron `mlb-modelo-snapshot`**, jobid **413**, `3,13,23,33,43,53 * * * *`.
+Minuto desplazado a proposito: hay **225 jobs activos** y el minuto :00 ya esta
+saturado (#88). Frescura: **10 minutos**. El costo del modelo se paga ahi, una
+vez, fuera de la peticion del usuario.
+
+### Identidad de valor: 29 de 29, cero diferencias
+
+Se tomo foto de `mod_home/mod_away/mod_over` ANTES del cambio, se materializo y
+se comparo:
+
+| comparacion | resultado |
+|---|---|
+| eventos comparados | 29 |
+| difieren en `mod_home` | **0** |
+| difieren en `mod_away` | **0** |
+| difieren en `mod_over` | **0** |
+| sin fila en el snapshot | **0** |
+| filas de la vista que cambiaron | **0** |
+
+**No se movio ni un numero.** Es la misma expresion, calculada antes en vez de
+durante la peticion.
+
+### Contrato de la vista: identico
+
+26 columnas, mismos nombres, mismos tipos, mismo orden, antes y despues.
+`position('predecir_mlb' in viewdef)` = **0**.
+`position('v_pick_canonico' in viewdef)` = **0**.
+`carreras_esp` y `diff_total` siguen deprecadas como `NULL::numeric`.
+
+### T1-T8
+
+| prueba | resultado |
+|---|---|
+| **T1 anon `select=*`** | **PASA — HTTP 200**, 17,330 bytes, momios presentes. Antes: 401 / 42501 |
+| **T2 authenticated** | PASA a nivel SQL (29/29 con precio y modelo). No pude firmar un JWT de usuario: PostgREST-como-authenticated no se probo de punta a punta |
+| **T3 partido 401816813** | **PASA** — `dec_home 1.602`, `dec_away 2.370`, `overround_ml 1.0462` (margen **4.62%**), `mod_home 47.8`, `mod_away 52.2`, `total_linea 8` |
+| **T4 RPC del modelo** | **PASA** — `predecir_mlb('401816813')` sigue dando PHI **47.8%**, aviso nivel `alto`, **"11.9 puntos de diferencia"**. El aviso sigue viniendo del RPC, no de la vista |
+| **T5 error forzado** | Verificado **solo por lectura de diff**: `if (error) { console.error; setErrorRadar(true); setRows([]); return; }` corta antes del respaldo. No puedo correr navegador |
+| **T6 vacio real** | Igual: el respaldo solo se alcanza con `error` nulo y `data` vacio. Sin navegador |
+| **T7 performance** | **4,279 ms -> 2.422 ms** (planning 3.5 ms). Plan nuevo: dos Index Scan y nada mas. **Llamadas a `predecir_mlb` para cargar el radar: ~61 -> 0** |
+| **T8 UI** | Pendiente de publicar Lovable + navegador. El dato ya viaja: la tarjeta tiene con que NO decir "SIN PRECIO" |
+
+### Cierre
+
+1. **Causa raiz:** dos puertas al modelo dentro de la cartelera. La directa
+   (`predecir_mlb` para `total_esperado`) y la indirecta
+   (`v_pick_canonico -> v_picks_mlb_modelo -> predecir_mlb` para `mod_*`). Las
+   dos exigian `EXECUTE` que `anon` no tiene -> 401 -> el front lo confundia con
+   cartelera vacia -> respaldo sin momios -> "SIN PRECIO" sobre partidos con
+   precio.
+2. **Diff:** retiradas ambas laterales; `mod_*` ahora por `LEFT JOIN` a
+   `mlb_modelo_snapshot`.
+3. **Contrato:** identico.
+4. **T1-T8:** arriba.
+5. **Latencia:** 4,279 ms -> 2.422 ms.
+6. **NO se concedio `EXECUTE ... TO anon`** sobre `predecir_mlb`. `proacl`
+   intacto: `postgres=X | service_role=X | authenticated=X`.
+7. **Cero cambios cuantitativos:** 0 de 29 filas cambiaron de valor. Modelo MLB,
+   formula de probabilidades, Kelly, calibracion/haircut, RONGOL, allocator,
+   caps, NFL, V2 y EXP_OFF sin tocar.
+8. **Cero residuos:** `lab_mod_baseline` borrada. Queda `lab_bloque_a_wf`, tabla
+   de laboratorio documentada como borrable, sin lectores.
+
+**Riesgo residual asumido:** si el cron se cae, `mod_*` envejece hasta 10 min
+(o mas). Antes ese numero era siempre fresco pero la pantalla completa se caia.
+Se cambio frescura por disponibilidad, a proposito.
