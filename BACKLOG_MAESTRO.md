@@ -2182,3 +2182,100 @@ Correccion A incluida: el tipo de apuesta ya sale del ORIGEN, no de
 `picks_data.length`. Un parlay con patas corruptas ya NO se rotula
 "PICK GANADO". Mismo arreglo en derrotas ("PARLAY PERDIDO" en vez de
 "PARLAY X0 PERDIDO"). `legs >= 2` sigue decidiendo SOLO la intensidad.
+
+---
+
+## 257. BLOQUE A (FUTBOL WALK-FORWARD) + BLOQUE C. RESULTADO: LOS DOS HAIRCUTS DANAN OOS
+
+**Solo medicion. Cero cambios. Kelly, RONGOL, allocator, caps y NFL intactos.**
+
+### Metodo
+Reconstruccion walk-forward ESTRICTA desde `modelo_backtest`, sin usar el
+snapshot actual de `zonas_confiables`. Ventana:
+`PARTITION BY mercado, tramo ORDER BY fecha RANGE BETWEEN UNBOUNDED PRECEDING
+AND CURRENT ROW EXCLUDE GROUP`. El `EXCLUDE GROUP` saca la fila actual **y todas
+las empatadas en fecha**, asi que ningun partido se ve a si mismo ni a otro del
+mismo instante. Regla de produccion respetada: `medido = (n_previo >= 100)`;
+si no, `n=30, k=round(p*30)`. n = 24,612 observaciones de futbol.
+
+### BLOQUE A — ABLACION A-H (Brier, menor es mejor)
+
+| variante | Brier | delta vs P0 | log loss | bias (real-pred) |
+|---|---|---|---|---|
+| **B_sesgo** | **0.22151** | **-0.00193** | **0.63699** | -0.0037 |
+| A_P0 | 0.22343 | 0 | 0.64335 | -0.0021 |
+| G_sesgo_wilson | 0.22406 | +0.00063 | 0.64343 | +0.0420 |
+| F_sesgo_beta | 0.22430 | +0.00086 | 0.64584 | +0.0416 |
+| D_wilson | 0.22562 | +0.00219 | 0.64850 | +0.0435 |
+| C_beta | 0.22632 | +0.00289 | 0.65338 | +0.0432 |
+| **H_PRODUCCION** | **0.23051** | **+0.00707** | 0.66242 | **+0.0806** |
+| E_beta_wilson | 0.23213 | +0.00869 | 0.66918 | +0.0821 |
+
+**La configuracion de produccion es la 7a de 8.** Solo le gana en maldad la
+que quita el sesgo y deja los dos recortes.
+
+### PRUEBAS PAREADAS (n=24,612). LAS SIETE SIGNIFICATIVAS
+
+| comparacion | delta Brier | t | IC95 | veredicto |
+|---|---|---|---|---|
+| sesgo aporta (B vs A) | **-0.001926** | **-5.51** | [-0.00261, -0.00124] | **MEJORA** |
+| solo Beta (C vs A) | +0.002885 | +8.61 | [+0.00223, +0.00354] | EMPEORA |
+| solo Wilson (D vs A) | +0.002364 | +6.94 | [+0.00170, +0.00303] | EMPEORA |
+| PRODUCCION vs cruda (H vs A) | +0.007157 | +10.25 | [+0.00579, +0.00853] | EMPEORA |
+| **marginal Wilson tras Beta (H vs F)** | **+0.006295** | **+22.39** | [+0.00574, +0.00685] | EMPEORA |
+| **marginal Beta tras Wilson (H vs G)** | **+0.006353** | **+23.12** | [+0.00581, +0.00689] | EMPEORA |
+| PRODUCCION vs solo sesgo (H vs B) | +0.009084 | +14.85 | [+0.00789, +0.01028] | EMPEORA |
+
+**Respuesta a la pregunta de redundancia:** el segundo bound no solo no aporta
+senal — DANA, y son los dos resultados con MAYOR certeza estadistica de toda la
+tabla (t = 22.4 y 23.1). Cobrar la incertidumbre dos veces es peor que cobrarla
+una, y cobrarla una es peor que no cobrarla.
+
+**El sesgo va en direccion contraria:** es el UNICO componente que mejora, y de
+forma significativa. P0 ya llega casi insesgada (-0.21 pp); produccion la deja
+en **+8.06 pp de subestimacion sistematica** (predice 43.84%, la realidad es
+51.91%).
+
+### BLOQUE C — RUTA `medido=false` (n=30, k=round(p*30))
+
+Monotonica: **0 violaciones** en la rejilla fina 0.30-0.99.
+
+| p inicial | Beta pp | factor | p final | caida abs | caida rel |
+|---|---|---|---|---|---|
+| 35% | 10.94 | 0.706 | **16.98%** | 18.02 pp | **51.5%** |
+| 50% | 11.33 | 0.769 | **29.74%** | 20.26 pp | 40.5% |
+| 65% | 10.72 | 0.830 | **45.04%** | 19.96 pp | 30.7% |
+| 80% | 9.22 | 0.874 | **61.84%** | 18.16 pp | 22.7% |
+
+**P inicial minima para conservar EV > 0:**
+
+| cuota | breakeven | P minima requerida | sobrecosto |
+|---|---|---|---|
+| 1.50 | 66.67% | **84%** | +17.3 pp |
+| 1.80 | 55.56% | **75%** | +19.4 pp |
+| 2.00 | 50.00% | **70%** | +20.0 pp |
+| 2.50 | 40.00% | **61%** | +21.0 pp |
+| 3.00 | 33.33% | **54%** | +20.7 pp |
+
+**Un mercado sin medir necesita ~20 pp por encima del breakeven para que el
+sistema autorice un solo peso.** Esto no es un filtro: es un apagado de facto.
+
+**Implicacion para NFL (informativa, NO es propuesta):** NFL no existe en
+`modelo_backtest`. Si se levantara `sin_modelo_independiente`, TODO pick de NFL
+caeria en la ruta `medido=false` y necesitaria ~70% declarado a cuota 2.00.
+La segunda puerta lo apagaria igual que la primera.
+
+### CLASIFICACION PRELIMINAR (solo futbol; MLB pendiente de Bloque B)
+
+| componente | futbol |
+|---|---|
+| `v_sesgo` (calibracion) | **SOPORTADA_OOS** |
+| `BETA_LOWER_NORMAL_APPROX` | **DANINA_OOS** |
+| Wilson (`v_factor_n`) | **DANINA_OOS** |
+| Beta + Wilson juntos | **DANINA_OOS** (peor que cualquiera solo) |
+| ruta `medido=false` | **HEURISTICA_SIN_DATOS** |
+| regla de produccion para MLB | **HEURISTICA_CROSS_DOMAIN_SIN_VALIDACION_MLB** |
+
+**NO SE RETIRA NADA.** Falta la parte economica del Bloque A, el Bloque B
+completo (MLB: transferencia soccer->MLB y MLB-native), y la decision de
+arquitectura, que es del auditor.
