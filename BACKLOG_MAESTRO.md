@@ -422,3 +422,28 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     **-15.9 pp** y **-$235.91** al subir la probabilidad un punto.
     Esto explica mecanicamente el sintoma viejo de #126 (el motor solo produce
     no-favoritos). Diagnostico completo, cero modificaciones a produccion.
+
+57. **HAY TRES EV, y la segunda pantalla mas usada publica picks que el motor de
+    dinero rechaza.** `mejor_oportunidad_hoy` (109 llamadas reales en 3 dias)
+    calcula su propio EV sobre una SEGUNDA calibracion
+    (`calibrar_prob_motor_live` encima de la del deporte) y **filtra y ordena por
+    el**. Medido hoy: 7 de 16 picks vivos tienen contradiccion de signo entre
+    EV_CAL y EV_DECIDE, y **4 salen ahi con EV positivo** — Dortmund en el puesto
+    #7 con **+12.9% mostrado contra -19.4% real**. En dos de ellos la pantalla
+    publica ademas un `kelly_pct` positivo. Y 5 de 19 filas traen
+    `fuera_de_rango=true`, o sea que la calibracion devolvio NULL y la funcion cae
+    a la probabilidad cruda: una de ellas es el **orden #2 del dia con +22.5%**.
+    #209 pasa a **CERRADO EN RETO13M / FALLA GLOBALMENTE**.
+
+58. **`zonas_confiables` es 100% futbol, y el 62.5% de los picks de hoy son de
+    beisbol.** `modelo_backtest`, su unica fuente, tiene 30,876 filas de 20 ligas y
+    **todas son soccer: cero de baseball, cero de football**. La correccion de
+    Moneyline se estimo sobre 5,406 picks de futbol y se aplica tal cual a MLB.
+    El tramo que gobierna la banda 50-60% tiene **187 partidos**.
+    Ademas: sin cutoff temporal en el codigo (implicito, los datos paran el
+    26-ago), **sin train/test**, sin versionado (`DELETE` + reconstruccion), y sin
+    columna de deporte. `nivel` y `brier` se calculan y **el dinero no los lee**.
+    Diagnostico: **hace calibracion Y haircut de sizing en el mismo objeto**, y ese
+    solapamiento es la causa raiz de la no monotonicidad — `zona_realidad` bandea
+    con `width_bucket(p,0,1,10)`, deciles fijos, asi que las fronteras caen exactas
+    en 0.50 y 0.60, justo donde medimos los saltos.

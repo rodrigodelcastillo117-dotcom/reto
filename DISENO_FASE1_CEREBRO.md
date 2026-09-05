@@ -1759,3 +1759,198 @@ en este turno.** El criterio de salida de 2A NO se cumple todavia: se puede
 reconstruir la cadena de un pick real de punta a punta, pero la regla de aceptacion
 depende de una funcion no monotona de la probabilidad, y eso no es explicable ante
 el usuario ("subiste la probabilidad y por eso te quitamos el dinero").
+
+---
+
+## 2A.6 — SUPERFICIES QUE USAN EV (auditoria exhaustiva)
+
+Consumidores reales de `v_pick_canonico`, enumerados por catalogo (`pg_proc`,
+`pg_class`, `pg_trigger`, `cron.job`). Nota: `picks_recomendados_hoy` **no es
+consumidor, es fuente**: `v_pick_canonico` la lee a ella.
+
+| superficie | que EV usa | prob que lo produce | ordena por el | filtra con el | UI | notif | dinero | puede recomendar lo que kelly rechaza |
+|---|---|---|---|---|---|---|---|---|
+| `reto_picks_hoy` | `kelly_stake.ev_pct` | P_DECIDE | si | si (`ev_negativo`) | si | no | **si** | no |
+| `mejor_oportunidad_hoy` | **propio** `ev_pct` | `calibrar_prob_motor_live(P_CAL)` | **si (`orden`)** | **si (`ev_pct>0`, `piso_ev`)** | si | no | no directo | **SI** |
+| `v_oraculo_canonico` | pasa `ev_pct` de canonico | P_CAL | no | no | via lectores | no | no | si |
+| `analisis_completo` | calcula el suyo | P_CAL | no | no | si | no | no | si |
+| `v_radar_mlb` | no usa ev | — | — | — | si | no | no | — |
+| `revisar_apuesta` | no usa ev | — | — | — | si | no | no | — |
+| `filtro_pick` | `ev` interno | P_CAL | no | si (`pasa`) | indirecto | no | si | no |
+
+### HAY TRES EV, NO DOS
+
+1. `ev_crudo_pct` (en `mejor_oportunidad_hoy`) = P_CAL x momio - 1.
+   **Coincide al decimal con `v_pick_canonico.ev_pct`** en los picks solapados
+   (22.7, 16.6, 7.1, 6.1, 3.2). Son el mismo numero con dos nombres.
+2. `ev_pct` (en `mejor_oportunidad_hoy`) = `calibrar_prob_motor_live(P_CAL)` x momio - 1.
+   Una **segunda** calibracion encima de la del motor.
+3. `ev_pct` (en `kelly_stake`) = P_DECIDE x momio - 1. El unico que gobierna dinero.
+
+### Contradicciones medidas hoy (16 picks vivos)
+
+**7 de 16 tienen contradiccion de signo** (EV_CAL > 0 y EV_DECIDE < 0). Cuatro de
+esos siete **se publican en `mejor_oportunidad_hoy` con EV positivo**:
+
+| pick | EV_CAL | EV_DECIDE | sale en mejor_oportunidad | EV ahi | kelly_pct ahi |
+|---|---|---|---|---|---|
+| Borussia Dortmund | +16.6 | **-19.4** | si, **orden #7** | **+12.9** | 0.00 |
+| Miami Marlins | +7.1 | **-8.9** | si, orden #14 | **+6.0** | **1.34** |
+| San Diego Padres | +6.1 | **-9.2** | si, orden #15 | **+5.5** | **0.27** |
+| Kansas City Royals | +3.2 | **-11.7** | si, orden #17 | **+2.7** | 0.00 |
+
+Respuesta a la pregunta 8 del mandato: **SI**. `mejor_oportunidad_hoy` muestra,
+ordena y en dos casos **publica un `kelly_pct` positivo** sobre picks que
+`kelly_stake` considera de EV negativo.
+
+### Defecto adicional en esa misma superficie
+
+5 de 19 filas traen `fuera_de_rango = true`: `calibrar_prob_motor_live` devolvio
+NULL y la funcion **cae a la probabilidad cruda** (72.5/72.5, 71.0/71.0, 78.8/78.8).
+Una de ellas es el **orden #2 del dia con +22.5% de EV**, calculado sobre una
+probabilidad que la calibracion se niega a tocar. El unico aviso es un booleano.
+
+**#209 queda: CERRADO EN RETO13M / FALLA GLOBALMENTE.**
+
+## 2A.7 — NOMENCLATURA CANONICA
+
+La arquitectura encontrada tiene **cuatro** probabilidades, no tres.
+
+| nombre propuesto | que es | donde vive hoy | ojo |
+|---|---|---|---|
+| **P_RAW** | salida cruda del motor por deporte | `oraculo_picks_tracking.probabilidad_real`; en MLB la salida de `predecir_mlb` antes de calibrar | — |
+| **P_CAL** | P_RAW despues de la calibracion **del deporte** | `v_pick_canonico.probabilidad_pct`. MLB: `prob_recalibrada_lado()`. Futbol: `v_picks_futbol_calibrado` (+`ajuste_h2h_over25`) | **La UI del RETO la etiqueta "Prob. del motor" y `mejor_oportunidad_hoy` la llama `prob_cruda_pct`. Las dos mienten: ya esta calibrada.** |
+| **P_CAL2** | P_CAL pasada por `calibrar_prob_motor_live` | solo dentro de `mejor_oportunidad_hoy` (`prob_pct`) | segunda calibracion encima de la primera; nadie la nombra |
+| **P_DECIDE** | P_CAL + sesgo del tramo - recorte, por factor Wilson | `kelly_stake` (`prob_que_decide_pct`) | la unica que toca dinero |
+
+Y por tanto: **EV_CAL** (sobre P_CAL) -> **EV_CAL2** (sobre P_CAL2, solo en una
+pantalla) -> **EV_DECIDE** (sobre P_DECIDE). No es la cadena limpia
+`EV_CAL -> EV_DECIDE` que el mandato propone: hay un eslabon intermedio no
+declarado que solo existe en una superficie.
+
+**"p_declarada" no debe usarse como concepto**: en el codigo significa P_CAL, pero
+la palabra sugiere P_RAW. Es el nombre que causa la confusion.
+
+## 2A.8 — PROCEDENCIA DE `zonas_confiables`
+
+| campo | hallazgo |
+|---|---|
+| escritor | `recalcular_zonas_confiables()`, unico. Hace `DELETE FROM zonas_confiables` y reconstruye entera |
+| quien lo llama | `rongol_afinar`, `rongol_ciclo`. Ningun cron lo llama directo |
+| lectores | `kelly_stake`, `zona_realidad` |
+| fuente | `modelo_backtest`, `WHERE muestra_min >= 8`, `HAVING count(*) >= 100` |
+| bandeo | `width_bucket(prob_modelo, 0, 1, 10)` -> **deciles fijos**. Fronteras exactas en 0.10, 0.20 ... 0.90 |
+| `prob_dicha` | `avg(prob_modelo)` del tramo |
+| `prob_real` | `avg(acerto::int)` del tramo |
+| sesgo | **no se almacena**: `kelly_stake` lo calcula como `prob_real - prob_dicha` |
+| Beta / p10 | en `kelly_stake`: Beta(0.5+k, 0.5+n-k) con k = round(prob_real x n), p10 por aproximacion normal, z=1.2816 |
+| Wilson | en `kelly_stake`, sobre `p_hat = k/n`, mismo z |
+| cutoff temporal | **NINGUNO en el codigo**. Implicito por los datos: `modelo_backtest` va del 2026-02-12 al **2026-08-26** y no se actualiza desde entonces |
+| train/test | **NO EXISTE** |
+| versionado | **NO EXISTE**. `DELETE` + rebuild, sin historia. `actualizado` es un solo timestamp: 2026-09-05 07:40 |
+| deporte | **la tabla no tiene la columna** |
+| `nivel` y `brier` | se calculan y se guardan, y **`kelly_stake` no los lee**. Job C medido y descartado |
+
+### El punto critico, medido
+
+`modelo_backtest`: **30,876 filas, 20 ligas, 100% `deporte = 'soccer'`. Cero filas
+de baseball. Cero de football.**
+
+No es que mezcle deportes. Es peor: **no hay nada que mezclar.** La correccion de
+Moneyline se estimo sobre 5,406 picks de futbol y se aplica tal cual a MLB.
+
+Tramos de Moneyline, todos de futbol:
+
+| tramo | banda | n | p_dicha | p_real | sesgo |
+|---|---|---|---|---|---|
+| 3 | 20-30% | 1963 | 0.259 | 0.245 | -1.4 |
+| 4 | 30-40% | 1024 | 0.348 | 0.331 | -1.7 |
+| 5 | 40-50% | 853 | 0.445 | 0.495 | **+4.9** |
+| 6 | 50-60% | **187** | 0.528 | 0.540 | +1.2 |
+
+**De los 16 picks vivos de hoy, 10 son de baseball.** Es decir, **62.5% del dinero
+del dia se dimensiona con una correccion estimada sobre cero observaciones de su
+deporte**, y el tramo que gobierna la banda 50-60% tiene apenas 187 partidos.
+
+### Diagnostico: **D — hace mas de una funcion a la vez**
+
+- **A (calibracion)**: si. `sesgo = prob_real - prob_dicha` aplicado como
+  desplazamiento aditivo.
+- **B (haircut de sizing)**: si. `recorte` Beta y `factor` Wilson salen de la misma
+  fila (`n`, `prob_real`).
+- **C (detector de zonas)**: se calcula (`nivel`, `brier`, `peor_que_volado`) y
+  **no lo usa el dinero**.
+
+Ese solapamiento **es la causa raiz de la no monotonicidad**: A deberia ser una
+funcion monotona de la probabilidad, y B una funcion de la evidencia (n), no de la
+banda. Al vivir los dos en una tabla de deciles, los dos quedan forzados a ser
+escalones de la probabilidad, y las fronteras de decil producen los saltos de
+-11.4 pp (Moneyline 49->50, 59->60) y -15.9 pp (BTTS).
+
+## 2A.9 — ALTERNATIVAS (sin implementar)
+
+| criterio | 1. Suavizar los deciles | 2. Calibracion monotona continua | 3. Separar calibracion de haircut |
+|---|---|---|---|
+| R1 monotonicidad | **NO garantizada** | garantizada por construccion | garantizada por construccion |
+| R2 stake | hereda el fallo de R1 | si, si el haircut no depende de p | si |
+| R3 fronteras | elimina saltos | sin fronteras | sin fronteras |
+| R4 incertidumbre | **no separa**: n sigue atado a la banda | no la trata | **la trata aparte, por diseno** |
+| R5 deporte | no lo resuelve | no lo resuelve solo | obliga a declarar el ambito |
+| R6 temporalidad | hay que anadirla igual | hay que anadirla igual | hay que anadirla igual |
+| R7 OOS | no testeable sin split | testeable | testeable |
+| interpretabilidad | alta | media (isotonic) / alta (parametrica) | alta |
+| leakage | igual que hoy | igual que hoy si no se corrige | igual que hoy si no se corrige |
+| sobreajuste | moderado | **alto con n chico** (el tramo de 187) | bajo si el haircut es 1-parametrico |
+| versionado | malo (DELETE+rebuild) | necesita el tratamiento de `calibracion_coef` | idem |
+
+**Contraejemplo que descarta la alternativa 1.** Interpolar entre puntos medios
+solo es monotono si el mapeo `p_dicha -> p_real` ya lo es. En Moneyline lo es
+(0.245, 0.331, 0.495, 0.540). **En BTTS no**: p_dicha 0.360/0.455/0.547/0.637 mapea
+a p_real 0.451/0.510/0.560/**0.500**. El ultimo tramo baja. Suavizar convierte un
+salto en una rampa descendente: sigue violando R1, solo que mas despacio.
+
+### Recomendacion: **alternativa 3**, con un bloqueo previo
+
+Es la unica que cumple R1, R2 y R4 **por construccion** y no por suerte de los
+datos, y es la respuesta directa al diagnostico D: si el objeto hace dos trabajos,
+la reparacion es separarlos, no alisarlos juntos.
+
+Forma propuesta (a validar, no a implementar todavia):
+
+```
+P_DECIDE = P_MERCADO + s(n) * ( CAL(P_CAL) - P_MERCADO )
+```
+
+- `CAL` = calibracion **monotona** por (deporte, mercado), versionada con
+  `effective_from` / `data_cutoff_at` igual que `calibracion_coef`.
+- `s(n)` en [0,1] = encogimiento hacia el precio del mercado, funcion **solo de la
+  evidencia**, nunca de la banda de probabilidad.
+- Monotonicidad: `CAL` monotona y `s(n)` constante respecto a p, asi que
+  `dP_DECIDE/dP_CAL = s(n) * CAL'(P_CAL) >= 0`. **R1 se cumple sin depender de los
+  datos.**
+- R4 queda explicito: menos muestra encoge hacia el mercado, nunca invierte el orden.
+- R8 se cumple: `EV_DECIDE = P_DECIDE x momio - 1`, reconstruible exacto.
+- Es la misma forma de encogimiento hacia el mercado que el auditor ya habia
+  propuesto en Fase 1 como candidato y que quedo pendiente de backtest.
+
+**Bloqueo previo, no negociable por R5:** hoy no existe **ninguna** observacion de
+baseball en `modelo_backtest`. Ninguna calibracion de Moneyline derivada de futbol
+puede gobernar dinero de MLB. La primera consecuencia del diseno no es matematica,
+es de alcance: o se estima MLB con datos de MLB, o MLB entra por la rama
+"nunca medido". Cualquiera de las dos es defendible; aplicar futbol a beisbol no.
+
+**Tolerancia de R3, derivada y no elegida:** el salto admisible de P_DECIDE ante
+un paso de 1 pp en P_CAL debe acotarse por el error estandar del tramo adyacente
+mas chico. Para Moneyline t6 (n=187, p~0.54) eso es
+`sqrt(0.54*0.46/187) = 3.6 pp`. Hoy el salto real es **-11.4 pp**, o sea **3.2
+veces** el ruido de la propia estimacion. Con la alternativa 3 el salto es 0 por
+construccion y la tolerancia solo acota el lado positivo.
+
+### Regresiones obligatorias registradas
+
+- Moneyline momio 2.20: `p=49 -> $110.07` contra `p=50 -> $0`.
+- Moneyline momio 2.20: `p=59 -> $145.70` contra `p=60 -> $0`.
+- BTTS: peor ruptura **-15.9 pp** de P_DECIDE y **-$235.91** de stake.
+- Malla de aceptacion: P de 1% a 99% x mercado x deporte x momios representativos,
+  detectando `dP_CAL > 0 && dP_DECIDE < 0` y `dEV > 0 && dstake < 0` no explicados
+  por una restriccion de cartera con nombre.
