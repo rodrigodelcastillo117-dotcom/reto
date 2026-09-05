@@ -2279,3 +2279,147 @@ La segunda puerta lo apagaria igual que la primera.
 **NO SE RETIRA NADA.** Falta la parte economica del Bloque A, el Bloque B
 completo (MLB: transferencia soccer->MLB y MLB-native), y la decision de
 arquitectura, que es del auditor.
+
+---
+
+## #258 MLB "SIN PRECIO": la cartelera cae al respaldo porque la vista corre el modelo 25 veces
+
+**Estado:** DIAGNOSTICADO Y MEDIDO. No se despliega nada (la orden vigente es
+"solo medicion").
+
+**Sintoma reportado (captura del 5-sep):** tarjeta Philadelphia Phillies vs
+Atlanta Braves, HOY 04:05 P.M. Chip **SIN PRECIO**, los dos momios en `—`,
+`— casa`, y abajo **"Margen de la casa: —"**. Al mismo tiempo, el bloque de
+analisis de esa misma tarjeta dice: *"El modelo y el mercado no se parecen:
+11.9 puntos de diferencia"*. La tarjeta niega tener precio mientras el aviso
+de abajo esta usando ese precio.
+
+### El precio SI existe y esta fresco
+
+| dato | valor |
+|---|---|
+| `espn_event_id` | 401816813 |
+| inicio | 2026-09-05 22:05 UTC (16:05 CDMX) |
+| filas en `v_momios_confiables` | 117 |
+| ultimo snapshot | 2026-09-05 21:15:03 UTC |
+| `home_ml` / `away_ml` | 1.602 / 2.370 (DraftKings) |
+| `devig_1x2` | local 59.7% / visita 40.3%, margen 4.62% |
+| modelo (`predecir_mlb`) | PHI 47.8% |
+| brecha | \|47.8 - 59.7\| = **11.9** — exactamente el numero del aviso |
+
+`v_radar_mlb` tambien lo tiene: 25 filas, **0 sin `dec_home`**, y para este
+partido `dec_home=1.602`, `dec_away=2.370`, `total_linea=8`,
+`overround_ml=1.0462`.
+
+### Los dos lectores de la tarjeta NO leen lo mismo
+
+- **El aviso del modelo** lo pinta `PronosticoMlbModelo.tsx` con el RPC
+  `predecir_mlb`, que lee `v_momios_confiables`.
+- **El precio, el chip y el margen** los pinta `MLB.tsx` -> `desdeMlb()` ->
+  `GameCard` / `buildMlbMeta` con la fila de **`v_radar_mlb`**.
+
+`GameCard` imprime literalmente `"Margen de la casa: —"` cuando
+`margenCasa(match.odds)` es null, o sea cuando `dec_home`/`dec_away` vienen
+nulos. `ChipSinPrecio` sale cuando `hayMomio = (r.dec_home != null || r.mkt_home != null)`
+es false.
+
+### CAUSA RAIZ: `v_radar_mlb` invoca `predecir_mlb` dentro de la vista
+
+Fragmento real de `pg_get_viewdef('public.v_radar_mlb')`:
+
+```sql
+LEFT JOIN LATERAL (
+  SELECT (predecir_mlb(calc.espn_event_id) #>> '{prediccion,total_esperado}'::text[])::numeric
+         AS total_modelo
+) m2 ON true
+```
+
+Consecuencias medidas:
+
+1. **Permisos.** `predecir_mlb(text)` tiene
+   `postgres=X | service_role=X | authenticated=X`. **`anon` NO tiene EXECUTE.**
+   Los privilegios de EXECUTE de una funcion se checan contra el rol que
+   consulta, no contra el dueno de la vista, asi que la vista no lo blinda.
+
+   - `set role anon; select count(*) from v_radar_mlb;` -> **25** (no evalua el LATERAL)
+   - `set role anon; select count(carreras_esp) from v_radar_mlb;` -> **ERROR 42501: permission denied for function predecir_mlb**
+   - `GET /rest/v1/v_radar_mlb?select=*` con llave publicable **y** con la anon legacy
+     -> **HTTP 401**, cuerpo `{"code":"42501","message":"permission denied for function predecir_mlb"}`
+   - `GET /rest/v1/v_radar_mlb?select=espn_event_id,dec_home,...` (columnas sueltas)
+     -> **HTTP 200** con los precios correctos
+   - `set role authenticated; select count(dec_home), count(carreras_esp) ...` -> 25 / 25
+
+   La app llama `.select("*")`. Esa es exactamente la forma que falla.
+
+2. **Costo.** La lista corre el modelo de MLB **una vez por partido**: 25
+   llamadas a `predecir_mlb` en una sola consulta de cartelera. Medido en
+   caliente: **3.057 s**. `statement_timeout` es **3 s para `anon`** y **8 s
+   para `authenticated`**. Es decir: para `anon` ya esta por encima del techo
+   aunque tuviera permiso, y para `authenticated` va a 3 s de 8 en el mejor caso.
+
+### EL AMPLIFICADOR: `MLB.tsx` tira el error al piso
+
+```ts
+const { data } = await (supabase as any).from("v_radar_mlb").select("*");
+let rows = (data ?? []) as RadarMlb[];
+if (rows.length === 0) { /* respaldo desde live_scores */ }
+```
+
+`error` **no se lee**. Un 401 o un timeout es indistinguible de "hoy no hay
+partidos": `data` llega null, `rows.length === 0`, y entra el respaldo que
+arma la cartelera desde `live_scores` con **todos los precios en null**:
+
+```ts
+casa: null, dec_home: null, dec_away: null, total_linea: null,
+dec_over: null, dec_under: null, mkt_home: null, mkt_away: null, ...
+```
+
+Verificado: `live_scores` SI tiene el 401816813 (`Philadelphia Phillies` /
+`Atlanta Braves`, 22:05 UTC, `scheduled`) y **`anon` SI puede leerla**. Por eso
+el partido aparece — sin precio, sin linea y sin margen.
+
+**Huella que confirma que la tarjeta venia del respaldo:** la captura dice
+"Carreras esperadas: 8.99" **sin** el "vs linea 8". Ese sufijo solo se pinta si
+`lineaTotal != null`, y `total_linea` es 8 en `v_radar_mlb` y null en el
+respaldo. La tarjeta se dibujo con la fila del respaldo.
+
+El aviso del modelo sigue saliendo bien porque `PronosticoMlbModelo` monta al
+expandir la tarjeta y va por el RPC, no por la vista.
+
+**No esta probado cual de los dos disparos ocurrio en el navegador del
+usuario** — la peticion salio como `anon` (sesion aun no restaurada al montar
+el `useEffect`) o salio como `authenticated` y se paso de los 8 s. Los dos
+caminos son consecuencia del mismo defecto estructural y los dos quedan
+invisibles por el `error` descartado. Distinguirlos requiere el navegador, que
+yo no puedo correr.
+
+### La columna que rompe la pantalla no la usa la pantalla
+
+- Consumidores de `v_radar_mlb` en la base: **cero** vistas y **cero**
+  funciones.
+- En el front, `carreras_esp` esta en la interfaz `RadarMlb` y en la firma de
+  `buildMlbMeta`, pero **no se pinta en ningun lado**. `diff_total` se asigna a
+  una variable `diff` en `buildMlbMeta` que nunca se usa. `SenalBadge` y
+  `Pitcher` estan definidos en `MLB.tsx` y **no se renderizan**.
+- Las "Carreras esperadas" que ve el usuario salen del RPC, con un comentario
+  explicito en `desdeMlb`: *"Las carreras esperadas y la senal de total salen
+  del modelo (`predecir_mlb`), no de la suma cruda"*.
+
+**El LATERAL que tumba toda la cartelera de MLB alimenta una columna muerta.**
+
+### ARREGLO MINIMO PROPUESTO (NO DESPLEGADO — requiere visto bueno)
+
+1. **Sacar `predecir_mlb` de `v_radar_mlb`** (quitar el `LEFT JOIN LATERAL m2`
+   y las columnas derivadas). La cartelera vuelve a ser dato puro: sin permiso
+   de funcion, sin 25 corridas del modelo, sin techo de 3/8 s. La prediccion
+   sigue viniendo del RPC por tarjeta, que es donde ya vive.
+2. **`MLB.tsx`: dejar de descartar `error`.** Si la consulta falla, pintar
+   estado de error, no una cartelera fabricada. El respaldo de `live_scores`
+   debe entrar solo cuando de verdad no hay filas, nunca cuando hubo error.
+
+**NO se propone** `grant execute ... to anon`: dejaria a un anonimo disparar 25
+corridas del modelo por peticion y no arregla el costo.
+
+**Riesgo de no arreglarlo:** la app ensena "SIN PRECIO" y "Margen de la casa: —"
+sobre partidos que **si tienen precio**, en la misma tarjeta donde el aviso cita
+ese precio. Es la app mintiendo sobre el mercado, no una falta de dato.
