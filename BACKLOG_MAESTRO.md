@@ -129,9 +129,39 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     `over_en_abstencion` para que el radar no pinte Over/Under como accionable cuando
     el mercado está vetado (15 de 15 filas marcadas).
 11. **#120** Tenis: 112 de 163 partidos de ATP con marcador imposible.
-12. **#205** Partidos fantasma: nadie relee la fecha cuando ESPN reprograma.
-13. **#206** Los dos motores de fútbol discrepan 17.6 pp y nada mide cuál acierta.
-14. **#175** El bucle nocturno ya existe: 14 crons de aprendizaje sin coordinar.
+~~12. **#205** Partidos fantasma.~~ **CERRADO (candado preventivo).**
+    Medido hoy: de 282 filas canónicas, **0 sin fila en `live_scores`, 0 con estado
+    no apostable y 0 con deriva > 12h** (deriva máxima 0.0h). El fantasma no se está
+    manifestando. Igual se armó el candado en `reto_picks_hoy`, que ahora hace
+    LEFT JOIN a `live_scores` y manda a `partido_fantasma` cuando el estado ya no es
+    `pre/scheduled/in/live` o cuando la hora que traemos se separó más de 12h de la
+    oficial de ESPN. Sin efecto colateral: 2 apostables y $159.29, igual que antes.
+~~13. **#206** Discrepancia entre motores.~~ **CERRADO — Y EL UMBRAL NO SE RELAJÓ.**
+    Medido en `contraste_motores_futbol`: el umbral vivo es **10.0 pp**, más estricto
+    que los 15 pp del ticket. Estados: 107 `ok` (media 4.3 pp), **43 `discrepancia`**
+    (media 14.4, máx 25.4) y 390 `sin_contraste`. De las 43, solo 18 pasan de 15 pp:
+    **subir el umbral a 15 habría dejado pasar 25 picks que hoy están frenados.**
+    No se tocó.
+    El hueco real: `v_pick_canonico` SÍ llama a `pick_sin_discrepancia_motores`
+    (0 picks con dinero en discrepancia), pero **`revisar_apuesta` NO lo checaba** —
+    la ruta manual (AddPickForm / betslip) pasaba por encima, con 43 discrepancias
+    vivas en partidos por jugar. Cerrado con un parámetro nuevo `p_espn_event_id`
+    (DROP+CREATE, porque un parámetro nuevo crea una SOBRECARGA, no reemplaza).
+    Verificado: 1 sola versión de la función, la llamada vieja de 8 args sigue en `ok`,
+    y con evento en discrepancia devuelve `advertencia` + `requiere_razon=true`.
+~~14. **#175** Orquestación de crons.~~ **CERRADO.** Auditoría empírica sobre
+    `cron.job_run_details` (7 días), no sobre mi lectura del cron. Dos colisiones reales:
+    | cuándo | crons | frecuencia |
+    |---|---|---|
+    | 08:00 diario | `calibrar-ai-sql-12h` + `calificar-oraculo-madrugada` + `oraculo-madrugada` | 7 de 7 días |
+    | cada 15 min | `capturar-clv-oraculo` (7,22,37,52) vs `grade-oraculo-picks` (7-59/15 → 7,22,37,52) | **100%: horarios idénticos** |
+
+    Nueva malla:
+    - `capturar-clv-oraculo` 7,22,37,52 → **12,27,42,57**
+    - `calibrar-ai-sql-12h` `0 8,20` → **`3 8,20`**
+    - `calificar-oraculo-madrugada` `0 8` → **`6 8`**
+    - `oraculo-madrugada` se queda en `0 8` (ancla)
+    Ninguno de los tres toca dinero: son medición y aprendizaje.
 15. **#200** Residuales de #179/#180: pisos de muestra y el veto blando de Uruguay.
 16. **#169** Calibración sobre picks publicados: primero descartar el confundidor.
 ~~17. **#174** Poisson sobredisperso.~~ **CERRADO — PREMISA DEL TICKET INVERTIDA.**
@@ -232,3 +262,9 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     `CalificarIAModal.tsx:326` ya los trata como informativos con su propio gate Kelly.
     No se renombró nada: renombrar una función que la UI llama la rompe.
 
+
+45. **`sin_contraste` es el 72% de la tabla de contraste.** 390 de 540 filas en
+    `contraste_motores_futbol` no tienen medición (`prob_af` o `prob_espn` ausente),
+    así que la guarda de discrepancia no puede opinar sobre ellas: pasan por defecto.
+    No es una fuga de dinero (el resto de las puertas siguen aplicando), pero la
+    cobertura real del contraste es 28%, no 100%.
