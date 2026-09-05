@@ -1041,3 +1041,89 @@ sobre el pliegue de prueba.** Rejilla: 0.0, 0.1, 0.2, 0.3.
 reserva que yo mismo había declarado ("optimista por selección sobre el conjunto de
 prueba"). t=2.66 es significativo pero modesto: **el exponente NO se cambió en
 producción en esta interacción** — el mandato pedía la validación, no el despliegue.
+
+---
+
+# ANEXO D — CIERRE OPERACIONAL FASE 1.5 (5-sep-2026)
+
+## Dependencias temporales de `predecir_mlb` (inspección completa)
+
+| capa | objeto | corte temporal |
+|---|---|---|
+| directas | `mlb_stats_cache` | `cached_at` (1,221/1,224 pre-juego) |
+| directas | `mlb_forma_hasta()`, `mlb_liga_rpg_hasta()` | `fecha < game_date` ✅ |
+| directas | `calibracion_coef`, `v_momios_confiables` | `vigente` / `snapshot_at` |
+| puras | `ajuste_platoon`, `contraer_media`, `matriz_poisson` | sin tablas |
+| aux | `calibrar_prob_motor` → `calibracion_coef`, `calibracion_rango_mercado` | `vigente` (deriva de calibración) |
+| aux | `clima_partido_mlb` → `mlb_clima_hora`, `mlb_estadios`, `mv_temp_parque` | `mv_temp_parque` **sin fecha** |
+| aux | `fuerza_alineacion` → `mlb_alineacion`, `mlb_bateador_temporada` | **`max(snapshot)` SIN corte** ⚠️ |
+
+Los 5 usos de `now()` son todos `COALESCE(m.game_date, now())`: `now()` solo es respaldo cuando falta `game_date`.
+
+## TAREA 1 — resultado
+
+Partido 1 `401815421` Phillies vs Reds, 2026-05-20. Mutación: 20 partidos de agosto 30-0.
+**Salida JSON completa byte-idéntica.** λ 5.264/4.991, p_local 53.5%, total 10.26.
+
+Partido 2 `401816712` Cardinals vs Pirates, 2026-08-29 (elegido porque **sí** ejercita
+`fuerza_alineacion`). Mutación: 25 partidos de septiembre 40-0 + snapshot de bateo
+fechado **2026-12-31**.
+
+| objeto | A | B | veredicto |
+|---|---|---|---|
+| λ local | 4.524 | 4.524 | idéntico |
+| λ visita | 4.186 | 4.186 | idéntico |
+| prob local | 54.5% | 54.5% | idéntico |
+| `desglose.factor_alineacion_local` | **1.15** | **1.0000** | **CAMBIÓ** |
+| `desglose.factor_alineacion_visita` | **0.9734** | **1.0000** | **CAMBIÓ** |
+
+Rollback verificado en ambas: 42,317 → 42,317 filas de histórico, 1,420 → 1,420 de bateo,
+`max(snapshot)` 2026-09-04 sin cambio, 0 residuo.
+
+**Hallazgo #214 (nuevo, severidad MEDIA):** `fuerza_alineacion` línea 25 hace
+`ult as (select max(snapshot) s from mlb_bateador_temporada)` — toma siempre el snapshot
+más reciente, sin importar la fecha del partido. Para un juego de mayo usaría bateo de
+septiembre. **Es fuga temporal viva.** Hoy NO llega a la predicción porque
+`PESO_ALINEACION = 0.00`, así que λ y probabilidades son invariantes. Es una **fuga
+dormida**: si alguien sube ese peso, se activa. NO se arregló (fuera del alcance de este
+turno, por regla explícita).
+
+## TAREA 2 — writer CLV
+
+Regla de cierre determinista:
+`snapshot_at < arranca_en` AND `arranca_en - snapshot_at <= 30 min`; entre varios, el de
+`snapshot_at` mayor (desempate `bookmaker`, luego `id`); `T-5` si ≤5 min, si no `T-30`;
+sin candidato válido **NO se inserta fila**.
+
+Fórmula: `clv_pct = 100 * (momio_entrada / momio_cierre - 1)`. **No inventada**: las dos
+implementaciones correctas existentes son algebraicamente idénticas —
+`clv_capturar_cierre` usa `100*(momio_apostado/mc - 1)` y `capturar_clv_pick` usa
+`((1/cierre - 1/apostado)/(1/apostado))*100`, que se reduce a lo mismo.
+
+8/8 tests PASS. End-to-end real: **153 filas** (33 T-5, 120 T-30), 0 sin CLV,
+0 violaciones post-saque, rango 0.07–29.96 min, idempotencia confirmada (2ª corrida = 0).
+
+**Hallazgo #215 (nuevo, severidad ALTA — solo reportado):** el CLV medio de esas 153
+filas es **+5.58%**, y hay casos como evento 401884811 con entrada 2.27 contra cierre
+1.588 = **+42.95%**. Un CLV así de alto y consistente NO es creíble; lo más probable es
+que `oraculo_picks_tracking.momio_mercado` no sea siempre un precio realmente capturado
+(la tabla tiene una columna `momio_fantasma`). **La tubería CLV funciona; la calidad del
+precio de ENTRADA que la alimenta no está validada.** No se tocó.
+
+## TAREA 3 — shadow MLB
+
+`mlb_shadow_predicciones` + `mlb_shadow_generar()`. Escribe dos filas por evento:
+`prod_espejo_0.5` y `shadow_0.2`, sobre las MISMAS features leak-free (rolling con corte
+en `game_date`, caché con `cached_at < game_date`). Excluye `fuerza_alineacion` por el
+hallazgo #214, declarándolo en `features_input_json.excluidas`.
+
+Aislamiento verificado con captura antes/después: `reto_picks_hoy` idéntico,
+EV 62.7 = 62.7, stake 156.01 = 156.01, apostables 2 = 2, `predecir_mlb` con hash idéntico,
+`picks` 34 = 34, `oraculo_picks_tracking` 3,462 = 3,462. **0 funciones, 0 vistas y 0 crons
+leen la tabla shadow.**
+
+**Nota de honestidad:** las 800 filas son un **backfill de partidos pasados**, generado
+hoy. Por eso `prediction_timestamp > game_date` en las 800. Su integridad temporal viene
+del **corte de features en `game_date`**, no del reloj de generación. Las filas futuras,
+generadas antes del juego, sí tendrán `prediction_timestamp < game_date`. Ambas columnas
+se guardan precisamente para poder distinguirlo.
