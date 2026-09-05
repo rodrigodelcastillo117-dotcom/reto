@@ -897,3 +897,147 @@ el RMSE en −0.00002: es indistinguible de no existir.
 - Bullpen (`EXP_BULLPEN=0.00`) y alineación (`PESO_ALINEACION=0.00`) **ya estaban
   apagados** en producción con medición previa (#150, #135). El backtest lo confirma:
   ambos empeoran.
+
+---
+
+# ANEXO C — FASE 2, DESBLOQUEO: 4 RIESGOS OPERATIVOS (5-sep-2026)
+
+## 1. P0 — Fuga temporal de MLB EXTIRPADA
+
+**Diagnóstico previo, cuantificado.** Para juegos del **20-may-2026**,
+`mlb_forma_temporada` reportaba **165-169 juegos jugados**: la temporada completa.
+La versión leak-free ve 77-82. Sesgo real medido:
+
+| equipo (juego 20-may) | juegos leak-free | juegos que reportaba | RPG real | RPG con fuga | sesgo |
+|---|---|---|---|---|---|
+| Philadelphia Phillies | 78 | **165** | 4.3718 | 4.564 | +0.1922 |
+| Detroit Tigers | 77 | **163** | 4.3766 | 4.534 | +0.1574 |
+| Miami Marlins | 77 | **163** | 4.0390 | 4.178 | +0.1390 |
+| Washington Nationals | 77 | **166** | 4.8442 | 4.940 | +0.0958 |
+| Los Angeles Angels | 82 | **169** | RA 5.4512 | RA 4.840 | **RA −0.61** |
+
+**Funciones nuevas:** `mlb_forma_hasta(equipo, hasta)` y `mlb_liga_rpg_hasta(hasta)`,
+ambas sobre `historico_partidos_espn` con `fecha < p_hasta` y misma temporada. Los 31
+nombres de equipo del caché cruzan 31/31 con el histórico: **sin puente de alias**.
+Dos índices parciales para el acceso.
+
+### Diff aplicado en `predecir_mlb()`
+
+```diff
+-  SELECT round(avg(f.rpg),3) INTO liga_rpg
+-    FROM mlb_forma_temporada f WHERE f.temporada = v_temp AND f.juegos >= 50;
+-  liga_rpg := COALESCE(liga_rpg, 4.40);
+-
+-  SELECT * INTO ft_h FROM mlb_forma_temporada f
+-   WHERE f.equipo = m.home_team AND f.temporada = v_temp;
+-  SELECT * INTO ft_a FROM mlb_forma_temporada f
+-   WHERE f.equipo = m.away_team AND f.temporada = v_temp;
++  -- === 5-sep-2026 (FASE 2 P0): EXTIRPADA LA FUGA TEMPORAL ===
++  -- mlb_forma_temporada guarda el agregado de la temporada COMPLETA y NO tiene
++  -- fecha de corte. Para un juego del 20-may reportaba 165-169 juegos jugados:
++  -- es decir, resultados de agosto alimentando una prediccion de mayo. Sesgo
++  -- medido en RPG: +0.09 a +0.19 carreras; en carreras permitidas hasta 0.61
++  -- (Angels 5.45 real hasta esa fecha contra 4.84 de fin de temporada).
++  -- Sustituida por acumulado movil ESTRICTO: solo partidos anteriores al juego.
++  -- El corte es game_date, no now(): asi un backtest reproduce lo que el motor
++  -- habria sabido ese dia, y no lo que se supo despues.
++  liga_rpg := COALESCE(public.mlb_liga_rpg_hasta(COALESCE(m.game_date, now())), 4.40);
++
++  SELECT * INTO ft_h FROM public.mlb_forma_hasta(m.home_team, COALESCE(m.game_date, now()));
++  SELECT * INTO ft_a FROM public.mlb_forma_hasta(m.away_team, COALESCE(m.game_date, now()));
+```
+
+**Verificación:** **0 líneas de CÓDIGO** referencian `mlb_forma_temporada` (queda 1
+mención, en el comentario que documenta la extirpación); 3 líneas usan las funciones
+leak-free; 1 sola versión de `predecir_mlb`.
+
+*Corrección de mi propia verificación:* mi primer chequeo dio "sigue usando la tabla
+con fuga" porque el grep abarcaba **mi propio comentario**. El chequeo estricto
+(excluyendo líneas `--`) da 0.
+
+**Prueba funcional** (Dodgers vs Nationals, 7-sep): `ok=true`, λ local **4.818**,
+λ visita **4.316**, total esperado **9.13**, gana local **56.1%**, marcador más probable
+5-4, `aviso_modelo: ok`. `liga_rpg` leak-free = **4.589**.
+
+## 2. P0/P1 — Captura CLV a 15 minutos, DIRIGIDA
+
+**Análisis de costo hecho ANTES de aplicar** (constante permanente: no comprometer
+gasto recurrente en silencio). `snapshot-odds` consume The Odds API, que es de pago.
+
+| variante | disparos/día | multiplicador | ¿apunta al cierre? |
+|---|---|---|---|
+| hoy (`15 */6 * * *`, condición "algún juego en 30h") | 4 | 1× | **no** |
+| `*/15` literal, misma condición | 96 | **24×** | no |
+| **`*/15` + condición T-30..T-5 (aplicada)** | **31.7** | **7.9×** | **sí** |
+
+Medido sobre 673 slots de 15 min en 7 días: 222 (33.0%) tienen un partido entrando a la
+ventana. Como la ventana dura 25 min y el reloj tiene paso de 15, **todo partido recibe
+al menos un disparo dentro de ella**. La variante dirigida cumple las dos mitades de la
+orden con **un tercio** del consumo de la literal.
+
+```diff
+- schedule: '15 */6 * * *'
++ schedule: '*/15 * * * *'
+
+-  IF EXISTS (SELECT 1 FROM live_scores
+-             WHERE status='scheduled'
+-               AND game_date BETWEEN now() AND now() + interval '30 hours')
++  IF EXISTS (SELECT 1 FROM live_scores
++             WHERE status = 'scheduled'
++               AND game_date BETWEEN now() + interval '5 minutes'
++                                 AND now() + interval '30 minutes')
+```
+
+**Segundo cambio, no pedido pero necesario** — `cierre-momios-espn` (jobid 347) traía
+precios de hasta 15 min **después** del saque, que son precios EN VIVO:
+
+```diff
+-    body:='{"antes_min":90,"despues_min":15,"limite":120}'::jsonb,
++    body:='{"antes_min":90,"despues_min":0,"limite":120}'::jsonb,
+```
+
+`clv_real` ya los rechaza por CHECK, pero la fuente no debe producirlos.
+
+**Verificado:** jobid 246 → `*/15 * * * *`, activo, condición dirigida presente.
+jobid 347 → `despues_min:0` presente, activo.
+
+## 3. P1 — Contrato de frontend
+
+Diff aplicado en `src/pages/Reto13M.tsx` (2 líneas, nada más en ese archivo):
+
+```diff
+           muestra_chica:{ texto: "SIN MUESTRA PARA MEDIRLO", ... },
++          sin_modelo:   { texto: "SIN MODELO INDEPENDIENTE",         color: "#fca5a5", fondo: "rgba(220,60,60,0.12)", borde: "rgba(220,60,60,0.38)" },
++          partido_fantasma:{ texto: "PARTIDO REPROGRAMADO O SUSPENDIDO", color: "#9ca3af", fondo: "rgba(160,160,160,0.10)", borde: "rgba(160,160,160,0.30)" },
+         };
+         const i = INSIGNIA[p.bloqueado_por];
+```
+
+Se agregaron **dos**, no una: `partido_fantasma` también faltaba y ya es un valor vivo
+que devuelve `reto_picks_hoy` desde #205. Habría sido el mismo hueco silencioso.
+Las 8 entradas previas, el tipo del `Record`, el lookup y el `if (!i) return null;`
+quedan intactos. `src/integrations/supabase/types.ts` se regeneró solo.
+
+## 4. P1 — Validación anidada del exponente MLB
+
+**Protocolo:** 5 pliegues temporales. Para cada pliegue de prueba k (2..5), el exponente
+se elige **únicamente con los pliegues < k**, y luego se evalúa sobre k. **Cero selección
+sobre el pliegue de prueba.** Rejilla: 0.0, 0.1, 0.2, 0.3.
+
+| pliegue de prueba | exponente elegido (sin ver la prueba) | n | RMSE anidado | RMSE constante | RMSE producción (0.5) | ¿le gana al constante? |
+|---|---|---|---|---|---|---|
+| 2 | **0.1** | 434 | **3.44427** | 3.45451 | 3.46826 | SÍ (+0.01024) |
+| 3 | **0.2** | 434 | **3.25895** | 3.26898 | 3.29712 | SÍ (+0.01003) |
+| 4 | **0.2** | 434 | **3.05347** | 3.07503 | 3.07763 | SÍ (+0.02157) |
+| 5 | **0.2** | 434 | **3.17289** | 3.20299 | 3.18101 | SÍ (+0.03010) |
+
+- **4 de 4 pliegues.** Prueba pareada agrupada: mejora media 0.115036, sd 1.799598,
+  **t = 2.66** con n = 1,736.
+- **Selección estable:** 0.2 en tres de los cuatro; 0.1 solo en el que menos datos de
+  entrenamiento tiene.
+- **Producción (0.5) es PEOR que el constante en 3 de 4 pliegues.**
+
+**El hallazgo anterior sobrevive a la validación anidada**, y con esto se retira la
+reserva que yo mismo había declarado ("optimista por selección sobre el conjunto de
+prueba"). t=2.66 es significativo pero modesto: **el exponente NO se cambió en
+producción en esta interacción** — el mandato pedía la validación, no el despliegue.
