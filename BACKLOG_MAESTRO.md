@@ -361,3 +361,29 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     recalibrado semanal habría reventado. Se parchó el **escritor** (no se puso un
     DEFAULT que permitiera omitirla): ahora declara `effective_from = now()` y
     `data_cutoff_at = max(match_date)` de los mismos picks que estiman `a` y `b`.
+
+54. **El candado temporal final: la contradiccion que impedia cerrar Fase 1.5.**
+    En el punto 53 declare como "riesgo residual" que `filtro_pick` usaba `now()`.
+    Ese residual no era teorico: la inspeccion 360 de todos los consumidores de
+    `filtro_pick` y `calibrar_prob_motor` encontro **una ruta historica real y
+    alcanzable**, `calibracion_publica_kpis`, que alimenta la pantalla publica
+    "¿LA IA DICE LA VERDAD?" y reconstruia el Brier calibrado de 3,136 picks YA
+    JUGADOS usando el coeficiente de hoy — ajustado, en parte, sobre esos mismos
+    picks. Medido: **1,661 picks se calibraban con un coeficiente que no existia
+    cuando se hicieron**; ahora solo los 24 posteriores al coeficiente vigente.
+    La correccion no fue pasar la fecha en un lugar, sino hacer imposible el olvido:
+    `calibrar_prob_motor` y `filtro_pick` ya no tienen NINGUN valor por omision, asi
+    que una llamada incompleta falla con `42883: function does not exist` en vez de
+    caer callada en el presente. El tiempo real pasa por `calibrar_prob_motor_live`
+    y `filtro_pick_live`, que dicen en su nombre lo que hacen. Verificado con cuatro
+    intentos de omision, los cuatro rechazados.
+    De paso aparecio el ultimo desvio silencioso: `predecir_mlb` tenia **siete**
+    `COALESCE(m.game_date, now())`. Con la fecha nula, todos los cortes temporales se
+    movian a hoy. Hoy son 0 de 1,224 filas sin fecha, asi que la guarda no apaga nada;
+    existe para que no vuelva a ser silencioso.
+    Sobre los coeficientes legacy: `track_commit_timestamp` esta apagado, no hay sello
+    fisico. Para los ids 6 y 7 `pg_stat_statements` conserva el INSERT que los creo y
+    su lista de columnas no incluye `ajustado_at`, o sea que lo puso `DEFAULT now()`
+    y no pudo ser backdateado. Para el **id 3 (NFL) no hay evidencia**: es anterior a
+    la ventana. No se inventa una fecha; se declara no verificable y se mide la
+    exposicion, que es **cero picks de NFL resueltos**.

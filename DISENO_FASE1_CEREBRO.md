@@ -1396,3 +1396,138 @@ En producción es correcto (la decisión se toma en el presente) y su fallo es
 conservador: si no hay coeficiente vigente y válido devuelve NULL y **rechaza** el pick.
 Pero cualquier backtest que pase por `filtro_pick` sí tendría fuga. No se toca en este
 turno; queda declarado.
+
+---
+
+## ANEXO G — CANDADO TEMPORAL FINAL (5-sep-2026)
+
+Motivo: en el Anexo F declare como riesgo residual que `filtro_pick` llamaba
+`calibrar_prob_motor(p, deporte)` con 2 argumentos y por tanto `now()`. El auditor
+rechazo cerrar Fase 1.5 con esa contradiccion abierta. Este anexo la cierra.
+
+### G.1 Mapa de consumidores (inspeccion 360)
+
+Lado base de datos, enumerado con `pg_proc` / `pg_class` / `pg_trigger` / `cron.job`
+(exhaustivo por construccion):
+
+| Consumidor | Llama | Clase | Evidencia de su ventana temporal |
+|---|---|---|---|
+| `v_mejores_picks_mlb` (vista) | `filtro_pick` | **1. produccion tiempo real** | su fuente `v_picks_mlb_modelo` filtra `fecha >= now()-3h and <= now()+4d` |
+| `refrescar_destacados` (cron `destacados-refrescar`) | `filtro_pick`, `calibrar_prob_motor` x2 | **1. produccion tiempo real** | `a.fecha > now() and a.fecha < now() + p_horas` |
+| `favoritos_bien_pagados` | `calibrar_prob_motor` | **1. produccion tiempo real** | `l.game_date > now()` |
+| `mejor_oportunidad_hoy` | `calibrar_prob_motor` | **1. produccion tiempo real** | `v.arranca_en > now() - 1 hour` |
+| `veredicto_vivo` | `calibrar_prob_motor` x3 | **1. produccion tiempo real** | veredicto sobre partido en curso |
+| `vale_la_pena_cerrar` | `calibrar_prob_motor` | **1. produccion tiempo real** | cash out de apuesta viva |
+| `predecir_mlb` | `calibrar_prob_motor` (4 args) | **3. compartida** | ya pasaba `game_date`; ver G.4 |
+| **`calibracion_publica_kpis`** | `calibrar_prob_motor` | **2. RECONSTRUCCION HISTORICA** | lee `oraculo_picks_tracking` con `resultado in ('ganado','perdido')`: 3,136 picks YA JUGADOS |
+
+Lado externo (app y edge functions). No se puede enumerar por catalogo, asi que se
+midio y se acoto:
+
+- `pg_stat_statements` (ventana 2026-09-02 14:19 -> 2026-09-05, 4,717 sentencias
+  distintas): **0 llamadas PostgREST** a `filtro_pick` o a `calibrar_prob_motor`.
+- Los grants de ambas siguen siendo el default de Postgres (`PUBLIC:EXECUTE`), a
+  diferencia de toda funcion que la app si llama a proposito, a la que se le hizo
+  `revoke all from public, anon` + `grant to authenticated` (p.ej.
+  `calibracion_publica_kpis`, `mejor_oportunidad_hoy`).
+- Esto es evidencia fuerte, **no prueba**. Por eso el diseno de G.2 hace que una
+  llamada incompleta falle con 42883 en vez de caer callada en `now()`: cualquier
+  consumidor externo que yo no pueda enumerar se delata en vez de filtrarse.
+
+**Veredicto: CASO B.** `calibracion_publica_kpis` es una ruta historica real y
+alcanzable que usaba el presente como fecha de referencia.
+
+### G.2 Firmas finales
+
+```
+public.calibrar_prob_motor(numeric, text, text, timestamptz)   -- SIN defaults
+public.calibrar_prob_motor_live(numeric, text, text)           -- pasa now() explicito
+public.filtro_pick(numeric, numeric, text, text, timestamptz)  -- SIN defaults, y RAISE si p_as_of es NULL
+public.filtro_pick_live(numeric, numeric, text, text)          -- pasa now() explicito
+```
+
+La separacion es semantica: el nombre dice el contexto. `_live` es el unico punto del
+sistema autorizado a usar el presente. Nadie tiene que "acordarse" de pasar el tercer
+argumento: si lo omite, no compila.
+
+`filtro_pick` ademas juzga la EXISTENCIA de calibracion a la fecha, no en abstracto:
+para un partido anterior a cualquier coeficiente el motivo ahora dice "nunca hemos
+medido este deporte", que es la verdad, en vez de "fuera de rango".
+
+### G.3 Pruebas F1-F4
+
+| Prueba | Resultado |
+|---|---|
+| **F1** historico, coeficiente extremo posterior a G | `filtro_pick` JSON **identico**; `cal` 0.539005 -> 0.539005; ev 7.8 -> 7.8 |
+| **F2** coeficiente legitimo anterior a G | **cambia**: `cal` 0.539005 -> 0.9275; ev 7.8 -> 85.5 (el camino NO estaba dormido) |
+| **F3** produccion | `calibrar_prob_motor_live(0.55,'soccer')` = 0.539005; `filtro_pick_live` pasa con ev 7.8; los dos vetos medidos siguen firmes (Over/Under MLB y Moneyline futbol) |
+| **F4a** `calibrar_prob_motor(0.55,'soccer')` | `ERROR 42883: function ... does not exist` |
+| **F4b** `calibrar_prob_motor(0.55,'soccer','Over/Under')` | `ERROR 42883` |
+| **F4c** `filtro_pick(0.55,2.00,'Over/Under','soccer')` | `ERROR 42883` |
+| **F4d** `filtro_pick(..., NULL::timestamptz)` | `ERROR P0001: p_as_of es obligatorio y no puede ser NULL` |
+
+Re-corrida completa de la bateria A-E del Anexo F sobre 3 partidos tras el refactor:
+A/B/D/E **JSON identico 3/3**, C mueve EV en 3/3.
+
+### G.4 `predecir_mlb`: el desvio silencioso que quedaba
+
+Tenia **siete** `COALESCE(m.game_date, now())`. Con la fecha nula, TODOS los cortes
+(forma, RPG de liga, calibracion, temporada) se movian al presente sin avisar. Se
+sustituyo por una variable `v_as_of := m.game_date` con guarda explicita: sin fecha,
+la funcion devuelve `ok=false` con motivo, no predice. Exposicion medida: **0 de 1,224**
+filas de `mlb_stats_cache` sin `game_date`, asi que la guarda no apaga nada hoy.
+
+### G.5 Diff funcional de la pantalla publica
+
+`calibracion_publica_kpis` sobre 2,399 picks resueltos y activos:
+
+| | antes (look-ahead) | ahora |
+|---|---|---|
+| picks calibrados | **1,661** | **24** |
+| `brier_crudo` | 0.2544 | 0.2544 |
+| `brier_calibrado` | 0.2543 | **0.2545** |
+| `n_sin_fecha_de_partido` | (no existia) | 24 |
+
+1,661 picks se estaban "calibrando" con un coeficiente que no existia cuando se
+hicieron. Ahora solo se calibran los 24 posteriores al coeficiente vigente. El Brier
+se mueve poco (0.2543 -> 0.2545) porque en ese rango la recta es casi la identidad;
+lo que cambia es que el numero ya es honesto. Se agrego `n_sin_fecha_de_partido` para
+no confundir "fuera de rango" con "sin fecha".
+
+### G.6 Procedencia de `effective_from` en los coeficientes legacy
+
+`track_commit_timestamp` esta **apagado**: no hay sello fisico de insercion. La
+procedencia se sostiene, o no, con esto:
+
+- **id 7 (soccer, vigente)** — `pg_stat_statements` conserva el INSERT que la creo
+  (`with est as (...) insert into calibracion_coef (deporte,a,b,muestra,tasa_base,rango_min,rango_max,nota,vigente)`)
+  y su lista de columnas **NO incluye `ajustado_at`**: el valor lo puso `DEFAULT now()`
+  y no pudo ser backdateado. Cutoff **verificado** por la nota (jul-2023 a sep-2026).
+- **id 6 (baseball, vigente)** — mismo tipo de evidencia a nivel de sentencia
+  (`insert into public.calibracion_coef (deporte,a,b,muestra,tasa_base,rango_min,rango_max,nota,vigente) values ($1..$9)`,
+  sin `ajustado_at`). Su `nota` declara muestra pero **no rango de fechas**, asi que
+  `data_cutoff_at` queda NULL y la puerta usa la cota `data_cutoff_at <= effective_from`.
+- **id 3 (football/NFL, vigente)** — es del 2026-08-30, **anterior a la ventana de
+  `pg_stat_statements`**. NO hay evidencia a nivel de sentencia. Lo demostrable es
+  solo circunstancial (DEFAULT now(), precision de microsegundo, orden monotono con
+  el id serial, ningun escritor del sistema pasa `ajustado_at`). **Eso no es prueba y
+  no se presenta como tal.** Exposicion medida: `oraculo_picks_tracking` tiene
+  **0 picks de NFL resueltos**, o sea que no existe evento historico que esta fila
+  pudiera calibrar; ademas el dinero de NFL esta apagado por `mercados_sin_modelo`.
+  Queda declarado en `cutoff_evidencia`: si algun dia entran picks de NFL resueltos,
+  el coeficiente debe re-derivarse con corte documentado antes de medir el pasado.
+
+Ninguna fecha fue inventada, retro-fechada ni adelantada.
+
+### G.7 Integridad
+
+7 filas en `calibracion_coef`, `max(id)=7`, **0 residuos** de prueba, ambos CHECK
+presentes, 0 `effective_from` nulos, `EXP_OFF = 0.50`, `predecir_mlb` sin desvio a
+`now()`, shadow con 800 filas y **0 lectores** fuera de su propio generador,
+`picks`=34, `oraculo_picks_tracking`=3462, `clv_real`=153.
+
+Humo de produccion tras repuntar: `refrescar_destacados(48)` = 117 filas / 121
+partidos evaluados (identico a antes), `mejor_oportunidad_hoy(10)` = 10 filas,
+`favoritos_bien_pagados()` = 3 filas, `v_mejores_picks_mlb` = 6 filas,
+`vale_la_pena_cerrar` responde, `veredicto_vivo('401885454','Mas de 2.5',2.0)`
+devuelve ev 20.2%.
