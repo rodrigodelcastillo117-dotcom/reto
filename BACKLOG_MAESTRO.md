@@ -3161,3 +3161,126 @@ No se propone calibracion MLB-native.
 Kelly intacto; Beta/Wilson de produccion intactos; RONGOL intacto; allocator
 intacto; caps intactos; EXP_OFF=0.50; NFL sigue SIN_MODELO; V2 sin consumidores;
 residuos: solo `lab_bloque_a_wf` y `lab_bloque_b_mlb`, documentadas y borrables.
+
+---
+
+## #262 FASE C / C1-C2 — #209 MEDIDO: hay TRES probabilidades y CUATRO EV en el mismo pick
+
+**Cero cambios en produccion todavia.** Esto es C1 (inventario) + C2 (traza real).
+El diff propuesto va abajo y **espera autorizacion**.
+
+### C1 — INVENTARIO
+
+**49 objetos** en `public` tienen columnas de EV/edge/ventaja (26 tablas,
+23 vistas). La inmensa mayoria son historicos o diagnosticos. **La ruta de
+dinero y las superficies accionables son estas:**
+
+| # | objeto | formula | P usada | odds | ¿decide dinero? | consumidores |
+|---|---|---|---|---|---|---|
+| 1 | `v_pick_canonico.ev_pct` | `round((probabilidad_pct/100 * momio_mercado - 1)*100, 1)` | `probabilidad_pct` | `momio_mercado` | **puerta**: `mejor_oportunidad_hoy` filtra por `ev_pct > 0` | todo lo de abajo |
+| 2 | `v_pick_canonico.edge_pct` | `round((probabilidad_pct/100 - 1/momio_mercado)*100, 1)` | idem | idem | no | UI |
+| 3 | `mejor_oportunidad_hoy.ev_pct` (`ev_cal`) | `round((pu_pct/100 * mo - 1)*100, 1)` | **`calibrar_prob_motor_live(probabilidad_pct/100, deporte)`** | `momio_mercado` | **admision**: `where ev_cal > piso` y **ranking** `order by ev_cal` | tarjeta de OPORTUNIDADES |
+| 4 | `mejor_oportunidad_hoy.ev_crudo_pct` (`ev_cru`) | `round((pcruda/100 * mo - 1)*100, 1)` | `probabilidad_pct` | idem | no | UI |
+| 5 | `mejor_oportunidad_hoy.kelly_pct` | `kelly_fraccion_pct(pu_pct, mo, 0, techo)` | **`pu_pct`** | idem | **NO** (solo se muestra) | UI |
+| 6 | `kelly_stake.ev_pct_declarado` | `p_declarada * momio - 1` | `probabilidad_pct` | momio del pick | no | diagnostico |
+| 7 | **`kelly_stake.ev_pct`** | **`prob_que_decide * momio - 1`** | **`p + sesgo - recorte_Beta) x factor_Wilson`** | momio del pick | **SI — es el unico EV con autoridad economica** | `tg_autoridad_stake`, `reto_picks_hoy` |
+| 8 | `v_mejores_picks_mlb.ev_pct` | vista propia | otra cadena | otra | no | pantalla MLB |
+| 9 | `v_super_pick.ev_real_pct` / `ev_declarado_pct` | dos EV en la misma vista | dos P | — | no | UI |
+| 10 | `destacados_cache.ev_pct` / `ev_corta_pct` / `ev_larga_pct` | tres EV cacheados | — | — | no | UI |
+
+**`kelly_stake` YA expone las dos cifras y las nombra bien**
+(`ev_pct_declarado` vs `ev_pct`). El problema no es que el backend mienta: es
+que **ninguna superficie de UI lee `ev_pct`**.
+
+### CAUSA RAIZ DE #209: tres capas de probabilidad, no una
+
+```
+v_pick_canonico.probabilidad_pct        (P_CANON)
+    |
+    +--> mejor_oportunidad_hoy: calibrar_prob_motor_live()   -> P_UI     -> EV_UI
+    |
+    +--> kelly_stake: + v_sesgo - Beta x Wilson              -> P_DECIDE -> EV_DINERO
+```
+
+Son **dos correcciones distintas, aplicadas en paralelo, sobre la misma P**, y
+ninguna sabe de la otra. La UI corrige hacia un lado y Kelly hacia otro.
+
+### C2 — TRAZA DE 12 PICKS VIVOS (2026-09-05)
+
+| # | pick | momio | P_canon | P_ui | **P_decide** | EV_canon | **EV_UI** | **EV_dinero** | brecha | Kelly_UI | **Kelly_prod** | mismo signo |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | ML Atlanta Braves | 2.37 | 52.2 | 51.8 | **44.5** | 23.7 | **22.8** | **5.57** | 17.2 | 4.15 | **1.02** | si |
+| 2 | Under 3.5 | 1.645 | 72.5 | 72.5 | 70.5 | 19.3 | 19.3 | 16.03 | 3.3 | **0.00** | **6.21** | si |
+| 3 | Under 3.5 | 1.952 | 62.6 | 60.8 | 59.5 | 22.2 | 18.7 | 16.06 | 2.6 | **0.39** | **4.22** | si |
+| 4 | Gana Austin | 2.250 | 52.5 | 51.6 | **44.8** | 18.1 | 16.1 | **0.84** | 15.3 | 3.22 | **0.17** | si |
+| 5 | ML NY Yankees | 2.050 | 54.7 | 54.4 | **46.8** | 12.1 | **+11.5** | **-4.01** | 15.5 | **1.57** | **0.00** | **NO** |
+| 6 | Under 3.5 | 1.741 | 64.7 | 62.7 | 61.5 | 12.6 | 9.2 | 7.07 | 2.1 | **0.00** | **2.38** | si |
+| 7 | Gana FC Dallas | 1.377 | 78.8 | 78.8 | **60.2** | 8.5 | **+8.5** | **-17.13** | **25.6** | 0.00 | 0.00 | **NO** |
+| 8 | Over 3.5 | 2.050 | 53.7 | 52.7 | 50.3 | 10.1 | 8.0 | 3.15 | 4.9 | 1.57 | 0.75 | si |
+| 9 | Gana FC Cincinnati | 1.625 | 68.6 | 66.3 | **48.6** | 11.5 | **+7.7** | **-21.06** | **28.8** | 0.00 | 0.00 | **NO** |
+| 10 | ML Atlanta Braves | 1.926 | 54.9 | 54.7 | **47.0** | 5.7 | **+5.4** | **-9.46** | 14.9 | **0.04** | **0.00** | **NO** |
+| 11 | Over 3.5 | 1.571 | 69.0 | 66.6 | 65.7 | 8.4 | 4.6 | 3.17 | 1.4 | **0.00** | **1.39** | si |
+| 12 | ML KC Royals | 1.926 | 54.3 | 54.0 | **46.5** | 4.6 | **+4.0** | **-10.52** | 14.5 | **0.04** | **0.00** | **NO** |
+
+**5 de 12 picks tienen CONTRADICCION DE SIGNO.** La UI dice EV positivo y el
+dinero ve EV negativo.
+
+Peor caso: **#9 FC Cincinnati — la tarjeta dice +7.7% y el dinero ve -21.06%.
+Brecha de 28.8 puntos y signo opuesto.**
+
+**Y la contradiccion corre en LAS DOS DIRECCIONES.** En Over/Under pasa al reves:
+#2 la UI muestra Kelly **0.00%** mientras produccion autoriza **6.21%**; #3 0.39%
+vs 4.22%; #6 0.00% vs 2.38%; #11 0.00% vs 1.39%. La UI no solo promete de mas en
+Moneyline: **esconde apuestas que produccion si autoriza** en Over/Under.
+
+### CLASIFICACION DE CADA DIVERGENCIA
+
+| divergencia | magnitud | clasificacion |
+|---|---|---|
+| `P_CANON -> P_UI` | -0.4 a -2.4 pp | **SEGUNDA_CALIBRACION** (`calibrar_prob_motor_live` sobre una P ya calibrada) |
+| `P_CANON -> P_DECIDE` (componente `v_sesgo`) | +1.2 pp tipico | **SEGUNDA_CALIBRACION** |
+| `P_CANON -> P_DECIDE` (Beta + Wilson) | -4.6 a -18.6 pp | **OTRO — recorte por incertidumbre** (medido DANINA_OOS en Fases A y B) |
+| `Kelly_UI` vs `Kelly_prod` | hasta 4.1x en ambos sentidos | **RECOMPUTO_UI** (`kelly_fraccion_pct(P_UI)` en vez de `kelly_stake`) |
+| odds | **0 divergencias en los 12** | **NO hay `FUENTE_ODDS_DISTINTA` en esta ruta** |
+| redondeo | <= 0.1 pp | **ROUNDING**, irrelevante |
+| datos viejos | no observado en la muestra | **STALE_DATA** no confirmado |
+
+**C5 — nota honesta sobre odds:** en esta ruta las tres capas usan
+`v_pick_canonico.momio_mercado`, asi que aqui no hay problema de precio. Pero
+existe una distincion real aguas abajo que NO se debe esconder:
+`ODDS_DISPLAY` = `momio_mercado` de la vista, mientras `ODDS_DECISION` =
+`picks.momio` que el usuario captura o escanea al registrar la apuesta. Son
+fuentes distintas por diseno y solo coinciden si el usuario apuesta al precio
+mostrado. Falta medir esa segunda brecha; no se toca en esta fase.
+
+### DIFF PROPUESTO — `EV_DECISION_V1` (NO DESPLEGADO)
+
+Regla: **la UI accionable debe leer el mismo EV que hoy autoriza dinero**, sin
+cambiar todavia la probabilidad de produccion.
+
+1. **Nueva funcion `public.ev_decision_v1(p_prob_pct, p_momio, p_mercado, p_apodo)`**
+   -> devuelve `(ev_pct, prob_que_decide_pct, origen)` leyendo **exactamente**
+   `kelly_stake(...)->>'ev_pct'`. Una sola definicion, un solo lugar.
+2. **`mejor_oportunidad_hoy`**: quitar `calibrar_prob_motor_live` del camino
+   accionable. `ev_cal` deja de existir como criterio; **admision y ranking pasan
+   a `ev_decision_v1`**. `pu_pct` y `ev_cal` se conservan **solo** como columnas
+   rotuladas `*_diagnostico`, sin efecto sobre orden ni filtro.
+3. **`mejor_oportunidad_hoy.kelly_pct`**: dejar de calcular
+   `kelly_fraccion_pct(pu_pct,...)` y devolver el `kelly_pct` que sale del mismo
+   `kelly_stake`. Kelly NO cambia; cambia quien lo pregunta.
+4. **Invariante C7**: `sign(EV_UI) = sign(EV_DECISION)` para todo pick
+   accionable, con tolerancia de redondeo 0.1 pp. Se instrumenta como consulta
+   de verificacion, no como trigger.
+5. **C9**: no se reescribe ni un pick historico. `ev_estimado` de `picks` y
+   `oraculo_picks_tracking` quedan como estan, documentados como EV_V0.
+
+**Lo que este diff NO hace:** no cambia Kelly, no cambia la probabilidad de
+produccion, no retira Beta/Wilson, no toca RONGOL, allocator, caps ni el
+ORDER BY del allocator. Solo elimina que dos superficies contesten cosas
+distintas a la misma pregunta economica.
+
+**Consecuencia esperada y que hay que aceptar de frente:** con EV_DECISION_V1,
+**5 de los 12 picks de hoy dejan de mostrarse como oportunidad** (su EV real es
+negativo) y **4 picks de Over/Under que hoy salen con Kelly 0.00% pasarian a
+mostrar el stake que produccion ya autoriza**. La tarjeta va a ensenar menos
+picks y mas honestos.
