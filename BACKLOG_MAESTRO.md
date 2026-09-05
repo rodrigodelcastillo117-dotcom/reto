@@ -83,8 +83,21 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     y t=−0.30 (todo, n=1253). El dinero ya está bloqueado por el veto RONGOL
     (ROI −41.3% en 42 picks), así que **no hay exposición mientras se decide**.
     Requiere confirmación explícita del usuario para vetar sobre otra base.
-6.  **#202** El torniquete de #201 cubre 1 de 7 puertas: `v_analisis_fut_completo` sigue
-    mostrando picks con muestra insuficiente. `[SIN MEDIR HOY]`
+~~6. **#202** Cobertura del torniquete.~~ **CERRADO. Auditoría de las puertas de dinero:**
+    | puerta | RONGOL | CDaR | abstención | techo |
+    |---|---|---|---|---|
+    | `reto_picks_hoy` | ✅ | ✅ | ✅ | vía kelly |
+    | `revisar_apuesta` | ✅ | ✅ | **✅ (era ❌ — cerrado hoy)** | ✅ |
+    | `tamano_apuesta` | ❌ | ❌ | ❌ | ❌ |
+    | `devils_advocate` | ❌ | ❌ | ❌ | ❌ |
+    | `devils_advocate_parlay` | ❌ | ❌ | ❌ | ❌ |
+    | `autodiagnostico` | ✅ | ❌ | ❌ | ❌ |
+    (`kelly_stake`, `stake_techo`, `rongol_veto`, `kelly_fraccion_pct` NO son puertas:
+    son las guardas mismas.) El hueco real era **`revisar_apuesta` sin abstención**: un
+    mercado vetado pasaba sin que nadie lo dijera. Cerrado — no bloquea, **exige razón
+    escrita**, porque un betslip escaneado es una apuesta YA COLOCADA y rechazarla
+    rompería el registro contable. Verificado: O/U → `advertencia` + `requiere_razon`;
+    ML normal → `ok`; MLB → `bloqueado` por RONGOL.
 ~~7. **#176** Isotónica aplastada.~~ **CERRADO: SUSPENDIDA.** Medido: las 15 anclas se
     ajustaron el **30-ago**, y el ancla `ai_pro:OU` `0.547 → 0.452` con muestra **1059**
     ES la constante 0.55 — la curva de Over/Under aprendió del relleno. Además aplasta:
@@ -93,7 +106,14 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     `calibrar_probabilidad` devuelve NULL mientras `updated_at` sea anterior al 5-sep;
     **la suspensión se levanta sola** al reajustar con datos limpios. No se borró la tabla.
     Verificado sin romper nada: 16 picks con dinero, 2 apostables (igual que antes).
-8.  **#182** RETO 13M: piso de muestra en el origen + el reloj que valía Infinity.
+~~8. **#182** Piso de muestra + reloj.~~ **CERRADO.** Medido: de 16 picks, **1 nunca
+    medido** (kelly_stake usaba n=30 como PRIOR, que no es medición sino "no sé") y
+    **0 con n<30 real**. Nuevo valor `bloqueado_por = 'muestra_chica'` con su propio
+    motivo, para que la pantalla no diga "el precio no compensa" cuando lo que pasa es
+    que no hay con qué compararlo. Reloj: `horaCorta` YA guardaba contra NaN y el eje
+    de la gráfica ya tenía su arreglo de Infinity; lo que faltaba era la fecha en el
+    **pasado**, que se pintaba como hora normal (ESPN reprograma y la fila queda vieja).
+    Ahora dice "ya comenzó". Dinero intacto: 2 apostables, $159.29.
 9.  **#158** El chip GANA de MLB enseñaba la probabilidad previa con el partido en vivo.
 10. **#159** Causa raíz de la cartelera de MLB: tres filtros en `v_radar_mlb`.
 11. **#120** Tenis: 112 de 163 partidos de ATP con marcador imposible.
@@ -153,9 +173,12 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     Opciones: dejarlos `pendiente` para siempre (hoy) o marcarlos `nulo`.
 
 
-41. **La isotónica hay que reajustarla, no solo suspenderla.** `recalibrar_isotonica` y
-    `recalibrar_isotonica_mercado` NO excluyen `prob_placeholder`: si alguien las corre
-    hoy, vuelve a aprender del 0.55. Hay que meterles el filtro ANTES de reajustar.
+~~41. **La isotónica hay que reajustarla, no solo suspenderla.**~~ **CERRADO.** Filtro
+    inyectado como sub-consulta en las **4 lecturas** de `oraculo_picks_tracking`
+    (2 por función), así no depende del `WHERE` particular de cada una.
+    Muestra que vería el reajuste: **2,776 → 1,894** filas (882 placeholders fuera, 31.8%).
+    NO se corrió el reajuste a propósito: correrlo movería `updated_at` y levantaría
+    la suspensión de #176, desplegando una curva nueva sin visto bueno.
 42. **El termómetro cambió de veredicto al limpiar el corpus.** Toda conclusión previa
     basada en `t = −2.97` para Over/Under queda invalidada. Corners es el único mercado
     que pierde de verdad (t = −4.27, n=119) y ya está en abstención.
@@ -166,3 +189,8 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     empiezan a omitirse filas por contención, nadie se va a enterar. Arreglo: que la
     función escriba el contador en una tabla de salud (o `RAISE LOG`), no solo en el
     retorno. NO urgente: la omisión es segura por diseño y se recupera al tick siguiente.
+
+44. **Tres puertas emiten tamaño de apuesta con CERO guardas:** `tamano_apuesta`,
+    `devils_advocate` y `devils_advocate_parlay`. `autodiagnostico` solo tiene RONGOL.
+    Falta medir si alguna llega a pantalla o son todas de diagnóstico interno; si alguna
+    pinta un monto al usuario, es la misma clase de bug que #170.
