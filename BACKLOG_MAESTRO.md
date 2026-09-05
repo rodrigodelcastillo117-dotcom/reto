@@ -63,15 +63,36 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
 
 ## C. ABIERTAS — SIGUIENTES (por prioridad, con su número histórico)
 
-4.  **#193** MLB Over/Under: el 0.55 hardcodeado le gana al motor Poisson. Extirpar el
-    fallback en `analizar-partido` (239,475 chars; requiere reenvío del archivo completo
-    y hay riesgo de que `deploy_edge_function` voltee `verify_jwt`). El veto de mercado
-    ya cubre el riesgo de dinero.
-5.  **#191** El skill negativo es falta de información, no de calibración. Platt no sirve
-    (0.66 sigmas). Pendiente: decidir si Moneyline se apaga como Over/Under.
+~~4. **#193** El 0.55 hardcodeado.~~ **CERRADO.** La escritura ya estaba muerta: última
+    fila con 0.5500 el **1-sep**; del 2 al 5-sep hay 0. Lo que seguía vivo era la
+    contaminación del corpus (935 filas) y que **el termómetro no las excluía**.
+    Backfill de la marca (935/935) + `v_termometro_motor` ahora filtra
+    `prob_placeholder`. Efecto medido en el veredicto:
+    | ventana | mercado | t antes | t después | veredicto |
+    |---|---|---|---|---|
+    | 90d | Over/Under | −2.97 | **−1.14** | PIERDE → EMPATE |
+    | 90d | TODOS | −3.27 | **−1.93** | PIERDE → EMPATE |
+    | todo | TODOS | −4.20 | **−3.24** | sigue PIERDE |
+    | todo | Corners | — | **−4.27** | PIERDE (el perdedor real) |
+
+5.  **#191 — NO EJECUTADO, premisa falsificada.** La orden era vetar MLB Moneyline
+    "dado que el Brier Score es peor que la tasa base". Con el corpus limpio (#193)
+    eso ya no se sostiene: **MLB Moneyline n=1074, exceso de confianza −0.020,
+    Brier motor 0.25114 vs base 0.24728, ventaja −0.00385, t = −1.35.** No es
+    significativo a ningún umbral convencional. Moneyline global: t=−0.71 (90d, n=851)
+    y t=−0.30 (todo, n=1253). El dinero ya está bloqueado por el veto RONGOL
+    (ROI −41.3% en 42 picks), así que **no hay exposición mientras se decide**.
+    Requiere confirmación explícita del usuario para vetar sobre otra base.
 6.  **#202** El torniquete de #201 cubre 1 de 7 puertas: `v_analisis_fut_completo` sigue
     mostrando picks con muestra insuficiente. `[SIN MEDIR HOY]`
-7.  **#176** `calibracion_isotonica`: techo aplastado en 45-51%, alimenta 3 funciones vivas.
+~~7. **#176** Isotónica aplastada.~~ **CERRADO: SUSPENDIDA.** Medido: las 15 anclas se
+    ajustaron el **30-ago**, y el ancla `ai_pro:OU` `0.547 → 0.452` con muestra **1059**
+    ES la constante 0.55 — la curva de Over/Under aprendió del relleno. Además aplasta:
+    en `ai_pro` la entrada va de 0.241 a 0.769 (52.8 pp) y la salida de 0.299 a 0.511
+    (**21.2 pp**); dice 76.9% y entrega 51.1%. `ai_pro:ML` topa en 0.454 → 0.454 (identidad).
+    `calibrar_probabilidad` devuelve NULL mientras `updated_at` sea anterior al 5-sep;
+    **la suspensión se levanta sola** al reajustar con datos limpios. No se borró la tabla.
+    Verificado sin romper nada: 16 picks con dinero, 2 apostables (igual que antes).
 8.  **#182** RETO 13M: piso de muestra en el origen + el reloj que valía Infinity.
 9.  **#158** El chip GANA de MLB enseñaba la probabilidad previa con el partido en vivo.
 10. **#159** Causa raíz de la cartelera de MLB: tres filtros en `v_radar_mlb`.
@@ -131,3 +152,10 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     a mano cambia el corpus de aprendizaje y eso es decisión del usuario, no mía.
     Opciones: dejarlos `pendiente` para siempre (hoy) o marcarlos `nulo`.
 
+
+41. **La isotónica hay que reajustarla, no solo suspenderla.** `recalibrar_isotonica` y
+    `recalibrar_isotonica_mercado` NO excluyen `prob_placeholder`: si alguien las corre
+    hoy, vuelve a aprender del 0.55. Hay que meterles el filtro ANTES de reajustar.
+42. **El termómetro cambió de veredicto al limpiar el corpus.** Toda conclusión previa
+    basada en `t = −2.97` para Over/Under queda invalidada. Corners es el único mercado
+    que pierde de verdad (t = −4.27, n=119) y ya está en abstención.
