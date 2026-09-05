@@ -1712,3 +1712,84 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
      2.5) marcado **ganado +$190** a las 18:07 con `AUTO_DET:live_scores`. Bankroll
      3,908.19 -> 4,098.19. Nada que ver con las pruebas: `residuos_prueba = 0`.
      **No se optimizo ninguna regla ni se creo bloqueo alguno desde ROI in-sample.**
+
+---
+
+## 253. ALLOCATOR: el prefijo monotono descartaba a TODOS los que venian detras del primero que no cabia
+
+**Estado: CERRADO / DESPLEGADO** — 5-sep-2026
+
+**Diagnostico (2A.59-2A.67, aceptado por el auditor).** `reto_picks_hoy` no tenia
+bucle greedy ni `break`: la admision era una suma corrida de ventana
+`sum(monto_cand) over (order by monto_cand desc, ...)`. Ese `acumulado` es
+monotono creciente por construccion, asi que en cuanto cruzaba el techo NINGUN
+candidato posterior podia entrar aunque cupiera. Efecto medido sobre snapshot:
+meseta de cero de $175 de ancho (C=$5 a C=$180) y hasta $19.80 de profit
+diagnostico perdido.
+
+**Matiz que corrige la premisa del reporte inicial:** un candidato bloqueado
+(rongol / ev_negativo / abstencion / ...) ya consumia CERO en el codigo viejo,
+porque `cand` le pone `monto_cand = 0`. El envenenamiento venia EXCLUSIVAMENTE
+de candidatos elegibles que no cabian enteros.
+
+**CONTRATO declarado: `ALLOCATOR_V1 = 0/1`.** Stake completo (Kelly + caps) o
+cero. Sin recorte parcial. Documentado en `COMMENT ON FUNCTION`.
+
+**Cambio.** Se sustituyo la ventana por una recurrencia `WITH RECURSIVE` que
+recorre los candidatos en el MISMO orden congelado y solo baja la capacidad
+cuando un candidato es EFECTIVAMENTE ADMITIDO. La funcion sigue siendo
+`LANGUAGE sql STABLE SECURITY DEFINER` (no se convirtio a PL/pgSQL).
+`exp`, `lim` y `ord` van `MATERIALIZED` para que `exposicion_viva`,
+`kelly_stake` y `rongol_veto` se evaluen UNA vez y no por paso de recursion.
+
+Nuevo motivo `no_cabe_entero` (antes todo caia en `exposicion`), con texto que
+dice el monto pedido y la capacidad restante.
+
+- md5 antes `6d7c30017252289cea521f1878a9b2fa` -> despues `eae5486a0429f65ac48bfc5c3e55b969`
+- Orden CONGELADO: `monto_cand DESC, arranca_en NULLS LAST, espn_event_id, pick_desc`
+- Sin tocar: Kelly (`f8f6f398...`), RONGOL (`35b327df...`), caps 5/15/20, EXP_OFF 0.50, V2, confidence
+
+**Comparacion sombra (snapshot 8 candidatos, sigma $841.74, stakes
+181.56/157.55/102.03/96.49/92.06/78.37/77.46/56.22):**
+
+| C | viejo stake / n | nuevo stake / n | residual viejo | residual nuevo |
+|---|---|---|---|---|
+| 35.71 | 0 / 0 | 0 / 0 | 35.71 | 35.71 |
+| 56.22 | 0 / 0 | 56.22 / 1 | 56.22 | 0.00 |
+| 100 | 0 / 0 | 96.49 / 1 | 100.00 | 3.51 |
+| 150 | 0 / 0 | 102.03 / 1 | 150.00 | 47.97 |
+| 181.56 | 181.56 / 1 | 181.56 / 1 | 0.00 | 0.00 |
+| 250 | 181.56 / 1 | 237.78 / 2 | 68.44 | 12.22 |
+| 300 | 181.56 / 1 | 283.59 / 2 | 118.44 | 16.41 |
+| 400 | 339.11 / 2 | 395.33 / 3 | 60.89 | 4.67 |
+| 500 | 441.14 / 3 | 497.36 / 4 | 58.86 | 2.64 |
+| 569.64 | 537.63 / 4 | 537.63 / 4 | 32.01 | 32.01 |
+| 700 | 629.69 / 5 | 685.91 / 6 | 70.31 | 14.09 |
+| 841.74 | 841.74 / 8 | 841.74 / 8 | 0.00 | 0.00 |
+
+R1-R7 **PASS** (R1 = 0 a C=35.71 demuestra que NO se introdujo stake fraccional).
+
+**Candidatos bloqueados consumen 0** — probado en dos escenarios, incluido uno
+ADVERSARIAL donde a los bloqueados se les puso `monto_cand > 0` a proposito
+(invariante roto a mano): la recurrencia igual los deja en 0 porque el predicado
+exige `motivo_bloqueo is null`. Doble candado.
+
+**Determinismo PASS**: 12/12 md5 identicos con el orden fisico de filas barajado.
+
+**Congruencia con `tg_limite_exposicion` PASS**: el conjunto admitido entra
+secuencialmente (431.56 -> 589.11 -> 691.14 -> 787.63, techo 819.64). Mismos
+denominadores (`exposicion_viva`), sin cambiar porcentajes.
+
+**Impacto real en produccion al desplegar:**
+- `el dos`: SIN cambio de dinero ($537.63, 4 picks). Solo cambia el motivo de 4
+  rechazados: `exposicion` -> `no_cabe_entero`.
+- `rodelcast`: **$1,437.43 (6) -> $1,551.56 (7)**. El candidato de $157.25 no
+  cabia (1437.43+157.25 > 1562.42) y antes descartaba a los 3 siguientes; ahora
+  entra el de $114.13. Capacidad ociosa $124.99 -> $10.86.
+
+**PENDIENTE, NO tocado:** el ORDER BY sigue siendo por tamano, no economico.
+Sobre este snapshot cuesta $3.14 a C=$700 (EV%-desc alcanzaria 162.10 vs 158.97).
+Eso es politica de orden y va aparte. Tampoco se toco knapsack ni el 5/15/20.
+
+**Cero residuos**: tablas de prueba 0, funciones de prueba 0 (`mlb_shadow_generar`
+es preexistente y ajena), jobs 0, dblink 0, sobrecargas de `reto_picks_hoy` = 1.
