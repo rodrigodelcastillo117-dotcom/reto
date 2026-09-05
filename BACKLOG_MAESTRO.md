@@ -2034,3 +2034,42 @@ codigo minificado compara `.get("qa")==="zeus"`, nunca escribe la cadena junta.)
 `?qa=zeus` + `apodo === 'rodelcast'`, pero el codigo viaja. Hay que borrarlo al
 aprobar visualmente las tres variantes; los pasos exactos estan en el comentario
 de cabecera de `ZeusQaPanel.tsx`.
+
+### 255-C. Las figuras dejan de ser calcomanias: movimiento continuo, cero assets nuevos
+
+Zeus y Hades entraban y se quedaban quietos. Se les anade vida SIN un solo
+byte de assets nuevos, todo con framer-motion y el canvas que ya existia.
+
+Cinco campos nuevos en `Preset`, dentro del MISMO bloque `PRESETS`:
+
+| campo | pick | parlay | hades |
+|---|---|---|---|
+| `respiracionPct` | 2 | 2.5 | 1.5 |
+| `destelloFigura` | si | si | no |
+| `haloPulsante` | si | si | si |
+| `parallaxPx` | 0 | 5 | 0 |
+| `particulasFrente` | 0 | 0 | **30** |
+
+- **Destello**: la figura sube a `brightness(1.55)` en el momento del rayo, con
+  `times` desiguales para que el pulso no se sienta metronomo.
+- **Respiracion**: latido infinito de 2.6 s, `scale` uniforme (no deforma).
+- **Halo**: radial-gradient del color del acento, detras de la figura
+  (`zIndex 0` contra `zIndex 1`), pulsando escala y opacidad.
+- **Parallax**: en el parlay la figura se mueve al REVES que la sacudida.
+- **Brasas de frente**: segunda instancia del MISMO componente `Particulas`
+  con `cantidad` y `encima`, solo en Hades. Ahora Hades corre dos canvas.
+
+**Anidacion deliberada en 4 capas** (entrada / parallax / respiracion /
+destello). Entrada y respiracion animan las dos `scale`, y el destello y el
+`drop-shadow` animan los dos `filter`: colapsarlas en un solo `motion.div` hace
+que se pisen. Queda documentado en el codigo.
+
+Con `prefers-reduced-motion` no se monta ninguna de las cinco.
+
+**Publicado** (deployment `30ce754b-526d-4613-9040-927c2ae47071`).
+Bundle `index-CDA5pj1n.js`, 934,732 bytes. Verificado dentro del bundle
+publicado: `brightness(1.55)` presente, respiracion presente, `hades_loss`,
+`QA ZEUS`, boton `HADES (LOSS)`, y las tres figuras
+(`zeus-sereno`, `zeus-furioso`, `hades`).
+
+Sigue **sin verificacion visual**: nadie ha visto todavia como se ve.
