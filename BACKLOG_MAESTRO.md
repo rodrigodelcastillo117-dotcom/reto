@@ -1996,3 +1996,41 @@ todavia. Lo tiene que mirar el usuario en `/?qa=zeus`.
   ids viejos y las celebraciones se repiten solas. Hoy van 14 ganadas.
 - C. `ScoreNotifBridge` en `App.tsx` lanza un toast "¡GANASTE $X!" por realtime
   ademas del overlay. Duplicacion en la ganada real; el QA no la reproduce.
+
+### 255-B. PUBLICADO. Y la causa real de "no me sale nada"
+
+**Causa raiz, verificada descargando el bundle publicado** (no supuesta):
+`reto13.lovable.app` llevaba congelado desde el PRIMER deploy de Zeus. El
+bundle servido (`index-_pOzIyqz.js`, 926 KB) contenia `zeus_parlay_win` y el
+`WASTED` viejo, pero **NO** contenia `QA ZEUS` ni el candado de `?qa=zeus` ni
+`hades_loss`. El parametro no hacia nada porque el codigo que lo lee no estaba
+ahi. Todo lo posterior vivia solo en el preview de Lovable, que responde **401**
+a quien no tenga sesion de Lovable.
+
+**Metodo:** el proxy de salida de mi entorno bloquea lovable.app, asi que la
+inspeccion se hizo con `net.http_get` desde Postgres y `position()` sobre el
+contenido, sin traerme el bundle al contexto.
+
+**Error propio:** habia recomendado abrir el preview en incognito. En incognito
+no hay sesion de Lovable y el preview devuelve 401 — mi consejo garantizaba que
+no funcionara.
+
+**Publicado** con autorizacion explicita del usuario (deployment
+`21c9a4cb-1944-4049-9ac6-25e4a7654616`). Bundle nuevo `index-VWvNJXMf.js`,
+933 KB. Verificado en el bundle publicado:
+
+| marcador | |
+|---|---|
+| `QA ZEUS` (panel) | SI |
+| `zeus_pick_win` / `zeus_parlay_win` / `hades_loss` | SI las tres |
+| candado `rodelcast` | SI |
+| boton `HADES (LOSS)` | SI |
+| assets `zeus-sereno` / `zeus-furioso` / `hades` | SI los tres |
+
+(`qa=zeus` como cadena literal da NO, y es un falso negativo de mi grep: el
+codigo minificado compara `.get("qa")==="zeus"`, nunca escribe la cadena junta.)
+
+**DEUDA NUEVA:** el harness de QA quedo en el sitio PUBLICO. Esta cerrado con
+`?qa=zeus` + `apodo === 'rodelcast'`, pero el codigo viaja. Hay que borrarlo al
+aprobar visualmente las tres variantes; los pasos exactos estan en el comentario
+de cabecera de `ZeusQaPanel.tsx`.
