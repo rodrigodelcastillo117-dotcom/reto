@@ -1603,3 +1603,159 @@ por escrito que no existe, en vez de encontrar nada y suponer.
 `CREATE FUNCTION, ALTER FUNCTION` · 4 firmas vivas y ninguna otra · 3 filas de
 evidencia · 0 residuos de las funciones de prueba · `calibracion_coef` 7 filas ·
 **`EXP_OFF = 0.50`** · humo `filtro_pick_live` ev 7.8%.
+
+---
+
+# FASE 2 — BLOQUE 2A: EV, SIZING Y MONTO DEL RETO 13M
+
+## 2A.1 Mapa de la cadena economica (Tarea 1 — sin modificar nada)
+
+Cadena unica, medida en produccion:
+
+```
+v_pick_canonico.probabilidad_pct   (probabilidad CALIBRADA por deporte)
+        |  MLB: prob_recalibrada_lado()   Futbol: v_picks_futbol_calibrado (+ ajuste_h2h_over25)
+        v
+v_pick_canonico.ev_pct = (p/100 * momio - 1) * 100        <-- EV DECLARADO
+        v
+reto_picks_hoy  ->  kelly_stake(apodo, probabilidad_pct, momio_mercado, null, mercado)
+        |
+        |  1. p        = probabilidad_pct / 100
+        |  2. tramo    = zona_realidad(mercado, p)          <-- BANDEA POR PROBABILIDAD
+        |  3. sesgo    = zonas_confiables.prob_real - prob_dicha   (constante por tramo)
+        |  4. recorte  = media - percentil10 de Beta(0.5+k, 0.5+n-k)
+        |  5. p'       = clamp(p + sesgo - recorte)
+        |  6. factor   = wilson_inferior(p_hat, n) / p_hat   (<= 1, constante por tramo)
+        |  7. p_decide = clamp(p' * factor)
+        v
+   ev_pct = (p_decide * momio - 1) * 100                    <-- EV QUE DIMENSIONA
+   f_full = (p_decide*b - (1-p_decide)) / b ;  b = momio - 1
+   stake_kelly = bankroll_disponible * f_full * fraccion_kelly(0.25)
+   stake_techo = bankroll_disponible * stake_max_pct(5.0) / 100
+   stake_final = min(stake_kelly, stake_techo) ; si < stake_min(20) -> 0
+        v
+reto_picks_hoy aplica, en este orden: partido_fantasma, sin_modelo, abstencion,
+sin_datos, rongol, muestra_chica, kelly, ev_negativo, bajo_minimo, y por ultimo
+el CDaR de cartera (exposicion_viva + suma corrida) -> monto_autorizado
+        v
+UI Reto13M.tsx: "EV real" = ev_pct (el que dimensiona) ; "Prob. que decide" =
+prob_que_decide_pct ; "Prob. del motor" = probabilidad_pct (declarada)
+```
+
+## 2A.2 #209 — CERRADO EN LA PANTALLA DEL RETO 13M
+
+`reto_picks_hoy` devuelve los dos EV por separado y con nombres distintos:
+`ev_pct` (el que dimensiona, viene de `kelly_stake`) y `ev_pct_declarado`
+(el de `v_pick_canonico`). Grep de `src/pages/Reto13M.tsx`: `ev_pct` se pinta
+como **"EV real"** (linea 2345) junto a **"Prob. que decide"** (2350) y
+**"Prob. del motor"** (2340). `ev_pct_declarado` aparece **una sola vez**, en la
+declaracion de tipo (linea 221): **no se pinta**. La pantalla no miente.
+
+Los dos EV divergen mucho y por eso importa cual se muestra. Medido hoy en
+produccion: Philadelphia 22.7 declarado contra 4.7 que dimensiona; Dortmund 16.6
+contra **-19.4**. Un usuario que viera el declarado creeria que hay valor donde
+el motor dice que se pierde dinero.
+
+**Residual declarado:** `v_pick_canonico.ev_pct` (el declarado) sigue siendo
+consumido por otras superficies (`picks_recomendados_hoy`, `mejor_oportunidad_hoy`,
+`destacados_cache`). Que la pantalla del RETO 13M este bien no prueba que las
+demas lo esten. No verificado todavia.
+
+## 2A.3 #208 — CONFIRMADO EN EL EFECTO, REFUTADO EN EL MECANISMO
+
+La hipotesis del ticket era "el monto lo decide SOLO el momio". **Eso ya no es
+cierto**: el tope plano `least(p, tasa_base)` que producia ese sintoma se
+reemplazo el 5-sep por el haircut de Wilson. Medido hoy: `prob_que_decide_pct`
+va de 19.7 a 48.6 entre los 16 picks del dia; no es constante.
+
+Pero el monto sigue sin estar gobernado por el modelo. **Lo gobierna la frontera
+de tramo de `zonas_confiables`.**
+
+### Barrido A — momio FIJO en 2.20, probabilidad declarada de 30 a 70
+
+| p declarada | tramo (n) | sesgo | recorte | factor | p decide | stake |
+|---|---|---|---|---|---|---|
+| 39 | 1024 | -1.7 | 1.9 | 0.944 | 33.5 | $0 |
+| **40** | **853** | **+4.9** | 2.2 | 0.956 | **40.9** | $0 |
+| 49 | 853 | +4.9 | 2.2 | 0.956 | 49.5 | **$110.07** |
+| **50** | **187** | **+1.2** | **4.6** | 0.913 | **42.5** | **$0** |
+| 59 | 187 | +1.2 | 4.6 | 0.913 | 50.8 | **$145.70** |
+| **60** | **sin medir** | 0.0 | **11.1** | 0.805 | **39.4** | **$0** |
+
+**Subir la probabilidad declarada 1 punto tira el monto de $110 a $0, y de $146 a $0.**
+La probabilidad que decide CAE 7.0 pp y 11.4 pp al SUBIR la declarada.
+
+### Barrido B — EV declarado FIJO en +10%, momio de 1.60 a 6.00
+
+Stake = **$0 en 10 de 12 momios**. Solo hay dinero en 2.40 y 2.60, que es
+exactamente donde la probabilidad implicada cae en el tramo Moneyline n=853, el
+unico con sesgo positivo grande (+4.9 pp). A EV declarado identico, lo que decide
+si hay dinero no es el EV ni el momio: **es en que tramo cae la probabilidad.**
+
+### Cuantificacion en los 4 mercados vivos (momio 2.20, p de 20 a 85)
+
+| mercado | pares donde subir p BAJA el stake | peor salto de p_decide | peor caida de stake |
+|---|---|---|---|
+| BTTS | 2 | **-15.9 pp** | **-$235.91** |
+| Moneyline | 2 | -11.4 pp | -$145.70 |
+| Total Equipo | 1 | -3.4 pp | -$21.30 |
+| Over/Under | 0 | -2.0 pp | $0.00 |
+
+Over/Under sale limpio en dinero porque todos sus sesgos por tramo son chicos
+(-3.1 a +0.9 pp). El defecto escala con la diferencia de sesgo entre tramos vecinos.
+
+### Causa raiz
+
+`zonas_confiables` mide el sesgo por tramo y `kelly_stake` lo aplica como un
+**desplazamiento aditivo constante dentro del tramo**. Los tramos vecinos de
+Moneyline tienen sesgos de -1.7, +4.9 y +1.2 pp; los de BTTS van de +9.1 a -13.7.
+Como la banda se elige con la probabilidad declarada, la funcion
+`p_decide(p_declarada)` es **escalonada y no monotona**. Ademas `zonas_confiables`
+**no tiene deporte**: un Moneyline de MLB y uno de futbol comparten tramo (ya
+documentado como limitacion en el propio codigo).
+
+Corolario economico: el sistema solo autoriza dinero cuando la probabilidad cae en
+una banda con sesgo medido positivo. Eso explica de forma mecanica el sintoma
+viejo de #126 ("el motor solo produce no-favoritos").
+
+## 2A.4 Tarea 4 — definicion canonica de EV
+
+No hay que elegir arbitrariamente: los dos EV **ya tienen nombres distintos y
+significados distintos**, y ninguno es redundante.
+
+- `ev_pct_declarado = (p_modelo * momio - 1) * 100`
+  Es el EV bajo la probabilidad del modelo tal cual. Sirve para auditar al modelo.
+  **NO debe gobernar dinero** mientras el modelo tenga skill negativo (#191).
+- `ev_pct = (p_decide * momio - 1) * 100`
+  Es el EV bajo la probabilidad despues del sesgo medido y del descuento por
+  incertidumbre. **Este es el canonico para dinero**, y es el que dimensiona y el
+  que pinta la tarjeta.
+
+Los dos responden a `EV = P(win)*(momio-1) - P(loss)*1`, con P distinta. No existe
+hoy una variable llamada `ev` que signifique dos cosas: la ambiguedad esta resuelta
+por nombre. Lo que falta es verificar que las demas superficies respeten esa
+convencion (residual de 2A.2).
+
+## 2A.5 Tarea 5 — propiedades medidas del sizing actual
+
+| propiedad | estado |
+|---|---|
+| monotonicidad respecto al edge | **FALLA**: 5 puntos de ruptura medidos en 4 mercados |
+| dependencia del momio | correcta dentro de un tramo (Kelly estandar) |
+| cap | `stake_max_pct = 5.0%` -> $300.00 sobre bankroll 6,000. Solo aprieta |
+| floor | `stake_min = 20` -> por debajo se anula a 0 (discontinuidad deliberada) |
+| bankroll base | `bankroll_disponible()` vivo, no congelado (corregido el 2-sep) |
+| fraccion | `fraccion_kelly = 0.25` |
+| exposicion acumulada | CDaR con suma corrida y desempate explicito en `reto_picks_hoy` |
+| redondeos | `round(..., 2)` en stake; sin efecto material |
+| correlacion entre apuestas | **NO medido todavia** |
+| parlays | **NO medido todavia** |
+
+## 2A.6 Estado del bloque
+
+Tareas 1, 2 y 3 completas con evidencia. Tarea 4 resuelta. Tarea 5 completa para
+apuesta individual, pendiente a nivel de cartera. **Cero modificaciones a produccion
+en este turno.** El criterio de salida de 2A NO se cumple todavia: se puede
+reconstruir la cadena de un pick real de punta a punta, pero la regla de aceptacion
+depende de una funcion no monotona de la probabilidad, y eso no es explicable ante
+el usuario ("subiste la probabilidad y por eso te quitamos el dinero").

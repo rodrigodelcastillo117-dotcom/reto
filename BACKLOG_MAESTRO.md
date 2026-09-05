@@ -402,3 +402,23 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     incluye `ajustado_at`, o sea que lo puso el DEFAULT — y con la **ausencia** del
     id 3 registrada con la misma formalidad que la prueba, para que nadie la
     confunda manana con "no busque".
+
+56. **#209 CERRADO en la pantalla del RETO 13M; #208 confirmado en el efecto pero
+    REFUTADO en el mecanismo.** La tarjeta si muestra el EV que dimensiona
+    (`ev_pct`, etiquetado "EV real") junto a "Prob. que decide"; `ev_pct_declarado`
+    esta tipado pero no se pinta. Importa, porque los dos divergen fuerte: Dortmund
+    marca +16.6% declarado contra **-19.4%** real.
+    Sobre #208: el monto YA NO lo decide solo el momio — el tope plano que causaba
+    eso se reemplazo el 5-sep. Pero tampoco lo decide el modelo. **Lo decide la
+    frontera de tramo de `zonas_confiables`.** Medido con el momio fijo en 2.20:
+    subir la probabilidad declarada de 49 a 50 tira el monto de **$110.07 a $0**, y
+    de 59 a 60 lo tira de **$145.70 a $0**, porque al cruzar de tramo el sesgo pasa
+    de +4.9 a +1.2 y el recorte de 2.2 a 4.6. Y con el EV declarado fijo en +10%,
+    el stake es **$0 en 10 de 12 momios**: solo hay dinero donde la probabilidad
+    cae en el unico tramo con sesgo positivo grande.
+    Causa raiz: el sesgo por tramo se aplica como desplazamiento aditivo constante
+    dentro de la banda, y la banda se elige con la probabilidad declarada, asi que
+    `p_decide(p)` es escalonada y **no monotona**. Peor caso medido: BTTS, salto de
+    **-15.9 pp** y **-$235.91** al subir la probabilidad un punto.
+    Esto explica mecanicamente el sintoma viejo de #126 (el motor solo produce
+    no-favoritos). Diagnostico completo, cero modificaciones a produccion.
