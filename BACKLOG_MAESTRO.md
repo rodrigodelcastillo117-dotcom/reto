@@ -818,3 +818,99 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     | F) `v_stake_provenance` | `stake_real=$500.00 | cap_recomendado=$300.00 | origen=ticket_escaneado | override_riesgo=t` |
     | G) `kelly_stake` sin cambios | MLS 761781: $93.25 / EV 10.57% (identico); `reto_picks_hoy` total $156.01 (identico) |
     | H) `EXP_OFF` | `constant numeric := 0.50` intacto |
+
+---
+
+## FASE 2A — HOTFIX P0 (5-sep-2026). LIMITE DE CARTERA CON CANDADO DE ESCRITURA
+
+80. **#216 2A.51 VOCABULARIO CANONICO. Un concepto, un nombre.**
+    Medido antes de definir: `get_bankroll_actual` solo suma `ganancia_neta` de
+    apuestas **YA RESUELTAS**, y `ganancia_neta` de una pendiente vale `0.00`
+    (verificado: los 2 parlays vivos tienen 0.00). **Por tanto el stake de una
+    apuesta viva SIGUE DENTRO de esa cifra**: es la equity total con las posiciones
+    abiertas valuadas a su costo.
+    | nombre canonico | funcion | hoy |
+    |---|---|---|
+    | `BANKROLL_TOTAL_RIESGO` | `get_bankroll_actual` | $7,003.36 |
+    | `EXPOSICION_ABIERTA` | `bankroll_expuesto` | $1,003.36 |
+    | `CAPITAL_LIBRE` | `bankroll_disponible` | $6,000.00 |
+    Identidad: `CAPITAL_LIBRE = BANKROLL_TOTAL_RIESGO - EXPOSICION_ABIERTA`.
+
+81. **#217 CORRECCION MATEMATICA: el "20%" era 16.667%.**
+    La formula vieja era `limite = CAPITAL_LIBRE * pct = (T - E) * pct`. Se cruza en
+    `E >= (T - E)*pct  <=>  E*(1+pct) >= T*pct  <=>  E >= T*pct/(1+pct)`.
+    Con pct=0.20: `E >= T/6 = 16.667%`. El denominador se encogia solo conforme
+    subia la exposicion, asi que el limite perseguia hacia abajo.
+    Formula correcta, coherente con lo que `get_bankroll_actual` significa:
+    ```
+    EXPOSICION_ABIERTA / BANKROLL_TOTAL_RIESGO <= limite_pct
+    capacidad_restante = BANKROLL_TOTAL_RIESGO * limite_pct - EXPOSICION_ABIERTA
+    ```
+    Hoy: limite $1,400.67 (era $1,167.23 efectivo), capacidad **$397.31** (reportaba
+    $196.64), ratio **14.33%** (reportaba 16.7%, que era E/CAPITAL_LIBRE).
+    **CONSECUENCIA QUE HAY QUE DECIR EN VOZ ALTA: corregir el denominador SUBE la
+    capacidad de $196.64 a $397.31.** No es un endurecimiento del numero. El
+    endurecimiento viene de #218: antes ese limite no se aplicaba nunca.
+
+82. **#218 2A.52 EL LIMITE DEJA DE SER INFORMATIVO: `tg_limite_exposicion`.**
+    Nuevo trigger `zzzz_limite_exposicion` BEFORE INSERT OR UPDATE OF apuesta en
+    **picks y parlays**. Evalua el efecto POST-INSERT (`exposicion_actual + delta`),
+    no el estado previo. En UPDATE solo cuenta el incremento.
+    Orden alfabetico de triggers: `zzz_autoridad_stake` (cap individual) corre
+    primero, `zzzz_limite_exposicion` (cap agregado) despues.
+    **Concurrencia**: `pg_advisory_xact_lock(hashtext('expo_cartera:'||apodo))`.
+    Sin el, dos INSERT simultaneos leen la misma exposicion previa y los dos pasan.
+
+83. **#219 2A.53 RUTA DE LEDGER EXTERNO, ortogonal al candado.**
+    `origen='ticket_escaneado'` + evidencia (`bet_id_casa` o `boleto_path`) permite
+    superar cap individual Y cap agregado. Sube `EXPOSICION_ABIERTA` de inmediato.
+    Medido: un ticket externo de $700 deja la cartera en **24.32%**, `sobre_el_limite
+    = true`, `capacidad_restante = $0`, y a partir de ahi **toda apuesta automatica
+    queda bloqueada** (probado con $50: rebota).
+
+84. **#220 2A.54 AUTORIDAD ECONOMICA DE PARLAYS.**
+    Medido: **CERO funciones SQL leen `ai_prob_combinada` o `ai_ev_pct`**, y cero
+    funciones SQL insertan en `parlays`. La unica ruta propuesta -> apostada es el
+    cliente. `construir_parlay_del_dia`, `construir_parlay_v2` y `generar_parlay_seguro`
+    solo proponen.
+    Nueva columna `parlays.autoridad_economica`, estampada por el trigger en cada
+    INSERT: `SIN_MODELO_CONJUNTO_VALIDADO` (todo parlay que no sea ledger) o
+    `LEDGER_EXTERNO`. `ai_prob_combinada` NO se borra: queda como dato observacional.
+
+85. **#221 2A.55 PADRE/PATAS: `exposicion_viva` DOBLE-CONTABA.**
+    `bankroll_expuesto` excluye `es_pata_parlay`; `exposicion_viva` **no lo hacia**.
+    Una pata con fila propia se contaba dos veces (en el padre y en la pata).
+    Hoy hay **0 filas de pata**, asi que el arreglo no mueve ningun numero, pero la
+    puerta estaba abierta. Corregido en `exposicion_viva`.
+    Modelo contable declarado: el stake vive UNA vez, en el padre. La pata es
+    descriptiva. El padre NUNCA queda exento del candado.
+    Probado: padre $300 + pata $300 -> `EXPOSICION_ABIERTA = $1,303.36` (no $1,603.36).
+
+86. **#222 2A.56 LOS CAPS INDIVIDUALES SON INCOMPATIBLES CON EL AGREGADO.**
+    Los caps individuales se miden sobre `CAPITAL_LIBRE`; el agregado sobre
+    `BANKROLL_TOTAL_RIESGO`. **Dos denominadores distintos.**
+    Con E=0 y cap RETO 15%: apuesta 1 = 0.15T (E=0.15T); apuesta 2 = 0.15*0.85T =
+    0.1275T -> E=0.2775T > 0.20T, rechazada. **Cabe 1 apuesta RETO completa y un
+    resto de 0.05T.**
+    Condicion de compatibilidad: para garantizar al menos N posiciones,
+    `cap_individual <= limite_agregado / N`. Con 20% agregado: 5% -> N=4 (coherente),
+    15% -> N=1.33 (incoherente).
+    **NO se cambia ningun numero en este hotfix.** Alternativas y consecuencias en
+    DISENO_FASE1_CEREBRO.md.
+
+87. **#223 CORRECCION ACEPTADA: el recorte V1 NO es arquitectura aprobada.**
+    Retiro mi clasificacion `A — portar tal cual`. Queda como
+    **`LEGACY_GUARD_NO_APROBADO_PARA_V2`**: reescribe la probabilidad via
+    Wilson/Beta/P_DECIDE y ya mostro problemas de semantica y monotonicidad.
+    Permanece en produccion solo porque quitarlo hoy cambiaria exposicion (vale el
+    45.9% del recorte de sizing, medido en 2A.49). No se hereda a V2.
+
+88. **#224 NOTA DE METODO: una fila artificial SI se escribio en produccion.**
+    En la prueba de concurrencia H10 el INSERT quedo bloqueado 17.98 s en el
+    advisory lock y, al liberarse, **entro y se confirmo** — mi bloque DO no tenia
+    rollback en el camino de exito y `execute_sql` hace commit.
+    Fila: pick $10.00, `bet_id_casa='H10-A'`, id `5c76bcb3`. **Borrada de inmediato**;
+    verificado 0 residuos en picks, parlays y cron. `EXPOSICION_ABIERTA` volvio a
+    $1,003.36 exacto.
+    El hallazgo del bloqueo es valido y es MEJOR prueba que un timeout: el INSERT
+    espero de verdad a que la otra sesion soltara el lock.

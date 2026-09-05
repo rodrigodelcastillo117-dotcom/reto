@@ -3117,3 +3117,230 @@ retirar RONGOL, migrar V2 y tocar produccion.
 2. **El primer barrido de rho salio internamente incoherente** (tres promedios
    distintos para el mismo grupo) porque `random()` dentro de una subconsulta
    escalar se re-evalua por cada agregado. Repetido con `WITH ... AS MATERIALIZED`.
+
+---
+
+# FASE 2A — HOTFIX P0: LIMITE DE CARTERA CON CANDADO DE ESCRITURA
+*(5-sep-2026. Estado final verificado identico al inicial: `EXPOSICION_ABIERTA = $1,003.36`.)*
+
+## 0. La distincion que gobierna todo lo demas
+
+| | A. AUTORIZACION | B. REGISTRO (ledger) |
+|---|---|---|
+| pregunta | ¿puedo crear riesgo NUEVO? | ¿como anoto un riesgo que YA existe? |
+| puede rebotar | si | **no** |
+| respeta cap individual | si | no |
+| respeta cap agregado | **si (nuevo)** | no |
+| convierte el stake en recomendado | — | **no** |
+| autoriza apuestas futuras | — | **no** |
+| sube `EXPOSICION_ABIERTA` | si | **si, de inmediato** |
+| marca | `origen` normal | `origen='ticket_escaneado'` + evidencia |
+
+## 2A.51 — Definicion final
+
+Medido antes de definir: `get_bankroll_actual` suma `ganancia_neta` solo de apuestas
+**resueltas**, y la de una pendiente vale `0.00`. El stake vivo **sigue dentro** de
+esa cifra.
+
+```
+BANKROLL_TOTAL_RIESGO = get_bankroll_actual   = $7,003.36   (equity total)
+EXPOSICION_ABIERTA    = bankroll_expuesto     = $1,003.36   (stakes vivos)
+CAPITAL_LIBRE         = bankroll_disponible   = $6,000.00   (T - E)
+```
+
+## 2A.51b — Prueba algebraica del 16.667%
+
+Formula vieja: `limite = (T - E) * p`. Se cruza cuando
+
+```
+E >= (T - E)·p   ⟺   E + E·p >= T·p   ⟺   E >= T·p/(1+p)
+p = 0.20  ⟹  E >= T/6 = 0.16667·T
+```
+
+No es 20%. Y `disponible = 0.20(T-E) - E = 0.20T - 1.2E` sobrestima el margen real
+(`T/6 - E`) en un factor 1.2 exacto.
+
+Formula adoptada:
+```
+EXPOSICION_ABIERTA / BANKROLL_TOTAL_RIESGO <= limite_pct
+capacidad_restante = BANKROLL_TOTAL_RIESGO · limite_pct - EXPOSICION_ABIERTA
+```
+
+| | antes | ahora |
+|---|---|---|
+| limite_monto | $1,200.00 (nominal) / $1,167.23 (efectivo) | **$1,400.67** |
+| capacidad | $196.64 | **$397.31** |
+| ratio | 16.7% (E/CAPITAL_LIBRE) | **14.33%** (E/TOTAL) |
+
+**Esto SUBE la capacidad en $200.67.** El endurecimiento no viene del numero, viene
+de que ahora el limite se aplica al escribir. Antes no se aplicaba nunca.
+
+## 2A.52 — Lugar exacto del enforcement
+
+`public.tg_limite_exposicion()`, montada como trigger `zzzz_limite_exposicion`
+BEFORE INSERT OR UPDATE OF apuesta en **`picks` y `parlays`**.
+
+Orden (alfabetico): `zzz_autoridad_stake` (cap individual) → `zzzz_limite_exposicion`
+(cap agregado). Salta `es_pata_parlay` y `es_prueba`. En UPDATE solo cuenta el
+incremento de `apuesta`.
+
+## 2A.52b — Concurrencia
+
+`perform pg_advisory_xact_lock(hashtext('expo_cartera:' || apodo))` antes de leer la
+exposicion. Bajo READ COMMITTED la transaccion que espera vuelve a tomar snapshot en
+su siguiente sentencia y ya ve la fila confirmada de la otra.
+
+**Prueba real con dos backends** (no hay dblink usable: no soy superusuario y no pido
+credenciales). Se abrio una sesion paralela con `pg_cron` que **solo toma el lock y
+duerme, sin escribir nada**:
+
+- sesion paralela pid 473332 sostiene el advisory lock
+- INSERT desde la sesion principal (pid 473352): **espero 17,982 ms** y solo entro
+  cuando la otra solto el lock
+
+Sin el lock, ese INSERT habria entrado en milisegundos leyendo la exposicion vieja.
+Queda demostrado que el camino de escritura se serializa por usuario.
+
+## 2A.53 — Apuestas externas ya realizadas
+
+`origen='ticket_escaneado'` + (`bet_id_casa` o `boleto_path`) atraviesa los dos caps.
+Medido: ticket externo de $700 → `EXPOSICION_ABIERTA` $1,003.36 → **$1,703.36**,
+ratio **24.32%**, `sobre_el_limite=true`, `capacidad_restante=$0`. Inmediatamente
+despues, una apuesta automatica de **$50 rebota**.
+
+## 2A.54 — Autoridad economica de parlays
+
+Rutas propuesta → apostada, auditadas: `construir_parlay_del_dia`,
+`construir_parlay_v2`, `generar_parlay_seguro` **solo proponen**; cero funciones SQL
+insertan en `parlays`; **cero funciones SQL leen `ai_prob_combinada` o `ai_ev_pct`**.
+La unica ruta es el cliente.
+
+Nueva columna `parlays.autoridad_economica`, estampada por el trigger:
+- `SIN_MODELO_CONJUNTO_VALIDADO` — todo parlay que no sea ledger externo
+- `LEDGER_EXTERNO` — boleto ya apostado afuera
+
+`ai_prob_combinada` se conserva como dato observacional. No gobierna dinero.
+
+## 2A.55 — Padre / patas
+
+Modelo contable declarado:
+1. **pierna descriptiva** (`es_pata_parlay=true`): su dinero ya esta en
+   `parlays.apuesta`. No pasa por los candados y **no suma** a la exposicion.
+2. **apuesta individual adicional**: fila normal, pasa por los dos candados.
+3. **el PADRE nunca queda exento**: entra al candado agregado.
+
+Bug corregido: `exposicion_viva` no excluia `es_pata_parlay` mientras
+`bankroll_expuesto` si. Hoy hay 0 filas de pata, asi que no movio ningun numero.
+Probado: padre $300 + pata $300 → `EXPOSICION_ABIERTA = $1,303.36`.
+
+## 2A.56 — Caps individuales: incompatibilidad demostrada
+
+Los caps individuales usan `CAPITAL_LIBRE`; el agregado usa `BANKROLL_TOTAL_RIESGO`.
+**Dos denominadores.** Con E=0 y cap RETO 15%:
+
+```
+apuesta 1: 0.15·T          → E = 0.1500·T
+apuesta 2: 0.15·(0.85T)    → E = 0.2775·T  >  0.20·T   RECHAZADA
+```
+
+Cabe **1 apuesta RETO completa y un resto de 0.05T**. Condicion general para
+garantizar N posiciones: `cap_individual <= limite_agregado / N`.
+Con 20% agregado: **5% → N=4 (coherente)**; **15% → N=1.33 (incoherente)**.
+
+Alternativas, **ninguna aplicada**:
+
+| opcion | cambio | consecuencia |
+|---|---|---|
+| A | RETO 15% → 5% | N=4 posiciones. Los 2 parlays vivos habrian necesitado override. Es el cambio mas simple y alinea con la politica general. |
+| B | agregado 20% → 45-60% | Sube el riesgo de cartera para justificar el cap individual. Se rechaza. |
+| C | 15% solo si es la UNICA posicion RETO abierta | Conserva la apuesta grande sin romper el agregado. Requiere logica de cartera nueva. |
+| D | mismo denominador (TOTAL) para los tres + RETO 10% | N=2. Elimina la mezcla de bases, que es la causa raiz. |
+
+El registro de tickets externos por encima del 5% **queda fuera de esta politica**:
+es ledger, no autorizacion.
+
+## 2A.57 / 2A.58 — Clasificaciones (sin tocar)
+
+- **RONGOL**: `LEGACY_GUARD_NO_VALIDADO`. Unica celda con soporte OOS:
+  MLB/ML/1.50-1.80/n=42 (train −37.7% → test −44.8%). El bug de alcance
+  (`rango_momio` calculado y nunca usado, buckets incompatibles, filtro de liga
+  no-op) **queda documentado y sin corregir**: arreglarlo desbloquearia 10 picks de
+  MLB y cambiaria exposicion productiva durante el hotfix.
+- **Allocator greedy**: `REDISEÑAR`. Sin cambios. Con la capacidad corregida el
+  presupuesto de hoy pasa de $196.64 a $397.31, pero el corte por prefijo sigue ahi.
+- **Recorte V1 en `kelly_stake`**: `LEGACY_GUARD_NO_APROBADO_PARA_V2` (correccion
+  aceptada). Permanece en produccion; no se hereda.
+
+## Pruebas H1–H14
+
+| # | prueba | resultado |
+|---|---|---|
+| H1 | sencilla $290 dentro de capacidad | ✅ ACEPTA, abierta $1,293.36 de $1,400.67 |
+| H2 | sencilla RETO $500 (pasa cap individual $900) cruza el agregado | ✅ RECHAZA: `LIMITE DE CARTERA ... dejaria la exposicion abierta en $1503.36 ... capacidad restante $397.31` |
+| P3 | dos RETO consecutivos $250+$250 | ✅ la 2a RECHAZADA por el agregado |
+| H3 | parlay automatico $500 cruza capacidad | ✅ RECHAZA |
+| H4 | parlay automatico dentro de capacidad | ✅ `autoridad_economica = SIN_MODELO_CONJUNTO_VALIDADO` |
+| H5/H6 | ticket externo $700 sobre cap individual ($300) y agregado ($1,400.67) | ✅ REGISTRA, `LEDGER_EXTERNO`, abierta → $1,703.36, ratio 24.32%, `sobre_el_limite=true` |
+| H7 | apuesta automatica $50 con la cartera sobre el limite | ✅ RECHAZA |
+| H8 | stake recomendado del motor | ✅ $93.25 → $82.37, **solo** por CAPITAL_LIBRE $6,000 → $5,300. Kelly no se toco. |
+| H9 | padre $300 + pata $300 | ✅ abierta $1,303.36 (sin doble conteo) |
+| H10 | dos backends concurrentes | ✅ INSERT bloqueado **17,982 ms** por el advisory lock de la otra sesion |
+| H11 | `kelly_stake` intacta | ✅ MLS 761781 $93.25 / EV 10.57%; `reto_picks_hoy` total $156.01 |
+| H12 | V2 sin consumidores de dinero | ✅ unico lector: `invariantes_temporales`. `inv_kelly_puro_v2` 8/8 |
+| H13 | `EXP_OFF` | ✅ `constant numeric := 0.50` |
+| H14 | invariantes temporales Fase 1.5 | ✅ I1, I2, I3, I4 todos PASS |
+
+## Rollback
+
+Todas las apuestas artificiales revertidas. Verificado: 0 residuos en `picks`,
+0 en `parlays`, 0 jobs de cron residuales, `EXPOSICION_ABIERTA = $1,003.36`.
+
+**Una excepcion que hay que decir**: en H10 el INSERT de prueba ($10, `bet_id_casa
+='H10-A'`) **si se confirmo en produccion** — mi bloque DO no tenia rollback en el
+camino de exito y `execute_sql` hace commit. Se borro de inmediato y se verifico el
+estado. Fue mi error de metodo, no del candado.
+
+## Impacto sobre apuestas ya existentes
+
+Ninguno. El trigger es BEFORE INSERT / UPDATE OF apuesta: los 2 parlays vivos
+($1,003.36) no se tocan ni se recalculan. Su `origen` y `autoridad_economica` quedan
+NULL (filas anteriores al cambio).
+
+Lo que si cambia para el usuario: la pantalla pasa de "16.7% de un limite de 20%
+($1,200), disponible $196.64" a "14.33% de un limite de 20% ($1,400.67), capacidad
+$397.31", y la cifra de bankroll de esa tarjeta pasa de $6,000 a $7,003.36, que es la
+misma que ya usa la grafica del reto.
+
+## Objetos modificados
+
+| objeto | cambio |
+|---|---|
+| `public.exposicion_viva(text)` | denominador corregido + exclusion de `es_pata_parlay` + vocabulario canonico (alias legacy conservados) |
+| `public.tg_limite_exposicion()` | **nueva** |
+| trigger `zzzz_limite_exposicion` en `picks` y `parlays` | **nuevo** |
+| `parlays.autoridad_economica` | **nueva** columna + CHECK |
+| extension `dblink` | instalada durante la investigacion, **no usada** |
+
+Heredado del cambio anterior del mismo dia: `picks.origen`, `parlays.origen`,
+`tg_autoridad_stake`, `v_stake_provenance`.
+
+## Riesgos residuales
+
+1. **La correccion del denominador afloja el numero**: capacidad $196.64 → $397.31.
+   Compensado por el enforcement, pero es un aumento real de capacidad autorizada.
+2. **Caps con dos denominadores** (individual sobre CAPITAL_LIBRE, agregado sobre
+   TOTAL). Es la causa raiz de 2A.56 y sigue viva.
+3. **15% RETO vs 20% agregado**: una sola apuesta RETO consume el 75% de la cartera.
+4. **`origen='ticket_escaneado'` es declarativo**: un cliente puede inventar un
+   `bet_id_casa`. No es peor que antes (el escape hatch de 15 caracteres era igual),
+   pero ahora tambien atraviesa el cap agregado.
+5. **El allocator sigue cortando por prefijo**: capta $0 de EV cuando el presupuesto
+   aprieta.
+6. **RONGOL sigue mal dirigido** y bloqueando el unico tramo con ROI positivo
+   significativo. Documentado, sin corregir, a proposito.
+7. **El advisory lock serializa toda escritura de apuestas por usuario.** Con un
+   solo usuario activo es irrelevante; con muchos usuarios simultaneos habria que
+   medir la contencion.
+8. **`autoridad_economica` marca, no bloquea.** Un parlay `SIN_MODELO_CONJUNTO_VALIDADO`
+   sigue pudiendo registrarse si cabe en la capacidad. Impedirlo seria una decision
+   de politica, no de contabilidad, y no estaba en el mandato.
