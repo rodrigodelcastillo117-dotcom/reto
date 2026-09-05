@@ -107,15 +107,37 @@ completeness = Σ (peso_i · 1[estado_i = 'ok']) / Σ peso_i
 Los pesos viven en una tabla `feature_pesos(deporte, mercado, feature, peso, medido_at,
 n, fuente_medicion)` y **solo se escriben desde un backtest**, nunca a mano.
 
-### 1.3 Castigo de confianza: encoger hacia el mercado, no hacia 50%
+### 1.3 Castigo de confianza — **HIPÓTESIS A VALIDAR, no fórmula aprobada**
+
+Candidato:
 
 ```
-p_usada = p_mercado + completeness · (p_modelo − p_mercado)
+p_usada = p_mercado + w(completeness) · (p_modelo − p_mercado)
 ```
 
-Con información completa cotizas tu modelo; sin información cotizas el mercado, que es
-el estimador honesto por defecto. Encoger hacia 50% sería peor: inventaría ventaja en
-favoritos claros. Se compone después con la temperatura de la sección 3.
+Conceptualmente: con información completa cotizas tu modelo; sin información cotizas
+el mercado, que es el estimador honesto por defecto. Encoger hacia 50% sería peor:
+inventaría ventaja en favoritos claros.
+
+**Pero `w = completeness` (lineal, coeficiente 1) no está demostrado.** Con modelo 65%
+y mercado 52%, una completitud de 0.50 da 58.5% — parece razonable y no lo es por eso.
+Queda como candidato y se valida igual que todo lo demás:
+
+| forma funcional | parámetros a ajustar |
+|---|---|
+| lineal | `w = c` (el candidato, 0 parámetros) |
+| potencia | `w = c^γ`, γ por deporte y mercado |
+| umbral | `w = 1` si `c ≥ c₀`, si no `c/c₀` |
+| por tipo de faltante | `w = 1 − Σ peso_i · 1[falta_i]`, con pesos de `feature_pesos` |
+
+La cuarta es la que recoge su observación: **no toda ausencia pesa igual**. Que falte el
+abridor de MLB no es lo mismo que falte una variable secundaria. Se ajusta por
+walk-forward con los mismos cuatro criterios de §3.4, y gana la que gane.
+
+**Mientras no esté validada** rige la lineal por ser la más conservadora, marcada
+`"w_forma": "lineal_provisional"` dentro del JSON — y el tamaño de apuesta va además
+multiplicado por el Pick Quality Score de §8, de modo que un encogimiento sin validar
+no puede sobreapostar por sí solo.
 
 ### 1.4 Migración (NO aplicada)
 
@@ -272,6 +294,15 @@ Un método entra a producción solo si cumple **las tres**:
    mercado **se apaga**, no se calibra.
 3. La banda ≥65% queda dentro de ±3 pp de su tasa real, con IC de Wilson que contenga
    la diagonal.
+4. **Estabilidad entre pliegues.** Ganar 4 de 5 puede esconder un pliegue desastroso —
+   y un pliegue desastroso es la firma del *drift*, no del ruido. Por eso:
+   - se **reporta siempre** la desviación estándar de la mejora entre pliegues;
+   - **ningún pliegue puede deteriorarse severamente** respecto al baseline sin
+     investigación explícita y documentada;
+   - "severamente" queda **[SIN UMBRAL FIJO]** a propósito: se fija por deporte y
+     mercado cuando haya suficientes ciclos para saber cuál es la dispersión normal.
+     Poner un número universal hoy sería la misma intuición sin medir que estamos
+     tratando de erradicar.
 
 El criterio 2 es el que convierte la calibración en **diagnóstico** en vez de cosmética.
 Con los AUC de la sección 0.2, la predicción honesta es que **Corners y BTTS de fútbol
@@ -398,14 +429,226 @@ falten tiros, `α = 0` para ese equipo y `features_input_json` registra
 
 ---
 
-## 7. ORDEN DE EJECUCIÓN PROPUESTO
+## 7. ORDEN DE EJECUCIÓN — aprobado por el Auditor Principal (5-sep-2026)
 
 | # | bloque | por qué en ese lugar |
 |---|---|---|
-| 1 | **Trazabilidad (§1)** | sin ella toda medición posterior es inauditable |
-| 2 | **NFL apagado (§5) + CLV real (§4)** | son los dos que hoy desinforman activamente |
-| 3 | **Compresión de sobreconfianza (§3)** | 77.4% que rinde 52.6% está dimensionando dinero |
-| 4 | **Desacoplamiento y candado del LLM (§2)** | fija la frontera antes de meter variables nuevas |
-| 5 | **Backtest de xG (§6)** | primero saber que la línea base es honesta |
+| 1 | **Trazabilidad (§1)** | sin ella no se puede auditar nada de lo que sigue |
+| 2 | **Desacoplamiento + candado del LLM (§2)** | fijar la frontera datos → modelo → probabilidad → LLM **antes** de meter datos nuevos |
+| 3 | **NFL apagado (§5)** | corrección de integridad, inmediata |
+| 4 | **CLV real + captura T-30 (§4)** | hay que empezar a acumular el dato correcto cuanto antes: sin historia no hay peldaño 3 |
+| 5 | **Modelo / calibración (§3)** | |
+| 6 | **Backtest incremental de variables (§6)** | xG, tiros, lesiones, alineaciones, clima, árbitro, descanso |
+| 7 | **Pick Quality Score, selección final y Kelly (§8)** | al final, porque consume la salida de todos los anteriores |
 
-Nada de esto se ejecutó. Queda a la espera de su visto bueno bloque por bloque.
+Cambio respecto a mi propuesta: el desacoplamiento sube de 4 a 2. Es correcto — poner
+el candado antes de conectar variables nuevas evita que el LLM pueda "retocar" un
+número que todavía estamos aprendiendo a medir.
+
+---
+
+## 8. PICK QUALITY SCORE (§8) — la capa que faltaba
+
+### 8.1 El problema que resuelve
+
+EV es una estimación puntual de una variable aleatoria cuya distribución conocemos mal.
+Dos picks con el mismo EV no valen lo mismo si uno se apoya en datos completos y un
+mercado calibrado y el otro en datos huecos y un modelo sin señal.
+
+El PQS **no sustituye al EV**. Hace otras tres cosas: **filtra**, **ordena** y
+**dimensiona**.
+
+### 8.2 Componentes, todos en [0,1], todos medidos
+
+| componente | qué mide | de dónde sale |
+|---|---|---|
+| `q_calibracion` | qué tan calibrado está ESE (deporte, mercado) fuera de muestra | brecha de LogLoss contra tasa base en el walk-forward de §3. **Cero si el mercado falla el criterio 2** |
+| `q_discriminacion` | si el modelo ordena | AUC fuera de muestra, mapeado [0.50, 0.60] → [0, 1]. **Cero por debajo de 0.52** |
+| `q_datos` | completitud ponderada de insumos | `data_completeness_pct` de §1 |
+| `q_muestra` | incertidumbre por tamaño de muestra | límite de Wilson, **ya en producción** (#214) |
+| `q_mercado` | acuerdo con el precio | penaliza `abs(p_modelo − p_mercado)` más allá del umbral medido. Generaliza la guarda de #206 |
+| `q_clv` | CLV histórico de ese (deporte, mercado, casa) | §4. **NULL hasta que haya historia — nunca se asume 1.0** |
+| `q_varianza` | dispersión del resultado | binario en O/U y BTTS; penaliza el precio largo en Moneyline |
+
+### 8.3 Agregación: media **geométrica**, no aritmética
+
+```
+PQS = ( Π q_i ) ^ (1/k)      sobre los k componentes medibles
+```
+
+La media geométrica se destruye con **un solo** componente cercano a cero — que es
+exactamente lo que queremos: un cero mata el pick. La aritmética permitiría que un EV
+espectacular tapara la falta de datos. Los componentes NULL **se excluyen del producto
+y de k**; jamás se imputan a 1.0 (mismo principio de §6.4).
+
+### 8.4 Los tres usos
+
+1. **Puerta.** `PQS < 0.40` ⇒ no es pick, sin importar el EV.
+   Nuevo `bloqueado_por = 'calidad_insuficiente'`.
+2. **Dimensionamiento.** `stake = kelly(p_calibrada, momio) × PQS`. Aquí es donde el
+   PQS toca el dinero.
+3. **Orden.** La lista corta se ordena por **PQS**, no por EV.
+
+El umbral 0.40 está **[SIN MEDIR]**: se fija maximizando el CLV realizado del conjunto
+que pasa la puerta, una vez que §4 tenga historia. Hoy es un marcador de posición
+declarado, no un número con respaldo.
+
+### 8.5 Su ejemplo, con el mecanismo aplicado
+
+Valores de componente **ilustrativos** (no medidos todavía):
+
+| componente | Pick A (EV +8%, 54%) | Pick B (EV +5%, 68%) |
+|---|---|---|
+| `q_calibracion` | 0.30 | 0.90 |
+| `q_discriminacion` | 0.30 | 0.80 |
+| `q_datos` | 0.50 | 1.00 |
+| `q_muestra` | 0.80 | 0.95 |
+| `q_mercado` | 0.30 | 0.90 |
+| `q_clv` | 0.40 | 0.80 |
+| `q_varianza` | 0.50 | 0.90 |
+| **PQS** | **0.42** | **0.89** |
+
+B ordena por encima de A y recibe **más del doble** de multiplicador de stake, aunque
+su EV sea menor. Es exactamente la preferencia que usted expresó — y ahora es una
+fórmula auditable, no un criterio de gusto.
+
+Y responde a su preocupación original: un +300 con EV positivo pero `q_datos` bajo y
+`q_discriminacion` ≈ 0 **no llega a la puerta**. Ya no depende de un filtro de 48%
+puesto a mano.
+
+---
+
+# ANEXO A — RESULTADO DEL BACKTEST DE xG EN FÚTBOL (corrido el 5-sep-2026)
+
+Solo lectura. **Nada conectado a producción.** Peldaños 0, 1 y 2 de §6.3 ejecutados
+completos; peldaño 3 pendiente porque exige la infraestructura de §4.
+
+## A.0 Montaje
+
+- Universo: `v_equipo_partido_espn_xg`, partidos de fútbol con tiros y tiros a puerta.
+- Medias móviles de los **10 partidos previos** por equipo y competencia, con piso de
+  **6 partidos previos** por lado. Todas las ventanas excluyen el partido en curso.
+- Ancla de liga: media **expansiva** por competencia hasta el partido anterior
+  (`rows between unbounded preceding and 1 preceding`), separada local / visitante.
+  Sin fuga temporal por construcción.
+- 5 pliegues **temporales** por fecha:
+
+| pliegue | n | desde | hasta |
+|---|---|---|---|
+| 1 | 2,390 | 2023-08-19 | 2024-05-10 |
+| 2 | 2,390 | 2024-05-10 | 2025-01-25 |
+| 3 | 2,390 | 2025-01-25 | 2025-08-17 |
+| 4 | 2,390 | 2025-08-17 | 2026-02-08 |
+| 5 | 2,389 | 2026-02-08 | 2026-09-04 |
+
+Mezcla evaluada, con ambos lados normalizados por su propia media de liga para que la
+diferencia de escala entre goles y proxy de xG no sesgue nada:
+
+```
+r_ataque  = (1−α)·(gf_prev/media_goles) + α·(xgf_prev/media_xg)
+r_defensa = (1−α)·(gc_rival/media_goles) + α·(xgc_rival/media_xg)
+λ = media_liga_por_localía · r_ataque · r_defensa
+```
+
+## A.1 Peldaño 0 — nivel λ. **PASA 5/5**
+
+RMSE de goles del equipo (n = 23,898 filas equipo-partido):
+
+| α | pl.1 | pl.2 | pl.3 | pl.4 | pl.5 | global |
+|---|---|---|---|---|---|---|
+| **0.00** (motor actual) | 1.26797 | 1.28423 | 1.27574 | 1.24885 | 1.26973 | **1.26936** |
+| 0.25 | 1.22624 | 1.24144 | 1.23428 | 1.21303 | 1.22860 | 1.22875 |
+| 0.50 | 1.20222 | 1.21605 | 1.20722 | 1.19093 | 1.20155 | 1.20362 |
+| **0.75** | **1.19600** | **1.20798** | **1.19484** | **1.18287** | **1.18903** | **1.19417** |
+| 1.00 | 1.20640 | 1.21675 | 1.19697 | 1.18898 | 1.19127 | 1.20012 |
+
+- **α = 0.75 es el mínimo en los cinco pliegues, cada uno por separado.** Estabilidad total.
+- α = 0 (lo que corre hoy) es el **peor** en los cinco.
+- El óptimo es **interior** (0.75, no 1.00): es una mezcla real, no un resultado degenerado.
+- Prueba pareada de errores al cuadrado, α=0 contra α=0.75:
+  mejora media **0.185221**, sd 1.124563, **t = 25.46** con n = 23,898.
+
+Criterio de muerte del peldaño 0 (“si el mejor α = 0, se detiene todo”): **no se activa**.
+
+## A.2 Peldaño 1 — nivel probabilidad. **PASA 5/5, y luego 4/4 calibrado**
+
+Poisson sobre las λ; O/U 2.5 con la suma de Poissons, BTTS con `(1−e^−λh)(1−e^−λa)`.
+LogLoss fuera de muestra (n = 2,390 por pliegue):
+
+| pliegue | O/U goles | **O/U xG** | BTTS goles | **BTTS xG** |
+|---|---|---|---|---|
+| 1 | 0.72304 | **0.69027** | 0.72702 | **0.69742** |
+| 2 | 0.72209 | **0.68558** | 0.72414 | **0.68827** |
+| 3 | 0.73433 | **0.68672** | 0.73181 | **0.69300** |
+| 4 | 0.73485 | **0.68734** | 0.72936 | **0.68993** |
+| 5 | 0.72788 | **0.67889** | 0.72603 | **0.67858** |
+
+Gana en **5 de 5** en ambos mercados, sin un solo pliegue deteriorado (criterio 4).
+
+Dato que conviene no maquillar: la versión de **solo goles** da LogLoss ≈ 0.727, **peor
+que una moneda** (0.693). El motor actual, en estos dos mercados, es peor que no opinar.
+
+### Calibración por temperatura, ajustada fuera de muestra
+
+T ajustada sobre los pliegues **anteriores**, aplicada al pliegue de prueba.
+Tasa base también sin fuga (media de los pliegues anteriores, no del propio):
+
+| pliegue de prueba | T ajustada | sin calibrar | **calibrada** | tasa base |
+|---|---|---|---|---|
+| 2 | 2.0 | 0.68558 | **0.67961** | 0.68531 |
+| 3 | 1.8 | 0.68672 | **0.68204** | 0.68973 |
+| 4 | 1.8 | 0.68734 | **0.68259** | 0.69129 |
+| 5 | 1.8 | 0.67889 | **0.67654** | 0.68409 |
+
+- Criterio 1 (gana al no calibrado): **4 de 4**.
+- Criterio 2 (gana a la tasa base): **4 de 4**.
+- Criterio 4 (estabilidad): T estable en 1.8–2.0; la ventaja sobre la tasa base va de
+  −0.0057 a −0.0087. Ningún pliegue deteriorado.
+
+**T ≈ 1.8 significa compresión**, exactamente el diagnóstico de §0: el modelo ordena
+bien y exagera la magnitud.
+
+## A.3 Peldaño 2 — discriminación. **PASA 5/5 en O/U, 5/5 en BTTS**
+
+AUC fuera de muestra, versión xG. `SE ≈ 0.012` por pliegue bajo H0:
+
+| pliegue | tasa Over | **AUC O/U** | tasa BTTS | **AUC BTTS** |
+|---|---|---|---|---|
+| 1 | 0.5502 | 0.5944 | 0.5615 | 0.5573 |
+| 2 | 0.5640 | 0.5813 | 0.5552 | 0.5555 |
+| 3 | 0.5435 | 0.5761 | 0.5577 | 0.5381 |
+| 4 | 0.5351 | 0.5709 | 0.5435 | 0.5493 |
+| 5 | 0.5710 | 0.5825 | 0.5710 | 0.5693 |
+
+Puerta del peldaño 2 (AUC ≥ 0.55 con z ≥ 2): **O/U la pasa en los 5 pliegues**
+(z ≈ 5.9 a 7.9); **BTTS la pasa en 4 de 5** (el pliegue 3 con 0.5381 queda en z ≈ 3.2,
+por encima de 2 pero por debajo del piso de 0.55).
+
+## A.4 Qué significa y qué NO significa
+
+**Significa** que el proxy de xG **sí añade señal fuera de muestra**, medido con
+partición temporal, en tres niveles independientes y con estabilidad entre pliegues.
+Es la primera variable del sistema con esa demostración.
+
+**NO significa que haya ventaja de apuesta.** Todo esto es modelo contra **resultado**,
+no modelo contra **precio**. La casa puede seguir siendo mejor que este modelo. Esa es
+la pregunta del **peldaño 3**, que exige la línea de cierre real de §4 y hoy no se
+puede responder: solo el 3.8% de los cierres registrados es T-5 de verdad.
+
+**Ningún dinero se mueve hasta el peldaño 3.**
+
+## A.5 Reservas honestas
+
+1. **Es un proxy de tiros, no xG.** `0.1994·SOT + 0.0648·(tiros − SOT)`, con coeficientes
+   que ya venían ajustados en la vista. No se re-ajustaron aquí: si se ajustaron alguna
+   vez sobre este mismo histórico, parte de la ventaja podría ser residual de ese ajuste.
+   **Pendiente:** re-ajustar los dos coeficientes solo con datos anteriores al pliegue 1
+   y repetir. Hasta entonces el resultado queda marcado como **fuerte pero no definitivo**.
+2. **Cobertura 50.9%.** El backtest solo ve partidos con tiros. En producción hay que
+   degradar con α = 0 donde falten, y registrar `"estado":"ausente"`. Prohibido imputar.
+3. **Piso de 6 partidos previos** por lado: los equipos recién ascendidos o de copa con
+   pocos partidos quedan fuera del backtest y quedarán fuera del beneficio.
+4. **Falta 1X2.** Solo se midieron O/U 2.5 y BTTS, que tienen forma cerrada. Moneyline
+   exige la rejilla Dixon-Coles completa y queda pendiente.
+5. **Corners no se tocó.** Sigue con AUC 0.3109 (invertido, 3.56σ) en producción, y este
+   backtest no lo mejora: la vista no trae proxy de corners esperados.
