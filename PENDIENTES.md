@@ -3616,3 +3616,86 @@ vive en la ruta `ai_pro` de edge functions**, y el propio motivo nombra el mecan
 61. **`corr()` sobre una constante devuelve ruido, no NULL.** Con varianza cero el
     resultado es artefacto de redondeo en punto flotante. Verificar `stddev` antes de
     reportar cualquier correlacion.
+
+---
+
+# #213 ORDEN DE EXTIRPACION DEL REFILL — ejecutada PARCIALMENTE, y digo cual parte no
+
+## Punto 1 (extirpar el refill): NO EJECUTADO. Razon medida, no pereza.
+
+**No encontre codigo de refill vivo.** Rastreo completo:
+
+| donde busque | resultado |
+|---|---|
+| las 100+ funciones SQL (`0.55`, `refill`, `placeholder`) | 12 aciertos de `0.55`, **todos ajenos**: umbrales de similitud, `EXP_PITCHER` de `predecir_mlb`, clasificacion de favorito |
+| `oraculo-cron` (v152, completo) | ni `0.55` ni `refill`. Solo orquesta `analizar-partido` |
+| `analizar-partido` (239,475 chars, completo) | **un solo** `0.55`, y es el fallback de **corners**, no de O/U. Cero `refill`, cero `placeholder` |
+| `extraer-picks-de-analisis` (v21, completo) | escribe a `pick_del_dia` con otra fuente. Sin refill |
+
+**Y los datos dicen que dejo de producir:**
+```
+2026-09-05:  3 picks O/U,  0 constantes
+2026-09-04: 76 picks O/U,  0 constantes, 18 valores distintos
+2026-09-03:  2 picks O/U,  0 constantes
+2026-09-02:  3 picks O/U,  0 constantes
+2026-09-01: 10 picks O/U,  9 constantes   <- ultima aparicion
+```
+Coincide con #195/#196 (Poisson determinista + Dixon-Coles en el trigger), del 1-4 de sep.
+
+**PERO no declaro el refill muerto.** La condicion es "<2 picks" y esos dias hubo 2 o 3:
+pudo no dispararse en vez de no existir. **"No lo encuentro" no es "no existe".**
+
+Editar a ciegas una edge function de 239 mil caracteres para borrar codigo que no
+encuentro, con `deploy_edge_function` exigiendo reenviar el archivo entero y volteando
+`verify_jwt` en silencio, es exactamente como se rompe produccion. No lo hice.
+
+### Lo que hice en su lugar: la defensa donde SI es verificable
+`tg_sin_probabilidad_constante` + trigger `zzz_sin_probabilidad_constante` en
+`oraculo_picks_tracking`. Cualquier `probabilidad_real` exactamente 0.55 queda
+**marcada automaticamente** como placeholder.
+
+Cierra el agujero REAL, que no era el 0.55 sino la etiqueta: el sistema sabia declararlo
+pero solo lo hacia en **225 de 874 (25.7%)**; las otras 649 iban disfrazadas de
+`Poisson/ESPN`. Ahora se declaran todas.
+
+**Marca, no rechaza, a proposito:** rechazar la fila escondería que el refill volvio,
+que es justo lo que hay que poder ver.
+
+## Punto 2 (abstencion en Over/Under): EJECUTADO
+
+`ligas_bloqueadas` solo veta por liga (nombre/endpoint/liga_id). No existia forma de
+decir "este MERCADO no emite dinero". Creado:
+
+- **`mercados_en_abstencion`** (patron, motivo, medicion). O/U entra con su medicion
+  escrita: `n=1021, +10.6pp, t=-2.97; fuera de muestra IC [-0.0033,+0.0075] cruza cero`.
+- **`mercado_en_abstencion(mercado, pick_desc)`** cubre el vocabulario real: `Over/Under`,
+  `Over 2.5`, `Mas de 2.5 goles`, `Menos de 2.5`.
+- **`reto_picks_hoy`** ahora respeta la abstencion, y esta **por encima de Kelly**: un
+  mercado sin ventaja demostrable no emite dinero aunque Kelly autorice un tamano.
+
+### Verificado
+| prueba | resultado |
+|---|---|
+| picks apostables hoy | 7 (era 8: cayo uno de O/U) |
+| **O/U con boton de apostar** | **0** |
+| O/U en abstencion | 7 |
+| `mercado_en_abstencion('Over/Under','Over 2.5')` | true |
+| `mercado_en_abstencion(null,'Mas de 2.5 goles')` | true |
+| `mercado_en_abstencion('Moneyline','Real Madrid ML')` | **false** (no se pasa de listo) |
+| `mercado_en_abstencion('BTTS','Ambos equipos marcan Si')` | **false** |
+
+## Punto 3 (tsgo + payload vacio): NO APLICA
+No se modifico ninguna edge function, asi que no hay TypeScript nuevo que compilar ni
+payload que pueda romperse. Si se llega a tocar `analizar-partido`, ahi si aplica.
+
+## Lo que falta y a quien le toca
+La salida de O/U de la abstencion exige que `v_termometro_motor` diga "GANA a la tasa
+base" **con probabilidades por partido**. Esta escrito en el comentario de la tabla.
+
+## Lecciones nuevas
+62. **"No encuentro el codigo" no autoriza a editar a ciegas, ni a declarar que no existe.**
+    Las dos conclusiones son igual de peligrosas. Lo que si autoriza es poner la defensa
+    donde el efecto SI es observable: la fila que se escribe.
+63. **Marcar es mejor que rechazar cuando lo que quieres es ENTERARTE.** Un rechazo
+    silencioso habria escondido el regreso del refill. La marca lo deja a la vista y
+    ademas repara la estadistica hacia adelante.
