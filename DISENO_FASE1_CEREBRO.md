@@ -1531,3 +1531,75 @@ partidos evaluados (identico a antes), `mejor_oportunidad_hoy(10)` = 10 filas,
 `favoritos_bien_pagados()` = 3 filas, `v_mejores_picks_mlb` = 6 filas,
 `vale_la_pena_cerrar` responde, `veredicto_vivo('401885454','Mas de 2.5',2.0)`
 devuelve ev 20.2%.
+
+---
+
+## ANEXO H — HARDENING POST-CIERRE (5-sep-2026)
+
+Los dos pendientes no bloqueantes que el auditor nombro al firmar el cierre de
+Fase 1.5. Ninguno cambia comportamiento productivo.
+
+### H.1 Los invariantes dejan de ser una auditoria y pasan a ser un candado
+
+`public.invariantes_temporales()` devuelve `{ok, reglas[]}` con tres reglas:
+
+| regla | que prohibe | por que |
+|---|---|---|
+| **I1** `firmas_calibrar` | que `calibrar_prob_motor` recupere una firma corta o gane un DEFAULT | ese DEFAULT **era** la fuga |
+| **I2** `firmas_filtro_pick` | lo mismo para `filtro_pick` | idem |
+| **I3** `motor_sin_desvio_a_now` | que una funcion del motor reintroduzca `coalesce(<fecha del evento>, now())` | era el octavo escape, el de `predecir_mlb` |
+
+Los envoltorios `*_live` **si** pueden tener defaults: su trabajo declarado es pasar
+el presente. I3 **ignora las lineas de comentario** a proposito: dos veces en esta
+auditoria un grep dio falso positivo sobre mi propio comentario, y el invariante no
+puede heredar ese defecto. El orden va con `collate "C"` porque la colacion del
+servidor ignora la puntuacion y pondria `_live` antes que la firma base, volviendo el
+invariante dependiente de la configuracion regional.
+
+`tg_candado_temporal` es un **event trigger** sobre `ddl_command_end` con tags
+`CREATE FUNCTION, ALTER FUNCTION`: el DDL que rompa un invariante no entra. Salida
+para migraciones legitimas en dos pasos, en la misma transaccion:
+
+```sql
+set local app.mantenimiento_candado_temporal = 'on';
+```
+
+Probado en las tres direcciones:
+
+| prueba | resultado |
+|---|---|
+| DDL benigno (funcion cualquiera con DEFAULT) | **aceptado** — sin falso positivo |
+| `create ... calibrar_prob_motor(p numeric, p_deporte text default 'soccer')` | **RECHAZADO**: `I1 ... hallado: calibrar_prob_motor(numeric,text) [PROHIBIDO: CON DEFAULTS] \| ...` |
+| `create ... predecir_zz_prueba` con `coalesce(m.game_date, now())` | **RECHAZADO**: `I3 ... hallado: predecir_zz_prueba` |
+| lo mismo con la salida de mantenimiento puesta | aceptado, y al limpiar `ok=true` |
+
+**Limite declarado:** el trigger no cubre un `DROP FUNCTION` suelto (se dejo fuera de
+los tags a proposito, porque haria que toda migracion en dos pasos necesitara la
+salida). No es un hueco silencioso: borrar `calibrar_prob_motor` o `filtro_pick` sin
+recrearlas revienta a la vista todos los consumidores vivos.
+
+### H.2 La evidencia de procedencia deja de vivir en un buffer que se resetea
+
+`pg_stat_statements` es memoria: la unica prueba de como se lleno `ajustado_at` en los
+coeficientes 6 y 7 podia desaparecer con un reinicio. Se creo
+`public.evidencia_procedencia` (objeto, fila, **afirmacion**, fuente, sentencia
+verbatim, capturado_at) y se copiaron las dos sentencias **tal cual**, sin retipearlas:
+
+- id 7 (soccer): 497 caracteres, `with est as (...) insert into calibracion_coef (deporte, a, b, muestra, tasa_base, rango_min, rango_max, nota, vigente) select ...`
+- id 6 (baseball): 153 caracteres, `insert into public.calibracion_coef (deporte, a, b, muestra, tasa_base, rango_min, rango_max, nota, vigente) values ($1 ... $9)`
+
+Ninguna incluye `ajustado_at` en su lista de columnas: el valor lo puso `DEFAULT now()`
+y no pudo ser backdateado.
+
+La tercera fila registra la **ausencia** para el id 3 (NFL) con fuente
+`ausencia_verificada` y sentencia NULL, permitido por el CHECK
+`chk_ev_sentencia_si_es_de_statements`. Guardar la ausencia con la misma formalidad
+que la prueba es el punto: si manana alguien busca la evidencia del id 3, encuentra
+por escrito que no existe, en vez de encontrar nada y suponer.
+
+### H.3 Integridad tras el hardening
+
+`invariantes_temporales().ok = true` · event trigger habilitado con tags
+`CREATE FUNCTION, ALTER FUNCTION` · 4 firmas vivas y ninguna otra · 3 filas de
+evidencia · 0 residuos de las funciones de prueba · `calibracion_coef` 7 filas ·
+**`EXP_OFF = 0.50`** · humo `filtro_pick_live` ev 7.8%.

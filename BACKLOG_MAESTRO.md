@@ -387,3 +387,18 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     y no pudo ser backdateado. Para el **id 3 (NFL) no hay evidencia**: es anterior a
     la ventana. No se inventa una fecha; se declara no verificable y se mide la
     exposicion, que es **cero picks de NFL resueltos**.
+
+55. **Hardening post-cierre: los invariantes ya no dependen de que alguien los corra.**
+    `invariantes_temporales()` codifica las tres reglas que la auditoria comprobo a
+    mano (sin defaults en la API temporal, sin `coalesce(fecha, now())` en el motor)
+    y `tg_candado_temporal`, un event trigger sobre `CREATE/ALTER FUNCTION`, rechaza
+    el DDL que las rompa. Probado en las tres direcciones: DDL benigno pasa, los dos
+    intentos de regresion se rechazan con el invariante y la regla exacta en el
+    mensaje, y la salida `app.mantenimiento_candado_temporal='on'` permite migraciones
+    legitimas en dos pasos. Limite declarado: no cubre un DROP suelto, que de todas
+    formas revienta a la vista.
+    Y la evidencia de procedencia salio de `pg_stat_statements` (memoria, se resetea)
+    a `evidencia_procedencia`, con las dos sentencias copiadas verbatim — ninguna
+    incluye `ajustado_at`, o sea que lo puso el DEFAULT — y con la **ausencia** del
+    id 3 registrada con la misma formalidad que la prueba, para que nadie la
+    confunda manana con "no busque".
