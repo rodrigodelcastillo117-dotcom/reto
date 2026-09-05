@@ -1192,3 +1192,93 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
        pone el servidor al subir y el cliente no elige
      Probadas las cuatro combinaciones: dueno OK / suplantador rechazado / archivo
      propio OK / archivo ajeno rechazado.
+
+106. **#242 PUSH: el transporte SI funciona. Lo que se perdio fue el LIBRO y el aviso de ARRANQUE.**
+     Medido el 5-sep-2026. Tres cosas distintas que se venian contando como una sola:
+     - **Transporte OK.** En la ventana viva de `net._http_response` (retencion real
+       ~2 h, NO 24 h — eso invalida cualquier conteo mio anterior "en 24 horas")
+       hay 6 llamadas a `enviar-notificacion-push`, las 6 con `{"sent":1,"cleaned":0}`.
+       `alertas_enviadas` confirma actividad hoy: `inicio` 14:21, `marcador_final`
+       15:31, `calificado` 16:26.
+     - **El libro murio.** `push_log` no tiene una sola fila desde el **1-sep 21:19**.
+       Causa: `enviar-notificacion-push` **v236 ya no escribe `push_log`**. La tabla
+       tiene `enviados / suscripciones / silenciado / motivo` — era el rastro — y una
+       redeployada la dejo sin escritor. Por eso "no llego el push" no se puede probar
+       ni desmentir. Es la reaparicion de #80.
+     - **ARRANQUE: hueco estructural, medido.** `alertar_inicio_partidos()` recorre
+       **solo `parlays`** (`FROM parlays p, jsonb_array_elements(p.picks_data)`).
+       Una sencilla nunca recibe "ARRANCA". Prueba de hoy: los 3 eventos con dinero
+       vivo — Lens-Lorient, Inter-Napoli (patas de parlay) y Schalke-Bayern
+       (sencilla) — tienen `tuvo_inicio = false`. Segundo filtro: exige
+       `live_scores.status='live'` **y** minuto <= 8; si el marcador tarda en marcarse
+       live, la ventana se cierra y ya no vuelve a abrirse nunca.
+     - **GOLES: sin rastro por diseno.** El push de gol lo manda `check-score-updates`
+       con un `fetch` **interno** (no pasa por pg_net), y el trigger
+       `trigger_enviar_push_notificacion` **silencia** la fila espejo de
+       `notificaciones` (`marcador` con `data->origen='score_notifications'`). Si ese
+       fetch falla, el usuario no recibe nada y **no queda registro en ningun lado**.
+       Ademas la regla "quieto una vuelta" retrasa el aviso 2-4 min: no es tiempo real.
+     - Los **635 HTTP 404 en 2 h** son `{"error":{"message":"No stats found."}}` de la
+       API de MLB (linescore/enrich). Ruido, no push.
+
+107. **#243 CLIMA FUTBOL: el cron pide SIEMPRE los mismos 20 estadios.**
+     Medido: 159 estadios con partido en 6 dias. 58 (36%) **no estan** en
+     `futbol_estadios` -> nunca son elegibles. 2 sin coordenadas. 99 elegibles, pero
+     **solo 37 tienen clima**. Cobertura de la vista `v_futbol_clima_partido` en la
+     ventana -12h/+4d: 37 con clima, 106 con sede y sin clima, 31 sin sede.
+     Causa: `futbol_clima_pedir(20)` hace `select distinct ... limit 20` **sin
+     ORDER BY y sin filtro de frescura**; lo unico que excluye es lo que esta en
+     `futbol_clima_pendiente`, que `futbol_clima_recoger()` vacia 5 min despues. A las
+     3 h vuelve a elegir el mismo primer lote. Nunca avanza mas alla de esos ~20.
+
+108. **#244 FUT PRO: el Moneyline no lo mata RONGOL ni el Skill Score. Lo mata un piso de 52%.**
+     La pantalla lee `v_picks_futbol_limpio` = `picks_futbol_cache` = `v_picks_futbol_calc`,
+     que **no es** `v_pick_canonico`. Contenido de la cache ahora: **BTTS 5,
+     Over/Under 3, Moneyline 0**.
+     `v_picks_futbol_calc` filtra `probabilidad BETWEEN 52 AND 80`. En `picks_premium`
+     a 48 h: Over/Under n=37 (24 pasan), BTTS n=18 (18 pasan), **Moneyline n=12, 0
+     pasan** — su maximo es **49.5%** y su media 42.1%. Es un piso pensado para
+     mercados de dos salidas aplicado a un 1X2 de tres, donde el empate se lleva ~25%.
+     Mientras tanto `v_pick_canonico` si tiene 44 Moneyline de futbol con 4 `es_pick`
+     (Dortmund ML, Lille ML, Real Salt Lake, Empate) y **0** Over/Under `es_pick`:
+     las dos pantallas dicen lo contrario porque leen motores distintos (#204).
+
+109. **#245 BARRA DE FAVORITOS: ya consume P_FAIR. Premisa descartada.**
+     `PicksProbabilidadFavoritos.tsx` pinta `favorito_pct` de `v_pick_canonico`, y ahi
+     `favorito_pct = GREATEST(prob_local_casa_pct, prob_visitante_casa_pct)` con
+     `prob_local_casa_pct = 100*(1/home_ml)/(1/home_ml + 1/away_ml + 1/draw_ml)`.
+     Eso **es** probabilidad normalizada sin vig (incluye el empate en el 1X2), no el
+     EV legacy ni el implicito crudo. Unico matiz: es el favorito **del mercado**, no
+     el del modelo; el del modelo es `probabilidad_pct`.
+
+110. **#246 NFL: cero picks canonicos y cero apuestas reales. Pero no es "SIN_MODELO".**
+     `v_pick_canonico` para NFL: **0 filas**. Apuestas NFL reales historicas: **0**.
+     De facto apagada para dinero, y asi sigue.
+     Mapa de datos SI disponible: 572 partidos (272 futuros, hasta ene-2027),
+     `nfl_picks_premium` 1,358, `nfl_tablero` 572, 24 crons activos (agenda, lesiones,
+     snaps, FPI, clima, momios, ADP, stats, H2H). `nfl_backtest` sigue **vacia**.
+     `modelo_confiabilidad` medido el 1-sep sobre n=1,437:
+     - **NFL Moneyline**: dice 53.7%, pasa 54.5% (sesgo -0.8 pp), Brier 0.23813 vs
+       0.24799 tasa base y 0.25 volado -> "acierta de verdad".
+     - **NFL Over/Under**: dice 56.3%, pasa 48.8% (**sesgo +7.5 pp**), Brier 0.25287
+       **peor que un volado**, y recalibrar lo empeora -> **no usar**.
+
+111. **#247 RONGOL: el bloqueo IGNORA `rango_momio`. Bug localizado.**
+     `rongol_veto()` calcula `v_rango` arriba y lo usa **solo** en el bucle de fugas
+     (que unicamente advierte). El bucle que **bloquea** —
+     `lecciones_aprendidas WHERE activa AND bloqueo_total` — cruza por
+     `mercado_norm` + `liga` y **nunca lee `la.rango_momio`**.
+     Ademas hay dos vocabularios de tramo: `rongol_hallazgos.clave` usa el de
+     `v_rango` (`<1.40`, `1.40-1.80`, `1.80-2.50`, `2.50-4.00`, `>4.00`) y
+     `lecciones_aprendidas.rango_momio` usa otro (`1.01-1.50`, `1.50-1.80`,
+     `1.80-2.20`, `2.20-3.00`, `3.00-5.00`, `5.00+`, `TODOS`).
+     Las tres lecciones que hoy bloquean:
+     | id | mercado | liga | rango | n | W-L | ROI |
+     |----|---------|------|-------|---|-----|-----|
+     | 11 | OU | MLB | 1.01-1.50 | **6** | 3-3 | -38.3% |
+     | 13 | ML | MLB | 1.01-1.50 | **8** | 4-4 | -33.1% |
+     | 12 | ML | MLB | 1.50-1.80 | 42 | 15-27 | -41.3% |
+     Ninguna se midio arriba de 1.80. Hoy hay **9 picks MLB bloqueados**, todos
+     Moneyline, con momios de **1.909 a 3.01** — es decir, ninguno cae en un tramo
+     medido. Las celdas n=6 (3-3) y n=8 (4-4) son 50% exacto: Wilson 95%
+     [18.8, 81.2] y [21.5, 78.5]. No tienen soporte fuera de muestra.
