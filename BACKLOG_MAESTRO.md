@@ -2073,3 +2073,112 @@ publicado: `brightness(1.55)` presente, respiracion presente, `hades_loss`,
 (`zeus-sereno`, `zeus-furioso`, `hades`).
 
 Sigue **sin verificacion visual**: nadie ha visto todavia como se ve.
+
+---
+
+## 256. AUDITORIA DEL HAIRCUT — PASO 1 (PROCEDENCIA). BLOQUEANTE
+
+**Solo medicion. Cero parametros cambiados. NFL sin tocar.**
+
+### Correcciones aceptadas del auditor
+1. `medido=true` significa "hay datos observados", NO "evidencia valida ni
+   transferible". Mi reporte anterior lo dio por bueno; queda corregido.
+2. `media_beta - 1.2816*sd_beta` NO es el percentil 10 exacto de una Beta. Es
+   una **aproximacion normal del limite inferior del posterior**. Se renombra a
+   **`BETA_LOWER_NORMAL_APPROX`**. Verificado: en `kelly_stake` NO existe
+   ninguna inversa de la CDF Beta; la unica formula es esa resta.
+3. Marco del auditor adoptado: la MISMA celda historica hace TRES trabajos —
+   corrige el centro de P, castiga por incertidumbre, y vuelve a castigar por
+   la misma incertidumbre.
+
+### PROCEDENCIA — la cadena completa
+
+```
+modelo_backtest  --(recalcular_zonas_confiables)-->  zonas_confiables  -->  kelly_stake
+```
+
+`recalcular_zonas_confiables` hace `DELETE FROM zonas_confiables` y reconstruye
+todo con:
+```sql
+FROM modelo_backtest WHERE muestra_min >= 8
+GROUP BY mercado, width_bucket(prob_modelo,0,1,10)
+HAVING count(*) >= 100
+```
+Agregacion **in-sample completa**. Sin train/test. Sin walk-forward.
+
+### HALLAZGO 1 — LA POBLACION ES 100% FUTBOL
+
+`modelo_backtest`: 30,876 filas (24,618 con `muestra_min>=8`), **sin columna
+`deporte`**, solo `liga_id`. Cruzando contra `ligas_master.api_sports_id`:
+
+| deporte | ligas | 
+|---|---|
+| **soccer** | **20** |
+
+**UN SOLO deporte. Cero filas de cualquier otro. Cero sin cruce.**
+(El conteo de filas del cruce sale inflado por duplicados de `api_sports_id` en
+`ligas_master`; lo que importa es que hay UN valor distinto de `deporte` y
+ningun bucket sin cruzar.)
+
+Cobertura: partidos del **10-mar-2026 al 26-ago-2026**. Mercados: Over/Under,
+Moneyline, Total Equipo, Corners, Doble Oportunidad, Tarjetas, BTTS.
+
+**Consecuencia directa:** `kelly_stake` cruza `zonas_confiables` SOLO por
+`mercado`. Los **50 picks de MLB Moneyline** de hoy reciben:
+- `v_sesgo` = una correccion de calibracion **aprendida en futbol**;
+- Beta y Wilson calculados sobre **n y prob_real de futbol**.
+
+MLB esta siendo corregido y castigado por el error de calibracion de un modelo
+de futbol. No es transferencia justificada: es la unica celda que hay.
+
+### HALLAZGO 2 — NO HAY VERSIONADO TEMPORAL
+
+`zonas_confiables` tiene 9 columnas y **ninguna fecha de corte**. `actualizado`
+tiene **UN SOLO valor distinto** en las 44 filas: `2026-09-05 13:40:00`. Es un
+snapshot unico, reescrito de golpe. No existe tabla de historico de zonas.
+
+**No se puede saber que valor de `n/prob_real/prob_dicha` existia antes de
+ningun partido historico.**
+
+### VEREDICTO DEL CANDADO ANTI-LEAKAGE
+
+Aplicar la `zonas_confiables` de hoy a picks historicos usaria celdas
+construidas con partidos POSTERIORES a esos picks. Es leakage puro.
+
+Por la regla del auditor, el backtest historico directo queda declarado:
+**`NO_IDENTIFICABLE_SIN_RECONSTRUCCION_WALK_FORWARD`**
+
+### QUE SE PUEDE Y QUE NO SE PUEDE RECONSTRUIR
+
+- **FUTBOL: SI.** `modelo_backtest` tiene `fecha` por observacion, asi que las
+  celdas se pueden reconstruir walk-forward usando solo partidos anteriores a
+  cada fecha. La ablacion A-H es ejecutable para futbol.
+- **MLB: NO.** No existe poblacion de MLB en `modelo_backtest`. Su haircut es
+  **estructuralmente inmedible** con esta fuente: no se puede reconstruir lo que
+  nunca se midio. Clasificacion preliminar para MLB:
+  **`HEURISTICA_SIN_DATOS`** (ruta `medido=true` pero con celda ajena) —
+  pendiente de confirmar contra una fuente propia de MLB como `bt_mlb_ml`.
+
+### ESTADO
+Kelly sin cambios (md5 `f8f6f398221cddd5bca929cd6644d353`). RONGOL sin cambios.
+Allocator sin cambios. Caps sin cambios. EXP_OFF = 0.50. NFL sigue `SIN_MODELO`.
+V2 sin consumidores. Cero residuos: la auditoria fue de solo lectura.
+
+### PARALELO: HARNESS DE ZEUS RETIRADO Y VERIFICADO
+Bundle publico `index-BTsRc0Fq.js` (931,509 bytes), verificado con
+`net.http_get` + `position()`:
+
+| marcador | |
+|---|---|
+| `QA ZEUS` | **NO** (retirado) |
+| `HADES (LOSS)` | **NO** (retirado) |
+| candado `rodelcast` | **NO** (retirado) |
+| `zeus_parlay_win` | SI (intacto) |
+| `hades_loss` | SI (intacto) |
+| `brightness(1.55)` (animacion) | SI (intacta) |
+| `PARLAY GANADO` (correccion A) | **SI** (desplegada) |
+
+Correccion A incluida: el tipo de apuesta ya sale del ORIGEN, no de
+`picks_data.length`. Un parlay con patas corruptas ya NO se rotula
+"PICK GANADO". Mismo arreglo en derrotas ("PARLAY PERDIDO" en vez de
+"PARLAY X0 PERDIDO"). `legs >= 2` sigue decidiendo SOLO la intensidad.
