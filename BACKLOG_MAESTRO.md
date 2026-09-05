@@ -1448,3 +1448,90 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
      Decision: **no se toca el piso ni se baja**; la elegibilidad debe salir de
      P_FAIR + momio -> EV, y cualquier piso nuevo exige evidencia OOS especifica para
      esa funcion. Queda como rediseno, no como ajuste de numero.
+
+118. **#251 RESUELTO — NO ERA UN BYPASS. Era mi prueba. `tg_limite_exposicion` no se toco.**
+     **Causa raiz exacta:** `trg_prevenir_pick_duplicado` -> `prevenir_pick_duplicado()`
+     es un trigger BEFORE INSERT que, al encontrar un pick identico
+     (`apodo` + `partido` + `pick_desc` + `casa`) creado en los ultimos 120 segundos,
+     hace **`RETURN NULL`**. Eso descarta la fila **en silencio, sin error**, y
+     **aborta la cadena de triggers antes** de `zzz_autoridad_stake` y
+     `zzzz_limite_exposicion`. Mi fila B era identica a la A salvo por `scan_id`,
+     asi que nunca llego al candado. La prueba dio "PASO" porque el INSERT no
+     lanzo excepcion; la fila **no existia**. Se comprobo con
+     `B{no existe}` leyendo por id despues del insert.
+     **La hipotesis de snapshot/volatilidad quedo DESCARTADA con medicion.**
+     Inventario: `exposicion_viva`, `get_bankroll_actual`, `ruta_ledger`,
+     `evidencia_scan_valida`, `bankroll_expuesto` son todas **STABLE SECURITY DEFINER**,
+     llamadas desde `tg_limite_exposicion` que es **VOLATILE**. Prueba T0/T1/T2 en una
+     sola transaccion, tras insertar $2,000 con ledger valido:
+     | eslabon | T0 | T2 |
+     |---|---|---|
+     | tabla base `picks` | 4,247.67 | **6,247.67** |
+     | `bankroll_expuesto` | 4,322.67 | **6,322.67** |
+     | `exposicion_viva` | 4,322.67 | **6,322.67** |
+     Ningun eslabon lee estado viejo. **No se cambio la volatilidad de ninguna funcion.**
+     **REGRESIONES (todas como `authenticated`, con rollback):**
+     - **X1** A ledger valido $2,000 (expuesto 6,322.67) -> B $1,500 sin ledger:
+       **RECHAZADA** por LIMITE DE CARTERA. PASS
+     - **X2** reusar dentro de la misma transaccion el scan que A acaba de consumir,
+       fila distinta: **RECHAZADA**. PASS
+     - **X3** statements separados: 250 -> 400 -> 550 -> 700 y la 4a ($150, dejaria 850
+       sobre un limite de 781.64) **RECHAZADA**. PASS
+     - **X4** **multi-row: 4 filas x $150 en UN SOLO statement -> statement RECHAZADO
+       COMPLETO.** Exposicion final 250.00, `sobre_el_limite=false`. Politica correcta:
+       rechazo de statement entero, sin insercion parcial. PASS
+     - **X5** NO se re-ejecuto la prueba de dos sesiones. `tg_limite_exposicion` **no se
+       modifico** (no hizo falta arreglo) y conserva su `pg_advisory_xact_lock`
+       (verificado); la evidencia previa de H10 sigue vigente sin cambios.
+     - **X6** tras el ledger legitimo, apuesta automatica de $900 en la misma
+       transaccion: **RECHAZADA**. PASS
+     **Residual real que si vale anotar:** un trigger BEFORE que devuelve NULL descarta
+     un INSERT **sin error**. Desde PostgREST, insertar un pick duplicado dentro de
+     120 s devuelve exito con cero filas. Es preexistente e intencional, pero es un
+     modo de fallo silencioso.
+
+119. **#252 CORRECCION A MI PROPIO REPORTE: `push` NO EXISTE en el esquema.**
+     Dije que "se puede marcar un pick como push y la ganancia se queda con el valor
+     anterior". **Falso.** El CHECK de las DOS tablas es identico:
+     `('pendiente','ganado','perdido','nulo','retirado')`. `push` nunca fue escribible.
+     El defecto real era otro: `editar_resultado_pick` ofrecia `'push'` en su lista de
+     validos, lo aceptaba y despues reventaba con un error crudo de constraint.
+     **Corregido:** `'push'` fuera de VALIDOS; ahora responde
+     *"Resultado no valido: push. Usa uno de: pendiente, ganado, perdido, nulo, retirado"*.
+     **NO se agrego `push` al CHECK a proposito**: seria un valor nuevo que 107
+     funciones y vistas no conocen, la misma trampa de `'retirado'` (#249).
+     En este esquema el estado "me devolvieron la apuesta" es **`nulo`**.
+     Se dejaron ramas defensivas para `push` en los tres recalculadores por si algun
+     dia entra al CHECK.
+
+120. **#252b LA PRUEBA P8 CAZO UN BUG REAL Y ALCANZABLE: `nulo` con cash out.**
+     Corriendo P1-P8 sobre `nulo` (el equivalente alcanzable de `push`):
+     `proteger_ganancia_cashout` tenia `'nulo'` en la lista donde el cash out manda,
+     asi que el parlay de $300 con `cashout_monto=75` marcado `nulo` se quedaba en
+     **-225 en vez de 0**, y el bankroll no se movia.
+     **Corregido:** `nulo`/`push` pasan a ser rama de AUTORIDAD MAXIMA y van primero:
+     `ganancia_neta := 0` y se limpian `cashout_monto` y `cashout_fecha` de forma
+     explicita. Un cash out es incompatible con una devolucion integra.
+     **P1-P8 despues del arreglo, con rollback:**
+     | prueba | resultado |
+     |---|---|
+     | P1 pick ganado +100 -> nulo | 0.00 · bankroll delta -100.00 (= esperado) |
+     | P2 pick perdido -250 -> nulo | 0.00 · delta +250.00 |
+     | P3 nulo -> ganado | +100.00 |
+     | P4 nulo -> perdido | -250.00 |
+     | P5 nulo -> nulo | 0.00 idempotente |
+     | P6a rpc `nulo` + cashout 999 | RECHAZADO con mensaje propio |
+     | P6b rpc `push` | RECHAZADO con mensaje propio |
+     | P8 parlay -225/cash75 -> nulo | **0.00**, cashout NULL, delta **+225.00** |
+     | P8b nulo -> ganado | +586.38 (con el `momio_efectivo` de la fila) |
+     | P8d nulo -> perdido | -300.00 |
+     | P8e nulo -> nulo | 0.00, cashout NULL |
+     | REG perdido + cash 75 | -225.00 (el cash out legitimo intacto) |
+     | REG quitar el cash out | -300.00 (rama de deshacer de #250 intacta) |
+     Censo previo: `push` 0 en picks y parlays, `retirado` 0 en ambas. **Cero filas
+     historicas tocadas.**
+     **Estado final:** parlay `0c20f6c6` intacto (perdido / cashout 75 / -225).
+     bankroll rodelcast $4,322.45, el dos $3,908.19. **residuos de prueba: 0.**
+     attestaciones 5, consumos 5. `EXP_OFF = 0.50`. `kelly_stake` sin tocar.
+     `pg_advisory_xact_lock` presente. RONGOL sin tocar (las 3 lecciones con
+     `bloqueo_total` siguen identicas).
