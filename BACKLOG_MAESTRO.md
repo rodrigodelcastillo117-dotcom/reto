@@ -1387,3 +1387,64 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
      queda desfasado por el delta (se vio $4,547.45 donde tocaba $4,322.45). Es la
      columna basura de #95 y NO alimenta `get_bankroll_actual`; las seis lecturas de
      dinero usan `ganancia_neta`.
+
+115. **#251 E2E del escaner: NO lo declaro cerrado. Una anomalia sin explicar en el candado de cartera.**
+     **Lo que SI quedo probado hoy, con datos reales:**
+     - 5 attestaciones selladas, las 5 por `service_role`, las 5 consumidas, 0 sin usar,
+       0 `declarados_ticket_sin_attestacion`. `salud_ocr_ledger(12h)`: sin degradacion.
+     - 3 boletos POR ENCIMA del cap entraron por ledger: $3,847.67 vs cap $577.12,
+       $250 vs $195.41, $75 vs $11.22. E2E de "arriba del cap" **PASA**.
+     - Parlay de **16 patas**: `filas_pata_creadas = 0`, y `es_pata_parlay` en toda la
+       tabla `picks` sigue en **0**. Sin doble conteo ni a 16 patas.
+     - Rutas ejercidas en produccion: `TICKET_ESCANEADO_VERIFICADO` (5),
+       `LEDGER_OVERRIDE_HUMANO` (1), `AUTORIZACION NORMAL DEL MOTOR` (muchas),
+       `PATA (no suma exposicion)`. `DECLARADO SIN ATTESTACION`: 0, que es la senal
+       buena (el OCR no ha fallado).
+     - **Guardas verificadas en aislamiento**, como `authenticated` y con rollback:
+       | caso | `ruta_ledger` | resultado |
+       |------|---------------|-----------|
+       | attestacion YA consumida | NULL | rechazado por LIMITE DE CARTERA |
+       | `scan_id` inventado | NULL | rechazado |
+       | `ticket_escaneado` sin `scan_id` | NULL | rechazado |
+       | attestacion de OTRO apodo | NULL | rechazado |
+       | attestacion sellada por `postgres` | NULL, motivo *"no la sello el backend (escrito_por=postgres)"* | rechazado |
+       | attestacion fresca sellada por `service_role` | LEDGER_EXTERNO | **pasa** (correcto) |
+       Nota: yo mismo, como `postgres` desde el MCP, **no pude** fabricar evidencia
+       valida. La guarda de autoria funciono contra mi.
+     **LA ANOMALIA (abierta, P0-adyacente):** en UNA MISMA transaccion, si primero
+     entra un insert con ruta de ledger VALIDA y despues otro con la attestacion YA
+     CONSUMIDA, el segundo **PASA**. Medido justo antes de ese segundo insert:
+     `exposicion_abierta = 6322.67`, `limite_monto = 864.49`, `ruta_ledger = NULL`.
+     Con esos tres valores `tg_limite_exposicion` **debia** disparar y no disparo.
+     Aislado (sin el primer insert) el mismo caso SI se rechaza.
+     Descartado: no es `ruta_ledger` (se verifico con la fila completa,
+     `to_jsonb(NEW)`, y da NULL igual); no es `es_prueba` ni `es_pata_parlay`
+     (misma fila origen que en el caso aislado). Hipotesis abiertas: reentrada del
+     `pg_advisory_xact_lock`, o el snapshot de las funciones STABLE
+     (`exposicion_viva` / `get_bankroll_actual`) dentro de la misma transaccion.
+     **Alcance real hoy:** por PostgREST cada apuesta llega en su propia transaccion,
+     asi que la secuencia no es alcanzable desde la app. **No es excusa para cerrar.**
+
+116. **#252 `push` como LIQUIDACION (no el push del celular): bug latente confirmado.**
+     El usuario pidio demostrar `push -> stake devuelto, ganancia_neta = 0`. Hoy
+     **no se cumple**. Medido:
+     - `recalc_pick_on_result_change` maneja `'push'`: **NO**
+     - `recalc_parlay_on_result_change` maneja `'push'`: **NO**
+     - `get_bankroll_actual` cuenta `'push'`: **SI**
+     - `editar_resultado_pick` acepta `'push'` en VALIDOS: **SI**
+     Es decir: se puede marcar un pick como `push` y `ganancia_neta` se queda con el
+     valor anterior. Si venia de `ganado (+X)`, el bankroll conserva esa ganancia.
+     Lo mismo con `'retirado'`, que tampoco esta en ninguno de los dos recalc (ahi lo
+     tapa el trigger de cashout, que exige monto).
+     **Filas afectadas hoy: 0** (`push` = 0 en picks y parlays; `retirado` = 0).
+     Latente, no activo. Diff propuesto, NO desplegado: agregar a los dos recalc
+     `ELSIF NEW.resultado IN ('push') THEN NEW.ganancia_neta := 0;`
+
+117. **#253 FUT PRO: el piso de 52% queda NO APROBADO por el usuario. Con razon.**
+     Un umbral fijo de probabilidad no tiene significado economico sin el momio:
+     breakeven a 1.50 es 66.67%, a 1.91 es 52.36%, a 2.50 es 40.00%.
+     `P=49% @ 2.50` da EV **+22.5%**; `P=53% @ 1.80` da EV **-4.6%**. El piso acepta
+     el segundo y rechaza el primero.
+     Decision: **no se toca el piso ni se baja**; la elegibilidad debe salir de
+     P_FAIR + momio -> EV, y cualquier piso nuevo exige evidencia OOS especifica para
+     esa funcion. Queda como rediseno, no como ajuste de numero.
