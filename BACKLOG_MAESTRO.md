@@ -268,3 +268,65 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     así que la guarda de discrepancia no puede opinar sobre ellas: pasan por defecto.
     No es una fuga de dinero (el resto de las puertas siguen aplicando), pero la
     cobertura real del contraste es 28%, no 100%.
+
+---
+
+## E. AUDITORÍA DEL CEREBRO PREDICTIVO (5-sep-2026) — solo medición, cero cambios
+
+46. **`features_json` NO guarda ni una sola variable de entrada.** Barrido de las 1,178
+    filas de `oraculo_picks_tracking` de los últimos 45 días: las claves son
+    `prob`, `edge`, `momio_justo`, `momio_ia`, `ev_estimado`, `confianza`, `razon`…
+    es decir **salidas**. No hay xG, ni abridor, ni clima, ni descanso, ni muestra.
+    Consecuencia: el inventario de variables NO se puede reconstruir desde el registro
+    del pick; hubo que rearmarlo leyendo el código de cada motor. Tampoco se puede
+    hacer atribución (qué variable movió la probabilidad) ni auditar un pick viejo.
+
+47. **NFL no tiene modelo: `nfl_predecir` devuelve el precio del mercado sin vig.**
+    Líneas 40-47 y 57-62: la `probabilidad` de Moneyline y Total sale de `g.ml_home` /
+    `g.over_odds` normalizados, con `'fuente','mercado'` escrito literal en el JSON.
+    Por construcción el EV contra ese mismo mercado es ≈ 0 menos la comisión.
+    Concuerda con el dato: **15 de 15** picks NFL de los últimos 45 días traen
+    `prob_placeholder = true`.
+
+48. **El clima de NFL está desconectado del motor.** `nfl_clima_hora` tiene 1,541,736
+    filas y dos crons vivos, pero `nfl_predecir` lee `nfl_partidos.temperatura` /
+    `viento_rafaga` / `techado`, que **nadie llena**: 100% nulo en 2025, 99.3% en 2026,
+    100% en 2027. Las alertas de frío/calor/viento del motor nunca han disparado.
+
+49. **MLB: alineación real 65% ausente, clima 35% ausente.** Muestra de 40 juegos
+    (3-sep a 6-sep): `fuerza_alineacion()` devuelve NULL en 26 → cae al fallback 1.0;
+    `clima_partido_mlb()` NULL en 14 → fallback 1.0. Además `mlb_stats_cache`:
+    FIP/ERA del abridor 15.3% local / 14.6% visita nulos, mano del abridor 15.3% /
+    13.9%, y con ella los splits vs zurdo/derecho. Bullpen, park factor y últimos-10
+    están bien (1.4%). **El 71.5% del caché está vencido** aun con el cron de #210.
+
+50. **Fútbol es el motor mejor alimentado y el más pobre en variables.** Muestra de
+    60 partidos de las próximas 72h: 0% sin perfil de equipo, 0% de ligas sin base,
+    muestra mínima promedio 17.2 partidos, solo 6.7% por debajo de 8.
+    Pero `motor_probabilidades` solo consume **goles a favor / goles en contra** de
+    `historico_partidos_espn` (vía `equipo_perfil`/`liga_base`), el factor de descanso
+    y el H2H. xG, clima, árbitro, lesiones y rotación **tienen peso literal 0**: sus
+    únicos lectores son funciones de contexto para el LLM (`contexto_para_llm`,
+    `bloque_equipo_futbol`, `dossier_contexto`), ninguna toca la probabilidad.
+    `xg_modelo_coef` está en **0 filas**.
+
+51. **NO hay look-ahead bias.** Barrido de los 7 objetos que mencionan
+    `clv_pct|odds_cierre|momio_cierre`: 34 menciones, **0 no triviales** — todas son
+    columnas de proyección, ninguna entra en un `WHERE`, `CASE` ni expresión de
+    probabilidad. `sync_pick_to_learning_data` solo escribe con el resultado ya
+    definitivo, y de los 4 lectores de `pick_learning_data` ninguno lee un campo de
+    cierre. La regla T-5 como variable post-mortem se está respetando.
+
+52. **Lo que la app llama "CLV" en la pantalla NO es CLV.**
+    `capturar_clv_oraculo` calcula `(odds_apertura / cierre − 1)`: eso es el
+    **movimiento de la línea**, no el valor del precio capturado. Y el "cierre" es
+    flojo por dos lados: acepta snapshots de hasta `match_date + 5 minutos`
+    (precio EN VIVO) y no exige recencia mínima (la ventana abre en `−10 días`).
+    Medición sobre `v_linea_de_cierre`: de 1,040 cierres, **3.8% son T-5 de verdad**,
+    10.2% T-30, 6.6% T-6h y **79.3% son "lejanos", con mediana de 1,801 minutos
+    (30 horas) antes del saque** — o sea una apertura disfrazada de cierre.
+    Los dos números viven al mismo tiempo y tienen signo opuesto:
+    `oraculo_picks_tracking.clv_pct` = **+1.57%** (n=699, es el que ve el usuario en
+    `reto_13m_estado`) contra `clv_tracking.clv_pct` = **−7.54%** (n=30, este sí mide
+    `momio_apostado` contra el cierre). El mensaje "le estamos ganando al cierre" se
+    apoya en el número equivocado.
