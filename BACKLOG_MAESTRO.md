@@ -39,21 +39,21 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
 
 ## B. ABIERTAS — LOTE 1 (en ejecución ahora)
 
-1. **Oráculo: `limpieza-nocturna` borra el marcador antes de calificar (#181).**
+~~1. **Oráculo: `limpieza-nocturna` borra el marcador antes de calificar (#181).**~~ **CERRADO**
    MEDIDO: 185 picks sin calificar; 59 ya jugados; **42 sin fila en `live_scores`**
    (borrada) y 6 con marcador final disponible que nadie calificó.
    Causa: `DELETE FROM live_scores WHERE status IN ('post','final') AND updated_at <
    now() - interval '72 hours'` (cron 32, 11:00 UTC). Un pick no calificado en 72h
    pierde su marcador para siempre. Es pérdida de datos irreversible.
 
-2. **404 de ESPN: ni registro ni evasión.**
+~~2. **404 de ESPN: ni registro ni evasión.**~~ **CERRADO — DIAGNÓSTICO RETRACTADO**
    MEDIDO: 235 respuestas 404 en 2 horas = **13.5% de todo el tráfico saliente**.
    El 100% cae en minuto ≡ 0 mod 10 → cron `futbol-jugadores-pedir` (`*/10`,
    `futbol_jugador_pedir(60)`): 35-45 de cada 60 peticiones son 404. Nada registra
    qué id murió, así que se reintenta el mismo id para siempre (~6,500 llamadas
    desperdiciadas al día).
 
-3. **RETO 13M: 5 de los 7 motivos de bloqueo no tienen insignia.**
+~~3. **RETO 13M: 5 de los 7 motivos de bloqueo no tienen insignia.**~~ **CERRADO**
    `bloqueado_por` devuelve `abstencion | sin_datos | rongol | kelly | ev_negativo |
    bajo_minimo | exposicion`. La UI solo pinta insignia para `rongol` y `exposicion`.
    Hoy 14 de 16 picks caen en "descartado" y el usuario ve un muro sin taxonomía.
@@ -109,4 +109,25 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
 
 ---
 
-## D. HALLAZGOS NUEVOS (se anotan aquí sin desviarse)
+## D. HALLAZGOS NUEVOS (anotados sin desviarse)
+
+38. **El grader del Oráculo salta el 100% de los pendientes, y hace bien.**
+    `grade-oraculo-picks` respondió 200 con `graded:0, voided:0, skipped:185`.
+    Al mirar los 6 que yo había contado como "recuperables": 3 son de **Corners**
+    (`af_*`) y `live_scores` solo guarda goles, nunca tiros de esquina — ese mercado
+    **no se puede calificar desde ahí, nunca**. Los otros 3 son el evento `401874394`
+    con marcador final 0-0 y picks "Over 36.5 Goles" / "Over 37.5 Puntos" en el mismo
+    partido: dato basura de origen. Saltarlos es lo correcto.
+    → **Corrección a mi propia medición del punto 1:** los 6 no eran recuperables.
+    Lo recuperable de verdad son 0. Falta: una fuente de corners para calificar ese
+    mercado, o marcar Corners del Oráculo como no calificable.
+
+39. **`v_salud_espn_404` reporta "AVISO: hay 429 (cuota)".** 11 respuestas 429 en la
+    ventana de 2h. Cuota de ESPN rozada mientras se drena el padrón de jugadores.
+    No es urgente (el drenado termina solo) pero hay que vigilarlo.
+
+40. **40 picks del Oráculo perdidos sin remedio.** Ya jugados, sin fila en
+    `live_scores` y sin fila en `historico_partidos_espn`. NO los toqué: marcarlos
+    a mano cambia el corpus de aprendizaje y eso es decisión del usuario, no mía.
+    Opciones: dejarlos `pendiente` para siempre (hoy) o marcarlos `nulo`.
+
