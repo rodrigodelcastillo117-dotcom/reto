@@ -3699,3 +3699,33 @@ base" **con probabilidades por partido**. Esta escrito en el comentario de la ta
 63. **Marcar es mejor que rechazar cuando lo que quieres es ENTERARTE.** Un rechazo
     silencioso habria escondido el regreso del refill. La marca lo deja a la vista y
     ademas repara la estadistica hacia adelante.
+
+## CIERRE DE SESION — estado real al congelar (5-sep-2026)
+
+### La abstencion de O/U esta VIVA en la base, pero PRODUCCION todavia no la ve
+```
+repo HEAD (Lovable)   : a79d0e7  <- el corte de 3 bloques + reto_picks_hoy
+produccion desplegada : 66c3823  <- el ultimo deploy_project que ejecute (4-sep 21:17)
+```
+`reto_picks_hoy` (que respeta `mercados_en_abstencion`) **solo lo lee el frontend de
+a79d0e7, que esta en preview.** La pantalla de produccion sigue siendo la vieja.
+
+**Lo que SI protege hoy en produccion:**
+- `KellyCriterion` no puede fijar el monto (desplegado en 66c3823).
+- El trigger `zzz_autoridad_stake` rechaza cualquier monto sobre el techo.
+- El trigger `zzz_sin_probabilidad_constante` marca cualquier 0.55 que vuelva.
+
+**Lo que NO protege hasta desplegar a79d0e7:**
+- La pantalla del RETO en produccion sigue listando picks de O/U.
+- El corte de 3 bloques (7 apostables / ventaja insuficiente / descartados) no se ve.
+
+**Lo que NUNCA va a bloquear, por diseno acordado:** registrar en el libro una apuesta
+de O/U ya colocada. La abstencion apaga la RECOMENDACION, no el registro.
+
+### tsgo
+Limpio en las dos entregas de Lovable: `c7c41e4` (4.2D) y `a79d0e7` (corte del RETO).
+No se toco ninguna edge function en #213, asi que no hay TypeScript nuevo.
+
+### Congelado para el fin de semana
+Sin cambios pendientes de mi parte. A vigilar: `contraste_motores_futbol` (A/B) y las
+notificaciones durante los partidos.
