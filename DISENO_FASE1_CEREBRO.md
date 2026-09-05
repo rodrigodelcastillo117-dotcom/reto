@@ -3517,3 +3517,146 @@ contra `CAPITAL_LIBRE`. Esa mezcla de denominadores sigue siendo el riesgo resid
    No conceden evidencia porque no tienen archivo en storage, pero ensucian la tabla.
 6. **RONGOL sigue mal dirigido**, sin corregir a proposito.
 7. **El allocator sigue cortando por prefijo.**
+
+---
+
+# FASE 2A — ATAQUE S1 Y ATTESTACION DEL BACKEND OCR
+*(5-sep-2026. Estado final: `EXPOSICION_ABIERTA = $1,003.36`, 0 residuos.)*
+
+## 1. El ataque S1 funcionaba. Los cuatro pasos.
+
+Ejecutado con el rol `authenticated`, transaccion revertida:
+
+| paso | resultado |
+|---|---|
+| S1.1 subir archivo a `screenshots/rodelcast/...` | **LOGRADO** |
+| S1.2 `INSERT` en `scan_logs` sin pasar por el OCR | **LOGRADO** |
+| S1.3 `evidencia_scan_valida` lo acepta | **LOGRADO** — `{"ok": true, "motivo": "evidencia verificada"}` |
+| S1.4 ledger override de **$500** sobre el cap individual de $300 | **ACEPTADO** |
+
+**Causa raiz.** La policy de INSERT de `scan_logs` es `with_check = true` para el rol
+`public`, y `anon` / `authenticated` tenian `GRANT INSERT`. Y `owner_id` de storage
+demuestra **propiedad de un archivo**, no que `scan-betslip` lo haya procesado.
+
+Mi afirmacion anterior de que eso era "attestacion server-side" era incorrecta.
+
+## 2. El diseno que si cumple la propiedad
+
+> el cliente puede PRESENTAR evidencia; no puede CREAR la evidencia que concede el bypass
+
+```
+cliente  ──▶ attestar-scan  (edge, verify_jwt = true)
+                  │
+                  ├─ 1. saca storage_path de la URL firmada
+                  ├─ 2. verifica con service role que el ARCHIVO existe
+                  │      en el bucket y esta bajo la carpeta del usuario
+                  ├─ 3. invoca scan-betslip SERVIDOR-A-SERVIDOR  ← el OCR corre aqui
+                  └─ 4. sella scan_attestations (solo service_role escribe)
+                          │
+                          └──▶ devuelve {…scan-betslip tal cual…, scan_id}
+```
+
+`scan_attestations`: RLS activo, `anon` y `authenticated` **sin INSERT / UPDATE /
+DELETE**, solo SELECT. Un trigger estampa `escrito_por := current_user`:
+
+> se mando `escrito_por = 'INTENTO_DE_SUPLANTAR'` y quedo guardado **`service_role`**.
+
+**No se toco `scan-betslip`** (182 KB): pasarla entera por el contexto para reescribirla
+era riesgo innecesario. La envoltura logra lo mismo sin aumentar el numero de llamadas
+al OCR, porque sustituye la llamada del cliente.
+
+### `evidencia_scan_valida` — ya no mira `scan_logs`
+
+1. la attestacion existe · 2. mismo `apodo` · 3. `escrito_por = 'service_role'` ·
+4. `ocr_ok` · 5. antiguedad <= 48 h · 6. el archivo sigue en el bucket bajo la carpeta
+del usuario · 7. no consumida (`scan_consumos`, PK = un solo uso).
+
+Higiene adicional: `revoke insert, update, delete, truncate on scan_logs from anon, authenticated`.
+
+## 3. Re-ejecucion del ataque S1
+
+| paso | resultado |
+|---|---|
+| S1.1 subir archivo | sigue siendo posible **y debe serlo** — ya no concede nada |
+| S1.2 escribir en `scan_logs` | ✅ **BLOQUEADO** `permission denied for table scan_logs` |
+| S1.2b escribir en `scan_attestations` | ✅ **BLOQUEADO** `permission denied for table scan_attestations` |
+| S1.3 evidencia aceptada | ✅ **RECHAZA** `no existe attestacion del backend para ese scan_id` |
+| S1.4 ledger override fabricado | ✅ **RECHAZA** `Ruta de ledger rechazada: sin scan_id` |
+
+## 4. Ruta de aceptacion (simulando `attestar-scan` con `set role service_role`)
+
+| prueba | resultado |
+|---|---|
+| sello `escrito_por` | ✅ lo pone el servidor, no el cuerpo |
+| attestacion sellada -> evidencia valida | ✅ `attestacion del backend verificada` |
+| ledger override $500 sobre el cap individual $300 | ✅ registra, exposicion $1,003.36 -> $1,503.36 |
+| attestacion marcada como consumida | ✅ `tipo=pick monto=$500.00` |
+| reutilizar la MISMA attestacion (aislado del cap agregado) | ✅ `Ruta de ledger rechazada: esa attestacion ya se uso para registrar la apuesta fd35c6f2-…` |
+
+*(La primera corrida rechazo el reuso por `LIMITE DE CARTERA` en vez de por el reuso.
+Era un rechazo correcto pero por la razon equivocada, asi que repeti la prueba con un
+monto por encima del cap individual para aislar el mecanismo. El de arriba es el bueno.)*
+
+## 5. `REGISTRO_EXTERNO_MANUAL` = `LEDGER_OVERRIDE_HUMANO`
+
+| pregunta | respuesta |
+|---|---|
+| quien puede invocarlo | **cualquier usuario autenticado**, sobre su propia fila (el trigger `asignar_apodo_del_dueno` fija el apodo). No exige rol especial. |
+| que requiere | `origen='registro_externo_manual'` + `stake_sobre_techo_razon` de 15+ caracteres escrita por una persona |
+| que provenance deja | `origen`, la razon escrita, `stake_techo_al_guardar`, `created_at`, y en parlays `autoridad_economica='LEDGER_EXTERNO_MANUAL'` |
+| es un boleto verificado | **NO.** Es un override humano del dueno de la cuenta, declarativo por diseno |
+| cuenta para exposicion | **SI, integramente** |
+
+## 6. Higiene: `dblink` eliminado
+
+Instalado solo para investigar la prueba de concurrencia; al final no se uso (la prueba
+se hizo con `pg_cron`). Verificado 0 consumidores y 0 foreign servers antes del
+`drop extension`.
+
+## 7. Veredicto
+
+**P0-A AUTORIDAD ECONOMICA / EXPOSICION: PASS.**
+Candado agregado con efecto post-insert, serializacion probada con dos backends
+(no-oversubscription), 20% sobre `BANKROLL_TOTAL_RIESGO`, parlays sin modelo conjunto
+bloqueados, padre/patas sin doble conteo.
+
+**P0-B LEDGER EXTERNO: PASS EN BASE DE DATOS, PENDIENTE DE E2E.**
+La attestacion ya no es falsificable desde el cliente y la ruta de aceptacion esta
+verificada en SQL simulando exactamente lo que hace `attestar-scan`. Lo que falta no es
+diseno: es que Lovable publique el tercer cambio (llamar `attestar-scan` en vez de
+`scan-betslip`) y que un boleto real recorra la ruta desde el navegador.
+
+**NO declaro `P0 CERRADO SIN ASTERISCOS`**, porque el criterio 2 (E2E completo) no se
+cumple todavia y **yo no puedo ejecutarlo**: mi proxy bloquea `reto13.lovable.app`.
+
+| # | criterio de cierre | estado |
+|---|---|---|
+| 1 | el cliente no puede fabricar la attestacion | ✅ ataque S1 re-ejecutado y bloqueado |
+| 2 | Lovable completo la ruta OCR->registro E2E | ❌ **pendiente** (3er mensaje sin publicar; E2E lo tienes que correr tu) |
+| 3 | tickets externos reales siguen registrandose | ✅ ruta verificada + ruta manual |
+| 4 | parlays automaticos sin modelo conjunto bloqueados | ✅ |
+| 5 | exposure enforcement intacto | ✅ |
+| 6 | concurrencia intacta | ✅ |
+| 7 | Kelly intacto | ✅ |
+| 8 | `EXP_OFF = 0.50` | ✅ |
+| 9 | Fase 1.5 PASS | ✅ |
+| 10 | cero residuos | ✅ |
+
+## 8. Estado transitorio que hay que vigilar
+
+Hasta que Lovable publique el tercer cambio, `scan_attestations` esta **vacia** y el
+escaner degrada a `registro_externo_manual`: pide una razon escrita y registra. Es
+seguro, pero no es la ruta de boleto verificado. No es un fallo: es la degradacion
+correcta mientras el frontend se pone al dia.
+
+## 9. Riesgos residuales
+
+1. **E2E sin ejecutar** (criterio 2).
+2. **`attestar-scan` attesta que el OCR corrio sobre un archivo del usuario**, no que el
+   boleto sea autentico. Alguien podria fotografiar un boleto falso. Ese es el mismo
+   limite que tiene cualquier registro de boleto, y no pretendo haberlo resuelto.
+3. **`LEDGER_OVERRIDE_HUMANO` sigue siendo declarativo** y cualquier usuario autenticado
+   puede usarlo sobre su propia cuenta.
+4. **Dos denominadores** (individual sobre CAPITAL_LIBRE, agregado sobre TOTAL).
+5. **15% RETO vs 20% agregado**: una sola apuesta RETO consume el 75% de la cartera.
+6. **RONGOL sigue mal dirigido**; **el allocator sigue cortando por prefijo**.

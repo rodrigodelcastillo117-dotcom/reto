@@ -979,3 +979,72 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     El limite de cartera se mide contra `BANKROLL_TOTAL_RIESGO`; los caps
     individuales, contra `CAPITAL_LIBRE`. Esa mezcla de denominadores sigue siendo
     el riesgo residual #2 de 2A.56.
+
+---
+
+## FASE 2A — ATAQUE S1 Y ATTESTACION REAL (5-sep-2026)
+
+93. **#229 ATAQUE S1: mi diseno anterior SI era falsificable. Los cuatro pasos funcionaron.**
+    Ejecutado con el rol `authenticated`, en transaccion revertida:
+    | paso | resultado |
+    |---|---|
+    | S1.1 subir archivo a `screenshots/rodelcast/...` | **LOGRADO** |
+    | S1.2 INSERT en `scan_logs` sin pasar por el OCR | **LOGRADO** |
+    | S1.3 `evidencia_scan_valida` lo acepta | **LOGRADO** (`ok: true, motivo: evidencia verificada`) |
+    | S1.4 ledger override de $500 sobre el cap individual | **ACEPTADO** |
+    **Causa raiz**: la policy de INSERT de `scan_logs` es `with_check = true` para el rol
+    `public`, y `anon`/`authenticated` tenian GRANT INSERT. `owner_id` de storage
+    demuestra propiedad de un archivo, **no** que `scan-betslip` lo proceso.
+    Mi afirmacion anterior ("attestation server-side") era incorrecta. No la maquillo.
+
+94. **#230 ATTESTACION REAL: `scan_attestations` + edge function `attestar-scan`.**
+    - `public.scan_attestations`: RLS activo, `anon` y `authenticated` **sin INSERT /
+      UPDATE / DELETE**, solo SELECT. Un trigger estampa `escrito_por := current_user`
+      y `creado_at := now()`, asi que el cuerpo de la peticion no puede suplantarlos
+      (probado: se mando `escrito_por='INTENTO_DE_SUPLANTAR'` y quedo `service_role`).
+    - `attestar-scan` (nueva edge function, `verify_jwt = true`): recibe el mismo body
+      que `scan-betslip`, verifica con el service role que el archivo **existe de
+      verdad** en el bucket y esta bajo la carpeta del usuario, **invoca `scan-betslip`
+      servidor-a-servidor**, y solo entonces sella la attestacion. Devuelve el objeto
+      de `scan-betslip` **tal cual** mas `scan_id`. No aumenta el numero de llamadas al
+      OCR: sustituye la del cliente.
+    - No se toco `scan-betslip` (182 KB): habria sido un round-trip innecesario y
+      riesgoso.
+    - `evidencia_scan_valida` ya **no mira `scan_logs`**. Exige: attestacion existe /
+      mismo usuario / `escrito_por='service_role'` / `ocr_ok` / <= 48 h / el archivo
+      sigue en el bucket bajo la carpeta del usuario / no consumida.
+    - `scan_consumos` ahora referencia `scan_attestations`.
+    - Higiene: `revoke insert, update, delete, truncate on scan_logs from anon, authenticated`.
+    **Re-ejecucion del ataque S1**: S1.2 BLOQUEADO (`permission denied for table
+    scan_logs`), S1.2b BLOQUEADO (`permission denied for table scan_attestations`),
+    S1.3 rechaza (`no existe attestacion del backend`), S1.4 rechaza
+    (`Ruta de ledger rechazada: sin scan_id`).
+    Subir un archivo sigue siendo posible **y debe serlo**: ya no concede nada.
+
+95. **#231 `REGISTRO_EXTERNO_MANUAL` reclasificado como `LEDGER_OVERRIDE_HUMANO`.**
+    - Quien puede invocarlo: **cualquier usuario autenticado dueno de su propia fila**
+      (el trigger `asignar_apodo_del_dueno` fija el apodo). No exige rol especial.
+    - Requisito: `origen='registro_externo_manual'` + `stake_sobre_techo_razon` de
+      15 caracteres o mas, escrita por una persona.
+    - Provenance que deja: `origen`, la razon escrita, `stake_techo_al_guardar` con el
+      cap vigente, `created_at`, y en parlays `autoridad_economica='LEDGER_EXTERNO_MANUAL'`.
+    - **NO es un boleto verificado.** Es un override humano del propietario de la
+      cuenta. Es declarativo por diseno: un boleto de ventanilla sin captura tambien
+      es realidad economica.
+    - **Cuenta integramente para exposicion**, igual que cualquier otra apuesta.
+
+96. **#232 Higiene: `dblink` desinstalado.**
+    Se habia instalado solo para investigar la prueba de concurrencia y al final no se
+    uso (la prueba se hizo con `pg_cron`). Verificado 0 consumidores y 0 foreign
+    servers antes de `drop extension`. Superficie eliminada.
+
+97. **#233 Frontend: tres mensajes a Lovable, el tercero pendiente de publicar.**
+    Ya aplicado por Lovable: `origen`, `scan_id` en los inserts, cuadro de texto
+    obligatorio cuando no hay escaneo, aviso ambar del techo y traduccion de los tres
+    errores nuevos.
+    Pendiente en el tercer mensaje: cambiar las tres llamadas de `scan-betslip` a
+    `attestar-scan` y tomar `scan_id` de la respuesta en vez del RPC.
+    **Mientras eso no se publique**, `scan_attestations` esta vacia y el flujo del
+    escaner degrada a `registro_externo_manual` (pide razon escrita). Es seguro pero
+    NO es la ruta de boleto verificado, asi que el E2E de la ruta OCR sigue sin
+    ejecutarse. **Yo no puedo correr el E2E**: mi proxy bloquea `reto13.lovable.app`.
