@@ -914,3 +914,68 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     $1,003.36 exacto.
     El hallazgo del bloqueo es valido y es MEJOR prueba que un timeout: el INSERT
     espero de verdad a que la otra sesion soltara el lock.
+
+---
+
+## FASE 2A — CIERRE DEL P0: LOS TRES PENDIENTES (5-sep-2026)
+
+89. **#225 PENDIENTE 1 CERRADO: un parlay sin modelo conjunto YA NO puede crear riesgo.**
+    Mi version anterior marcaba y no bloqueaba, y eso no satisfacia H4. Ahora
+    `tg_limite_exposicion` **lanza excepcion** para cualquier INSERT en `parlays`
+    con `apuesta > 0` que no declare una ruta de ledger:
+    `PARLAY SIN MODELO CONJUNTO VALIDADO: no se autoriza exposicion nueva de $X...`
+    - `apuesta = 0` -> se persiste como propuesta observacional, marcada
+      `SIN_MODELO_CONJUNTO_VALIDADO`.
+    - ruta de ledger (`ticket_escaneado` con evidencia, o `registro_externo_manual`
+      con razon escrita) -> se registra con `LEDGER_EXTERNO` / `LEDGER_EXTERNO_MANUAL`.
+    - `ai_prob_combinada` y `ai_ev_pct` **se conservan intactos** como dato
+      observacional. Verificado: 7.22 / -45.80 sobreviven al INSERT.
+    **BLAST RADIUS**: hoy el cliente no manda `origen`, asi que **hasta que Lovable
+    despliegue, guardar un parlay desde la app falla**. Mensaje accionable y cambio
+    de frontend enviado en el mismo turno.
+
+90. **#226 PENDIENTE 2 CERRADO: NO OVERSUBSCRIPTION con dos escritores reales.**
+    E0=$1,003.36, limite=$1,400.67. S1=S2=$250:
+    `E0+S1 = $1,253.36 <= limite`, `E0+S2 = $1,253.36 <= limite`,
+    `E0+S1+S2 = $1,503.36 > limite`.
+    Sesion A (backend aparte via pg_cron, pid 474441) inserta S1 y mantiene la
+    transaccion abierta 20 s. Sesion B (pid 474438) intenta S2:
+    **espero 20,022 ms, reevaluo la exposicion ya comprometida y fue RECHAZADA**
+    con `LIMITE DE CARTERA ... dejaria la exposicion abierta en $1503.36`.
+    Estado tras la prueba: **$1,253.36 <= $1,400.67**. Solo entro S1.
+    Limpieza: fila S1 borrada, job y funcion auxiliar eliminados, exposicion de
+    vuelta en $1,003.36, 0 residuos.
+
+91. **#227 PENDIENTE 3 CERRADO: el bypass exige evidencia server-side.**
+    Hallazgo que obligo el diseno: `scan_logs` **ya existia y ya se escribe en cada
+    escaneo** (199 filas, la ultima 2 minutos antes de la auditoria), asi que no hizo
+    falta redesplegar `scan-betslip`. Pero `authenticated` **si puede insertar en
+    `scan_logs`** (2 policies): una fila ahi NO basta por si sola.
+    Lo que el cliente NO puede fabricar es un objeto en `storage.objects`: subir el
+    archivo crea la fila con `owner_id` y `created_at` puestos por el servidor. Y las
+    **tres** rutas de escaneo del frontend llaman `uploadAndGetUrl(file)` antes de
+    invocar `scan-betslip`, asi que el artefacto siempre existe.
+    `evidencia_scan_valida(scan_id, apodo)` exige las cinco: existe / es del mismo
+    usuario / sin error / <= 48 h / el `image_url` apunta a un objeto REAL del bucket
+    `screenshots` bajo la carpeta del propio usuario / no consumido.
+    `scan_consumos` (PK sobre `scan_id`) es la garantia estructural de un solo uso.
+    Nueva RPC `ultimo_scan_utilizable(apodo, minutos)`: el cliente **pregunta** cual
+    es su scan valido en vez de elegirlo. No puede mandar uno ajeno ni gastado.
+    Ruta manual separada a proposito: `origen='registro_externo_manual'` +
+    `stake_sobre_techo_razon` >= 15 caracteres -> `LEDGER_EXTERNO_MANUAL`. **No se
+    confunde con un OCR validado.**
+    Pruebas: E1 registra y consume · E2 `ticket_escaneado` inventado sin scan_id NO
+    obtiene bypass · E2b scan de otro usuario NO obtiene bypass · E3 scan reutilizado
+    rechazado citando la apuesta que ya lo gasto · E4 ticket externo deja la cartera
+    en 24.32% y se registra · E5 la recomendacion posterior queda bloqueada.
+
+92. **#228 CONTRATO DE BANKROLL (documentado, sin cambios de comportamiento).**
+    `BANKROLL_TOTAL_RIESGO` = `get_bankroll_actual` = equity total; el stake vivo
+    sigue dentro porque `ganancia_neta` de una pendiente vale 0.00.
+    `EXPOSICION_ABIERTA` = `bankroll_expuesto` = stakes pendientes reales.
+    `CAPITAL_LIBRE` = TOTAL - EXPOSICION.
+    **`kelly_stake` dimensiona sobre `CAPITAL_LIBRE`** (verificado: su campo
+    `bankroll` = $6,000.00 = `capital_libre`). **Ese comportamiento NO se toco.**
+    El limite de cartera se mide contra `BANKROLL_TOTAL_RIESGO`; los caps
+    individuales, contra `CAPITAL_LIBRE`. Esa mezcla de denominadores sigue siendo
+    el riesgo residual #2 de 2A.56.

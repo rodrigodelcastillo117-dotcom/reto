@@ -3344,3 +3344,176 @@ Heredado del cambio anterior del mismo dia: `picks.origen`, `parlays.origen`,
 8. **`autoridad_economica` marca, no bloquea.** Un parlay `SIN_MODELO_CONJUNTO_VALIDADO`
    sigue pudiendo registrarse si cabe en la capacidad. Impedirlo seria una decision
    de politica, no de contabilidad, y no estaba en el mandato.
+
+---
+
+# FASE 2A — CIERRE DEL HOTFIX P0: LOS TRES PENDIENTES
+*(5-sep-2026. Estado final verificado: `EXPOSICION_ABIERTA = $1,003.36`, 0 residuos.)*
+
+## PENDIENTE 1 — Un parlay sin modelo conjunto no crea riesgo
+
+Retiro mi version anterior: marcar y no bloquear no satisfacia H4.
+
+`tg_limite_exposicion` ahora, para `TG_TABLE_NAME='parlays'` con `apuesta > 0`:
+
+```
+si ruta_ledger(NEW) es NULL  ->  RAISE 'PARLAY SIN MODELO CONJUNTO VALIDADO'
+si no                        ->  autoridad_economica := LEDGER_EXTERNO | LEDGER_EXTERNO_MANUAL
+```
+
+Con `apuesta = 0` se persiste como propuesta observacional marcada
+`SIN_MODELO_CONJUNTO_VALIDADO`.
+
+| prueba | resultado |
+|---|---|
+| **A.** parlay `app_recomendacion` $300, **cabe** en capacidad ($397.31), P conjunta solo LLM | ✅ **RECHAZA**: `PARLAY SIN MODELO CONJUNTO VALIDADO: no se autoriza exposicion nueva de $300.00 ... la dependencia entre patas no esta modelada` |
+| **A2.** el mismo sin declarar `origen` (comportamiento actual del cliente) | ✅ **RECHAZA** |
+| **B.** exactamente el mismo parlay como ticket externo con scan valido | ✅ **REGISTRA**, `autoridad_economica = LEDGER_EXTERNO`, scan consumido (`tipo=parlay ref=0f978cea monto=$300.00`) |
+| **C.** campos del LLM | ✅ conservados intactos: `ai_prob_combinada / ai_ev_pct = 7.22 / -45.80` |
+
+**Consecuencia operativa que hay que decir**: hoy el cliente no manda `origen`, asi
+que hasta que Lovable despliegue, guardar un parlay desde la app falla con un mensaje
+accionable. Los picks sencillos no cambian.
+
+## PENDIENTE 2 — NO OVERSUBSCRIPTION con dos escritores reales
+
+Diseno de la prueba (E0 = $1,003.36, limite = $1,400.67):
+
+```
+S1 = S2 = $250
+E0 + S1 = $1,253.36  <= limite      ✔ cabe sola
+E0 + S2 = $1,253.36  <= limite      ✔ cabe sola
+E0 + S1 + S2 = $1,503.36 > limite   ✘ juntas no caben
+```
+
+Sesion A = backend aparte abierto con `pg_cron` (pid **474441**): inserta S1 y
+mantiene la transaccion abierta 20 s.
+Sesion B = esta sesion (pid **474438**): intenta S2 mientras A sigue abierta.
+
+| momento | resultado |
+|---|---|
+| B intenta S2 | **espera 20,022 ms** en el advisory lock |
+| A confirma S1 y suelta el lock | B toma el lock |
+| B reevalua la exposicion **ya comprometida** | ve $1,253.36, calcula $1,503.36 |
+| veredicto de B | ✅ **RECHAZADA**: `LIMITE DE CARTERA ... dejaria la exposicion abierta en $1503.36 ... capacidad restante $147.31` |
+| estado tras la prueba | ✅ **$1,253.36 <= $1,400.67**. Solo entro S1. |
+
+Esto es lo que la prueba anterior no demostraba: no basta con esperar, hay que
+reevaluar despues de adquirir el lock. **NO OVERSUBSCRIPTION queda demostrado.**
+
+Limpieza: fila S1 borrada, job `h10b_sesion_a` desprogramado, funcion auxiliar
+eliminada, exposicion de vuelta en $1,003.36, 0 residuos en picks / parlays /
+scan_consumos / cron.
+
+## PENDIENTE 3 — Hardening del ledger externo
+
+### Lo que la auditoria encontro antes de disenar
+
+- **`scan_logs` ya existe y ya se escribe en cada escaneo** (199 filas; la ultima
+  2 minutos antes de la auditoria). No hizo falta redesplegar `scan-betslip`.
+- Pero **`authenticated` puede insertar en `scan_logs`** (2 policies). Una fila ahi
+  **no es prueba** por si sola.
+- Lo que el cliente NO puede fabricar es un objeto en `storage.objects`: subir el
+  archivo crea la fila con `owner_id` y `created_at` puestos por el servidor.
+- Las **tres** rutas de escaneo del frontend llaman `uploadAndGetUrl(file)` antes de
+  invocar `scan-betslip`. El artefacto server-side siempre existe.
+
+### `public.evidencia_scan_valida(scan_id, apodo)` — cinco condiciones
+
+1. el `scan_id` existe en `scan_logs`
+2. pertenece al mismo `apodo`
+3. `error is null`
+4. antiguedad <= 48 h
+5. su `image_url` apunta a un objeto **real** del bucket `screenshots` bajo la
+   carpeta del propio usuario, con `owner_id` no nulo
+6. no fue consumido (`scan_consumos`)
+
+### `public.scan_consumos` — un escaneo se gasta una sola vez
+
+`PRIMARY KEY (scan_id)`. Es garantia estructural, no una bandera que alguien deba
+recordar revisar. La escribe el trigger con SECURITY DEFINER; el cliente no puede.
+
+### `public.ultimo_scan_utilizable(apodo, minutos)`
+
+El cliente **pregunta** cual es su escaneo valido en vez de elegirlo. Asi no puede
+mandar uno ajeno ni uno gastado, ni siquiera por error.
+
+### Dos conceptos distintos a proposito
+
+| ruta | requisito | etiqueta |
+|---|---|---|
+| OCR validado | `origen='ticket_escaneado'` + `scan_id` con evidencia verificada y sin consumir | `LEDGER_EXTERNO` |
+| declaracion manual | `origen='registro_externo_manual'` + `stake_sobre_techo_razon` >= 15 caracteres | `LEDGER_EXTERNO_MANUAL` |
+
+No se confunden. La segunda existe porque un boleto de ventanilla sin captura
+tambien es realidad economica, pero deja constancia escrita y auditable.
+
+### Pruebas E1–E5
+
+| # | prueba | resultado |
+|---|---|---|
+| E1 | ticket real con scan valido | ✅ registra, `LEDGER_EXTERNO`, scan consumido |
+| E2 | `origen='ticket_escaneado'` inventado, sin `scan_id` | ✅ **sin bypass**: `STAKE NO AUTORIZADO ... Ruta de ledger rechazada: sin scan_id` |
+| E2b | `scan_id` de OTRO usuario | ✅ **sin bypass**: `... el escaneo pertenece a otro usuario` |
+| E3 | el MISMO scan reutilizado para una 2a apuesta | ✅ rechaza: `ese escaneo ya se uso para registrar la apuesta 0f978cea-...` |
+| E4 | ticket externo que deja la cartera sobre el cap agregado | ✅ registra. abierta $1,003.36 -> $1,703.36, ratio 24.32%, `sobre_el_limite=true` |
+| E5 | recomendacion automatica despues de E4 | ✅ **bloqueada** por `LIMITE DE CARTERA` |
+| — | ruta manual con razon escrita | ✅ registra, cap_recomendado estampado $300.00 |
+
+## Contrato de bankroll (documentado, sin cambio de comportamiento)
+
+```
+BANKROLL_TOTAL_RIESGO = get_bankroll_actual   = equity total ($7,003.36)
+                        (el stake vivo sigue dentro: ganancia_neta de una
+                         pendiente vale 0.00)
+EXPOSICION_ABIERTA    = bankroll_expuesto     = stakes pendientes ($1,003.36)
+CAPITAL_LIBRE         = TOTAL - EXPOSICION                     ($6,000.00)
+```
+
+**`kelly_stake` dimensiona sobre `CAPITAL_LIBRE`.** Verificado: su campo `bankroll`
+devuelve $6,000.00, identico a `capital_libre`. **Ese comportamiento no se toco.**
+
+El limite de cartera se mide contra `BANKROLL_TOTAL_RIESGO`; los caps individuales,
+contra `CAPITAL_LIBRE`. Esa mezcla de denominadores sigue siendo el riesgo residual
+#2 de 2A.56 y no se resolvio en este hotfix.
+
+## Criterios de cierre
+
+| # | criterio | estado |
+|---|---|---|
+| 1 | parlay sin modelo conjunto no puede crear riesgo automatico | ✅ RAISE, probado con A / A2 |
+| 2 | dos escritores concurrentes no exceden el cap | ✅ 20,022 ms de espera + rechazo; $1,253.36 <= $1,400.67 |
+| 3 | el bypass de ticket exige evidencia server-side | ✅ storage + scan_logs + un solo uso; E2/E2b/E3 |
+| 4 | tickets externos legitimos siguen registrando realidad | ✅ E1, E4, ruta manual |
+| 5 | Kelly intacto | ✅ $93.25 / `reto_picks_hoy` $156.01 |
+| 6 | `EXP_OFF = 0.50` | ✅ |
+| 7 | V2 sin consumidores de dinero | ✅ 0 |
+| 8 | invariantes de Fase 1.5 | ✅ I1–I4 PASS; pureza kelly_v2 8/8 |
+| 9 | estado final sin residuos | ✅ 0 en picks / parlays / scan_consumos / cron |
+
+## Objetos modificados en esta ronda
+
+| objeto | cambio |
+|---|---|
+| `picks.scan_id`, `parlays.scan_id` | **nuevas** columnas |
+| `public.scan_consumos` | **nueva** tabla (PK = garantia de un solo uso) |
+| `public.evidencia_scan_valida(uuid,text)` | **nueva** |
+| `public.ruta_ledger(jsonb)` | **nueva** |
+| `public.ultimo_scan_utilizable(text,int)` | **nueva** RPC |
+| `public.tg_autoridad_stake()` | el bypass ahora exige ruta de ledger verificada |
+| `public.tg_limite_exposicion()` | default-deny de parlays + consumo del scan |
+| CHECK de `origen` | agrega `registro_externo_manual` |
+| CHECK de `autoridad_economica` | agrega `LEDGER_EXTERNO_MANUAL` |
+
+## Riesgos residuales que quedan abiertos
+
+1. **Ventana de despliegue**: hasta que Lovable publique, guardar un parlay desde la
+   app falla. Los picks sencillos no se ven afectados.
+2. **Dos denominadores** (individual sobre CAPITAL_LIBRE, agregado sobre TOTAL).
+3. **15% RETO vs 20% agregado**: una sola apuesta RETO consume el 75% de la cartera.
+4. **`registro_externo_manual` sigue siendo declarativo**: es el precio de permitir
+   registrar un boleto de ventanilla. Queda auditable y separado del OCR validado.
+5. **`scan_logs` recibe filas de procesos que no son escaneos** (`pre_analizar_fut_diario`).
+   No conceden evidencia porque no tienen archivo en storage, pero ensucian la tabla.
+6. **RONGOL sigue mal dirigido**, sin corregir a proposito.
+7. **El allocator sigue cortando por prefijo.**
