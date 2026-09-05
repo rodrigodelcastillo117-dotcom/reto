@@ -1535,3 +1535,42 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
      attestaciones 5, consumos 5. `EXP_OFF = 0.50`. `kelly_stake` sin tocar.
      `pg_advisory_xact_lock` presente. RONGOL sin tocar (las 3 lecciones con
      `bloqueo_total` siguen identicas).
+
+121. **#251 CLOSED / PASS — X5 re-ejecutada con DOS SESIONES REALES sobre el estado actual.**
+     `dblink` exige contrasena para no-superusuario; **no se manejo ninguna credencial**.
+     Se uso **pg_cron**, que lanza cada job en un background worker distinto:
+     concurrencia real, sin secretos. La extension dblink se elimino.
+     **Escenario** (apodo "el dos", sin ruta de ledger para que gobierne el candado;
+     el techo individual se salva con `stake_sobre_techo_razon` >= 15 caracteres, que
+     NO concede ruta de ledger):
+     `E0 = 250.00` · `limite = 781.64` · `S1 = S2 = 400`
+     `250+400 = 650 <= 781.64` cada una · `250+800 = 1050 > 781.64` juntas.
+     **Evidencia capturada:**
+     - `pg_locks` x5 muestras (17:48:10 -> 17:48:22), mismo `objid = 1552519797`:
+       | pid | job | granted | wait_event |
+       |-----|-----|---------|------------|
+       | 8139 | `x5_a` | **t** | Timeout/PgSleep |
+       | 8138 | `x5_b` | **f** | **Lock/advisory** |
+     - B espero **19,112 ms** (17:48:06.430 -> 17:48:25.542).
+     - A confirmo (job 411 `succeeded`), B adquirio el lock.
+     - **B RELEYO la exposicion nueva: `expuesto_visto = 650.00`** (era 250 antes de A).
+       Esa relectura es la propiedad que se queria demostrar.
+     - Error exacto de B:
+       `LIMITE DE CARTERA: esta apuesta de $400.00 dejaria la exposicion abierta en`
+       `$1050.00 sobre un bankroll total de $3908.19. El techo de cartera es del 20.0`
+       `por ciento ($781.64) y la capacidad restante es $131.64.`
+     - Exposicion final tras el rechazo: 650.00 <= 781.64, `sobre_el_limite = false`.
+       **Nunca supero el limite.**
+     **Limpieza:** se borro la fila artificial de A (`bet_id_casa = X5-SESION-A-BORRAR`),
+     se eliminaron `x5_a()`, `x5_b()`, `x5_resultado`, los dos cron jobs y sus
+     `job_run_details`, y `dblink`.
+     **Estado inicial = estado final** para "el dos": expuesto 250.00, capacidad 531.64,
+     bankroll 3,908.19.
+     **Residuos: 0** (picks X5 0, picks de prueba 0, funciones x5 0, tabla 0, jobs 0,
+     dblink 0).
+     **Invariantes:** `EXP_OFF = 0.50` · `kelly_stake` md5 `f8f6f398...` sin cambio ·
+     `pg_advisory_xact_lock` presente · RONGOL intacto (lecciones 11/12/13 con
+     `bloqueo_total`, sin tocar) · attestaciones 5 / consumos 5 · `push` fuera del
+     CHECK y 0 filas.
+     **#251 CLOSED / PASS sin asterisco**: same transaction, same statement/multi-row,
+     sesiones concurrentes, ledger override legitimo y scan single-use, todo a la vez.
