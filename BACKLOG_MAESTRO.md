@@ -1793,3 +1793,66 @@ Eso es politica de orden y va aparte. Tampoco se toco knapsack ni el 5/15/20.
 
 **Cero residuos**: tablas de prueba 0, funciones de prueba 0 (`mlb_shadow_generar`
 es preexistente y ajena), jobs 0, dblink 0, sobrecargas de `reto_picks_hoy` = 1.
+
+---
+
+## 254. Animacion de victoria de Zeus: dos variantes segun pick sencillo o parlay
+
+**Estado: DESPLEGADO en Lovable** — 5-sep-2026. SOLO presentacion.
+
+**Lo que ya existia (y por que estaba desaprovechado).** `useWinCelebration`
+detectaba ganadas pero colapsaba todo en un texto generico ("¡GANASTE!") que
+iba a `CelebrationModal`: sin monto, sin patas y **sin distinguir pick de
+parlay**. Al mismo tiempo `ResultadoOverlay` ya tenia un modo `victoria`
+completo (confeti en canvas, monto, patas) que **nadie usaba**: la unica ruta
+viva de ese componente era el WASTED de derrota (#122).
+
+**Lo que se hizo.** Tres archivos, ni uno mas:
+
+1. **NUEVO `src/components/reto/ZeusWinOverlay.tsx`** — reutiliza el patron de
+   `ResultadoOverlay` (ModalPortal + `useRegisterOverlay` + framer-motion +
+   `prefers-reduced-motion` + confeti en canvas + auto-cierre) sin tocarlo.
+   Dos variantes:
+   - `zeus_pick_win` (MODERADA): 1 rayo, 2 ramas, 40 confeti, sin sacudida,
+     sin "VICTORY!", 2,600 ms, acento dorado `#D4A152`.
+   - `zeus_parlay_win` (EPICA): tormenta continua de 5 rayos con 5 ramas,
+     3 destellos blancos, sacudida de 9 px, onda de choque, 160 confeti,
+     **"VICTORY!"**, 4,800 ms, acento electrico `#7FD4FF`.
+2. **`src/hooks/useWinCelebration.ts`** — nuevo estado `victoria` con
+   `variante / titulo / monto / patas / legs / extras`. `CelebrationModal`
+   queda SOLO para la meta semanal (`variant: "goal"`).
+3. **`src/pages/Reto.tsx`** — monta `<ZeusWinOverlay>`; el WASTED pasa a
+   `open={derrota.open && !victoria.open}` para que nunca se encimen.
+
+**Regla de variante (medida en `legs`, no en el nombre de la tabla).**
+`legs` = `picks_data.length`. Un pick sencillo es `legs = 1`. Si entre las
+ganadas nuevas hay ALGUN parlay de `legs >= 2`, gana la epica (la de mayor
+ganancia); si no, la moderada. Un "parlay" con menos de 2 patas cae en la
+moderada a proposito: dato sucio no debe disparar la animacion grande.
+
+**Voz "Victory!": APAGADA por defecto**, en `VOZ_VICTORY.activa = false`.
+El texto en pantalla cumple el requisito. iOS bloquea audio que no nace de un
+gesto del usuario y este overlay aparece solo, asi que dejarla prendida daria
+un comportamiento distinto por navegador. Se prende cambiando una constante.
+
+**Como se ajusta despues.** TODO lo tunable vive en un solo bloque,
+`ZEUS_PRESETS`, arriba del archivo: duracion, numero de rayos y ramas,
+destellos, confeti, sacudida, brillo, grosor, onda, "VICTORY!" y acento.
+No hay constantes de animacion repartidas por el componente.
+
+**Lo que NO se toco:** grading, bankroll, `useAutoGrader`, servicios, RPC,
+`ResultadoOverlay`, `CelebrationModal` y cualquier otra pantalla. El overlay
+solo se monta en `src/pages/Reto.tsx`.
+
+**Disparo:** `resultado === "ganado"` EXACTO. No se dispara con `perdido`,
+`nulo`, `pendiente` ni `retirado`. Se conserva el guard `primed.current` que
+indexa el historico en la primera pasada sin celebrar nada.
+
+**Movil:** DPR tope 2, un solo `requestAnimationFrame` por canvas con
+`cancelAnimationFrame` al desmontar, `pointerEvents: none` en los canvas,
+sin librerias nuevas. Con `prefers-reduced-motion` no se monta ningun canvas
+ni la sacudida: solo texto y monto.
+
+**PENDIENTE:** prueba de humo en navegador. No puedo abrir `reto13.lovable.app`
+desde aqui (el proxy de salida lo bloquea con 403), asi que las dos variantes
+estan verificadas por codigo, no por vista.
