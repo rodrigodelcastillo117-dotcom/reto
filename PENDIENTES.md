@@ -3894,3 +3894,73 @@ reto_picks_hoy dice "apostable $356.47" para ML Athletics; revisar_apuesta dice
 6 de las 8 apostables de hoy son Moneyline de MLB. Misma clase de bug que #156.
 NO se toco: cablear el veto bajaria la exposicion de $1,767.93 a ~$311 y requiere
 decision explicita del usuario.
+
+### #212 + #213 — Congruencia RONGOL y techo de cartera (CDaR)
+
+**El problema medido:** `reto_picks_hoy` decia "apostable $356.47" para ML Athletics y
+`revisar_apuesta` decia "bloqueado" para el mismo pick. No era el techo (Kelly OK, 4.2%
+propuesto) sino RONGOL: [MLB] ai_pro en ML con WR 35.7% en 42 picks y ROI -41.3%, mas la
+fuga "baseball . Moneyline" de -6.38 unidades en 25 apuestas. La pantalla ofrecia lo que
+el back-end iba a rebotar. Ademas la cartera llego a 24.8% del bankroll en 8 apuestas,
+todas legales por si solas: el techo por apuesta no ve al conjunto.
+
+**1. `exposicion_viva(apodo)` — NUEVA, fuente unica.**
+Suma picks (no-prueba) + parlays con `resultado` 'pendiente' o NULL. Vocabulario real
+verificado: solo pendiente/ganado/perdido/nulo, y 'pendiente' es el DEFAULT de las dos
+tablas. Nueva columna `config_staking.exposicion_max_pct` NOT NULL DEFAULT 20.0.
+Sin fila de config aplica 20%: protege, no abre.
+
+**2. `reto_picks_hoy` v3 — el diff.**
+```diff
++ ), k as (
++   ... public.rongol_veto(p_apodo, c.deporte, c.mercado, c.pick_desc,
++                          c.momio_mercado, c.liga) as veto
++ ), r as (
++   case
++     when k.en_abstencion                                     then 'abstencion'
++     when coalesce((k.ks->>'ok')::boolean,false) is not true  then 'sin_datos'
++     when (k.veto->>'nivel') = 'bloqueado'                    then 'rongol'
++     when (k.ks->>'veredicto') = 'NO APOSTAR'                 then 'kelly'
++     when coalesce((k.ks->>'ev_pct')::numeric,-1) <= 0        then 'ev_negativo'
++     when coalesce((k.ks->>'stake_recomendado')::numeric,0)<=0 then 'bajo_minimo'
++   end as motivo_bloqueo
++ ), acc as (
++   sum(monto_cand) over (
++     order by monto_cand desc, arranca_en nulls last, espn_event_id, pick_desc
++     rows between unbounded preceding and current row) as acumulado
++ )
++ -- y en las 4 ramas (categoria, monto, puede_apostar, motivo):
++ when (e->>'expuesto')::numeric + a.acumulado > (e->>'limite_monto')::numeric then 0
+```
+Desempate explicito en el `over()`: sin el, la suma corrida no es determinista.
+Columnas nuevas: `bloqueado_por`, `veto_resumen`, `exposicion_pct`, `exposicion_disponible`.
+
+**MEDIDO antes -> despues:** 8 apostables por $1,767.93 (24.8%) -> **2 por $311.36 (4.4%)**.
+10 filas caen por `rongol`, 4 por `kelly`. Las 2 que sobreviven son de MLS.
+
+**3. `revisar_apuesta`** — bloque de techo de cartera insertado con 4 candados de aborto.
+Probado: $164 -> ok; $1,500 -> bloqueado con el mensaje de limite. MLB -> bloqueado por veto.
+
+**PRUEBA DEL CORTE (la que importa):** con `exposicion_max_pct=4.0` ($285.17),
+Real Salt Lake $164.51 pasa y Charlotte $146.85 cae con `bloqueado_por='exposicion'`.
+Restaurado a 20.0 y verificado.
+
+**NO se toco el trigger de INSERT (#207).** Un betslip escaneado es una apuesta YA
+COLOCADA: bloquear su INSERT rompe el registro contable y no evita ningun riesgo.
+
+### Boton "Apostar en Playdoit" — la causa era otra
+No era la URL. En `ApostarButton.tsx`:
+```diff
+- const tab = window.open("about:blank", "_blank", "noopener,noreferrer");
++ const tab = window.open("about:blank", "_blank");
++ if (tab) { try { (tab as any).opener = null; } catch {} }
+```
+Con `noopener`, `window.open` devuelve **null** por especificacion. `tab` siempre era null,
+nunca se navegaba la pestana, y el `window.open` del `else` ocurria DESPUES de un `await`
+—fuera del gesto del usuario— asi que el bloqueador de pop-ups lo mataba.
+Ademas `FALLBACK_URL` estaba clavado en stake.mx aunque el usuario use Playdoit: ahora hay
+mapa `CASA_HOME` por casa.
+PENDIENTE de confirmar con el usuario: `build_bookmaker_link` devuelve
+`https://www.playdoit.mx/` (deep_link_quality: home_only). No pude verificar una ruta
+/login desde aqui porque Playdoit responde 403 a todo lo que no sea un navegador real
+(Cloudflare). Si quiere el link directo al login, hay que pegarme la URL exacta.
