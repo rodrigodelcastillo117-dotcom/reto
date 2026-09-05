@@ -115,14 +115,39 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     **pasado**, que se pintaba como hora normal (ESPN reprograma y la fila queda vieja).
     Ahora dice "ya comenzó". Dinero intacto: 2 apostables, $159.29.
 9.  **#158** El chip GANA de MLB enseñaba la probabilidad previa con el partido en vivo.
-10. **#159** Causa raíz de la cartelera de MLB: tres filtros en `v_radar_mlb`.
+~~10. **#159** Cartelera de MLB.~~ **CERRADO — Y MI PROPIO DIAGNÓSTICO CORREGIDO.**
+    Son **5 filtros, no 3**. Embudo: 416 → 34 (no muy viejo) → 19 (corte de día) →
+    15 (no final) → 15 (con momio) → 15 salida.
+    Parecía que el corte de día era el cuello (34→19), pero al quitar **todo tope
+    superior el resultado sigue siendo 15**: lo que ese corte quitaba ya estaba
+    `final` o sin momio. El filtro de momios tampoco corta (15→15).
+    **La causa real es cobertura de precios:** el 6-sep hay 17 juegos cargados y
+    **solo 3 con momio**; el 7-sep, 1 juego y 0 con momio. Es la clase de #40, y se
+    llena solo conforme avanza el día.
+    Cambios hechos igual, por higiene: (a) el corte de día dependiente de zona horaria
+    → ventana rodante de 36h, más simple y sin sorpresas de DST; (b) nueva columna
+    `over_en_abstencion` para que el radar no pinte Over/Under como accionable cuando
+    el mercado está vetado (15 de 15 filas marcadas).
 11. **#120** Tenis: 112 de 163 partidos de ATP con marcador imposible.
 12. **#205** Partidos fantasma: nadie relee la fecha cuando ESPN reprograma.
 13. **#206** Los dos motores de fútbol discrepan 17.6 pp y nada mide cuál acierta.
 14. **#175** El bucle nocturno ya existe: 14 crons de aprendizaje sin coordinar.
 15. **#200** Residuales de #179/#180: pisos de muestra y el veto blando de Uruguay.
 16. **#169** Calibración sobre picks publicados: primero descartar el confundidor.
-17. **#174** MLB: Poisson sobredisperso 2.36x (mercado vetado). Fútbol limpio (1.025).
+~~17. **#174** Poisson sobredisperso.~~ **CERRADO — PREMISA DEL TICKET INVERTIDA.**
+    Re-medido sobre 365 días:
+    | deporte | partidos | media | varianza | var/media | veredicto |
+    |---|---|---|---|---|---|
+    | FÚTBOL (goles) | 10,939 | 2.826 | 2.871 | **1.016** | Poisson es razonable |
+    | MLB (carreras) | 2,611 | 9.124 | 22.482 | **2.464** | SOBREDISPERSO |
+    La sobredispersión está en **MLB, no en fútbol**. Pasar fútbol a Binomial Negativa
+    habría metido un parámetro de dispersión donde el ajuste es 1.016: inflar colas sin
+    evidencia. NO SE HIZO.
+    Tampoco se tocó `v_termometro_motor`: es el **instrumento de medición** (Brier vs
+    tasa base), no el modelo de goles. "Limitar el peso del Brier" ahí sería corromper
+    el único termómetro honesto que hay.
+    MLB O/U ya está cubierto por el veto global `over/under` en `mercados_en_abstencion`,
+    así que **no fluye dinero por el modelo sobredisperso**.
 18. **#203** Poblar el hueco: cargar segundas divisiones (ya en `ligas_master`, apagadas).
 19. **#204** FUT PRO usa otro motor y otro formato que Favoritos.
 20. **#189** `v_goles_equipo_futbol` creada (528 equipos, 29 ligas): falta conectarla.
@@ -190,7 +215,20 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     función escriba el contador en una tabla de salud (o `RAISE LOG`), no solo en el
     retorno. NO urgente: la omisión es segura por diseño y se recupera al tick siguiente.
 
-44. **Tres puertas emiten tamaño de apuesta con CERO guardas:** `tamano_apuesta`,
-    `devils_advocate` y `devils_advocate_parlay`. `autodiagnostico` solo tiene RONGOL.
-    Falta medir si alguna llega a pantalla o son todas de diagnóstico interno; si alguna
-    pinta un monto al usuario, es la misma clase de bug que #170.
+~~44. **Puertas crudas.**~~ **CERRADO. Auditoría de UI (grep sobre `src/`):**
+    | función | ¿llega a la UI? | dónde |
+    |---|---|---|
+    | `tamano_apuesta` | **SÍ** | `components/reto/CalculadoraMonto.tsx:42` |
+    | `devils_advocate` | **SÍ** | `hooks/useDevilsAdvocate.ts:43` → `AddPickForm` |
+    | `devils_advocate_parlay` | **SÍ** | `components/reto/CalificarIAModal.tsx:251` |
+    | `autodiagnostico` | **NO** | solo en `types.ts` (tipos generados) |
+
+    **Corrección a mi propia nota:** dije "CERO guardas" y era falso. `tamano_apuesta`
+    YA traía el tope 0.52 por tasa base (#191), techo de 2% del bankroll y aviso de
+    ventaja negativa. Lo que le faltaba era el **CDaR**: con la cartera al 20% seguía
+    sugiriendo montos. Cerrado — se recorta a `exposicion_viva(...).disponible` y
+    devuelve `recortado_por_cartera` + veredicto propio.
+    Los dos `devils_advocate` **no emiten monto**: devuelven un semáforo, y
+    `CalificarIAModal.tsx:326` ya los trata como informativos con su propio gate Kelly.
+    No se renombró nada: renombrar una función que la UI llama la rompe.
+
