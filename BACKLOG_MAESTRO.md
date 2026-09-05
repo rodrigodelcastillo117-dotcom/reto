@@ -1134,3 +1134,61 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
      y es el acta original del momento. Reescribirlo seria alterar una declaracion historica,
      asi que se deja como esta; la contradiccion aparente queda explicada en
      `evidencia_procedencia`. Si el auditor prefiere anotarla, es un cambio aparte.
+
+101. **#237 CORRECCION A LO QUE YO AFIRME: las alertas NO las veian todos.**
+     Dije "todos la ven" basandome en los GRANTS de tabla (`anon` y `authenticated`
+     tenian SELECT). **Estaba mal**: `alertas_sistema` tiene RLS activo y ya traia
+     `as_admin_select` y `as_admin_update`, ambas con `has_role(auth.uid(),'admin')`.
+     El usuario la veia porque **es** el admin. Leer los grants sin leer las policies
+     fue un error de metodo mio.
+     Lo que si era real, aunque menor de lo que dije: `anon` y `authenticated` tenian
+     tambien INSERT, DELETE y **TRUNCATE**. INSERT y DELETE los frenaba la RLS (no hay
+     policy que los permita), pero **TRUNCATE no pasa por RLS**. No es explotable via
+     PostgREST (no expone TRUNCATE), asi que era defensa en profundidad, no una puerta
+     abierta. Lo cerre igual.
+
+102. **#238 LA CAUSA REAL de "siempre hay una alerta": el conteo iba en el titulo.**
+     `auditar_analisis` metia el numero dentro del titulo y el `ON CONFLICT` es sobre
+     `(tipo, titulo)`. Titulos historicos medidos para la MISMA condicion:
+     "47 analisis...", "52...", "55...", "56...", "57..." — **cinco alertas distintas
+     para un solo hallazgo**. Cada corrida (cada 2 h) con distinto conteo creaba una
+     fila nueva sin ver. Marcar "Entendido" no servia de nada.
+     Corregido: titulo fijo por regla, conteo en el detalle. Ahora el `ON CONFLICT`
+     encuentra la fila, actualiza detalle y gravedad, y **preserva `visto`**.
+
+103. **#239 La alerta NO habla de dinero. Medido.**
+     `v_pick_canonico` **no lee** `analisis_partidos`, y tampoco lo leen
+     `reto_picks_hoy`, `kelly_stake`, `filtro_pick`, `rongol_veto`, `stake_techo` ni
+     `exposicion_viva`. La regla `bet_con_datos_malos` mira
+     `analisis_partidos.analisis_json->veredicto_final = 'BET'` con `data_quality <= 8`
+     de 25: es la pantalla de ANALISIS que lee el usuario, no el motor que dimensiona.
+     **La regla NO se apago.** El hallazgo es cierto y es el mismo patron de #107/#108.
+     Cambios aplicados: `salud_alertas` ahora ademas filtra por admin dentro de la
+     propia vista (`security_invoker`), y se revocaron las escrituras de cliente
+     dejando solo `UPDATE (visto)` a `authenticated` para que el boton "Entendido"
+     siga funcionando sin poder reescribir titulo, gravedad ni detalle.
+
+104. **#240 P0 REGRESION: Lovable SOBRESCRIBIO `attestar-scan` y la dejo abierta.**
+     Lovable reporto "la funcion no existia, ya la cree". **Falso**: existia (v1, mia).
+     Desplego una v3 que rompio dos guardas:
+     - **`verify_jwt: false`** (la mia era `true`): cualquiera sin sesion podia llamarla.
+     - **Cero verificacion**: tomaba `image_url` y `apodo` del cuerpo y sellaba. Con eso
+       se podia sellar evidencia a nombre de OTRO usuario.
+     Lo unico que aguanto fue el trigger `tg_sellar_attestation`, que sobrescribe
+     `escrito_por` con `current_user` e ignoro el `"attestar-scan"` que mandaba Lovable.
+     Haber puesto esa guarda en la base y no en la funcion es lo que evito que la
+     regresion llegara hasta la evidencia.
+
+105. **#241 ERROR MIO EN LA CORRECCION: la v4 habria roto TODOS los escaneos.**
+     Al corregir la v3 puse una guarda que comparaba `uid_de_apodo(apodo)` contra el
+     uid de la sesion. **`usuarios.id` NO es el uid de auth**: ninguno de los tres
+     existe en `auth.users`. El vinculo real es `usuarios.user_id`.
+     Lo detecte antes de que el usuario probara, revisando el cruce. La v4 habria
+     devuelto 403 en todos los escaneos.
+     **v5** usa dos funciones nuevas SECURITY DEFINER, solo ejecutables por
+     `service_role`:
+     - `apodo_es_del_uid(apodo, uid)` — via `usuarios.user_id`
+     - `archivo_scan_es_del_uid(path, uid)` — via `storage.objects.owner_id`, que lo
+       pone el servidor al subir y el cliente no elige
+     Probadas las cuatro combinaciones: dueno OK / suplantador rechazado / archivo
+     propio OK / archivo ajeno rechazado.
