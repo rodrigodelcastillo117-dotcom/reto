@@ -3818,3 +3818,79 @@ Se expuso la columna con su nombre canonico (DROP+CREATE en una sola transaccion
 66. **"Identidad imposible" merecia una consulta, no una conclusion.** `nfl_picks_premium`
     tenia la identidad todo el tiempo bajo el nombre `fixture_id`. Un `count(*) filter`
     de un minuto lo habria mostrado. Lo di por perdido durante dos auditorias.
+
+---
+
+## 5-sep-2026 — FRENTES #208 a #211 (Moneyline, sizing y UI)
+
+### #208 kelly_stake: fuera el tope plano, entra el uncertainty haircut
+MEDIDO antes de tocar: `least(v_p_usada, v_tasa_base_mercado)` con Moneyline = 0.42783
+hacia que la probabilidad que DECIDE fuera exactamente 42.8% en 14 de los 16 picks del dia,
+sin importar que el motor declarara 40.1%, 45.2%, 50.5%, 54.7% o 65.9%.
+Con p constante Kelly deja de depender del modelo y queda como funcion UNICA del momio:
+    monto = bankroll/4 * (0.42783*(momio-1) - 0.57217)/(momio-1)
+Verificado al centavo: 3.07 -> $269.88, 2.87 -> $217.19, 2.70 -> $162.66, 2.53 -> $96.00, 2.52 -> $91.62.
+Umbral duro momio >= 2.337. La lista salia PERFECTAMENTE ordenada por momio, sin una excepcion.
+El sistema pagaba mas donde el motor estaba menos seguro.
+
+DIFF (una sola sustitucion, con 6 candados de aborto):
+-  v_p_antes_tope := v_p_usada;
+-  SELECT tb.tasa_base INTO v_tope_base FROM public.v_tasa_base_mercado tb
+-   WHERE tb.mercado = public.normalizar_mercado(p_mercado);
+-  v_tope_base := COALESCE(v_tope_base, 0.52);
+-  v_p_usada   := least(v_p_usada, v_tope_base);
++  v_p_antes_tope := v_p_usada;
++  v_factor_n  := least(1.0, sqrt(greatest(v_n,0)::numeric / 300.0));
++  v_p_usada   := least(greatest(v_p_usada * v_factor_n, 0.01), 0.99);
+Se eliminaron las 5 referencias a v_tope_base. Se agrego factor_muestra y
+prob_antes_del_recorte_pct al JSON de incertidumbre (en los 2 puntos de retorno).
+El techo por apuesta (stake_techo, #207) NO se toco: sigue en 5% = $356.47.
+
+RESULTADO MEDIDO: la inversion desaparecio. SF Giants @2.53 recibe $283.61 y
+Washington @2.87 recibe $262.75: mas dinero al de MENOR momio y MAYOR probabilidad.
+PERO la exposicion total subio de $837.35 (11.7% del bankroll) a $1,767.93 (24.8%),
+en 8 apuestas simultaneas. Y con N>=300 el factor es 1.000, o sea NINGUN recorte:
+para los tramos de n=853 y n=1963 la proteccion de #191 ya no existe.
+
+### #209 reto_picks_hoy: el EV que se muestra es el que dimensiona
+DROP + CREATE. `ev_pct` ahora es `kelly_stake->>'ev_pct'`; el viejo viaja en
+`ev_pct_declarado`. Columnas nuevas: ev_pct_declarado, prob_que_decide_pct,
+factor_muestra, pick_desc_canonico. Regla nueva en las 4 ramas (categoria, monto,
+puede_apostar, motivo): si el EV del motor es <= 0 la fila cae a 'descartado' con
+monto 0. Verificado: 0 filas con EV negativo y boton.
+Antes -> ahora: Dortmund +16.6% -> -69.1%; Atlanta +22.4% -> -9.7%;
+Empate@4.80 +12.3% -> -0.4%. Los tres perdieron el boton.
+
+### #210 mlb_cache_refrescar(): el hueco era el cache vencido
+Mariners vs Athletics: fetch_success=true, cached_at 4-sep 17:00, expires_at 5-sep 05:00.
+NO es sesgo local/visita (56 con abridor local vs 53 visitante en 69 juegos).
+mlb-enrich-diario corre cada 6h y solo reintenta cuando FALTA un nombre; 22 filas de
+partidos por jugar tenian los dos abridores y el cache vencido: nadie las volvia a pedir.
+Nueva funcion + cron `mlb-cache-refrescar` cada 15 min (jobid 408), que agrega la
+condicion `c.expires_at < now()` y ordena por hora de saque ascendente.
+Corrida de verificacion: 25 pedidos, 25 por cache vencido, 5 por abridor faltante.
+Vencidos 29 -> 4. El abridor visitante de Athletics ya sale completo:
+Jeffrey Springs, ERA 6.37, FIP 6.21, K9 7.17, BB9 3.66, WHIP 1.5, mano L.
+NOTA: Postgres no puede hacer el fetch sincrono dentro de analisis_completo (es STABLE
+y pg_net no despacha en la misma transaccion). Se resuelve con cadencia de 15 min.
+
+### #211 pick_desc_legible(): nombre del equipo en Moneyline de futbol
+43 de 45 Moneylines de futbol decian "Gana local"; los 82 de baseball nombran al equipo.
+Nueva funcion IMMUTABLE que traduce SOLO para pantalla: "Gana local" -> "ML {home}".
+La llave canonica de calificacion queda intacta y viaja en pick_desc_canonico.
+Verificado: "Gana local" -> "ML Real Salt Lake" y "ML Charlotte".
+
+Frontend (Lovable, commit ae692e8, `bunx tsgo --noEmit` limpio):
+Reto13M.tsx — 4 campos nuevos en RetoPickHoy; "EV real" con color condicional
+(verde/rojo) porque ahora puede ser negativo; "Prob. que decide" con el recorte por
+muestra; y `pickDesc={p.pick_desc_canonico ?? p.pick_desc}` en ApostarButton para que
+lo que se GUARDA siga siendo la llave canonica.
+
+### #212 ABIERTA: la pantalla autoriza lo que el veto bloquea
+reto_picks_hoy dice "apostable $356.47" para ML Athletics; revisar_apuesta dice
+"bloqueado". El motivo no es el techo (Kelly OK, 4.2% propuesto) sino RONGOL:
+[MLB] ai_pro en ML con WR 35.7% en 42 picks y ROI -41.3%, mas la fuga
+"baseball . Moneyline" de -6.38 unidades en 25 apuestas.
+6 de las 8 apostables de hoy son Moneyline de MLB. Misma clase de bug que #156.
+NO se toco: cablear el veto bajaria la exposicion de $1,767.93 a ~$311 y requiere
+decision explicita del usuario.
