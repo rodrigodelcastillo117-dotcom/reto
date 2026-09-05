@@ -1079,3 +1079,58 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     `auditoria_e2e` ya la muestra como `DECLARADO SIN ATTESTACION`. Queda a decision
     del auditor si se reetiqueta a `registro_externo_manual` (seria un cambio de
     procedencia, cero cambio de dinero).
+
+100. **#236 MIGRACION_PROCEDENCIA_PRE_ATTESTATION ejecutada. UNA fila, cero cambio economico.**
+     *Autorizada por el auditor el 5-sep-2026.*
+
+     **Enumeracion previa** (sin ventana de tiempo, ambas tablas): **1 sola fila** cumple
+     `origen='ticket_escaneado' AND scan_id IS NULL`. No hay mas. `picks` tenia 1 fila con
+     `origen` no nulo y `parlays` 0.
+
+     **Fila**: `2b693371-f7bc-4786-8188-a2a76a047b33` · "el dos" · 5-sep 14:47:38 UTC ·
+     TSG Hoffenheim - Borussia Dortmund · "Menos de 3.5 Goles" · momio 1.50 ·
+     **$500.00** · resultado `perdido` · `ganancia_neta -500.00` · `bet_id_casa 5376349438` ·
+     `stake_techo_al_guardar $220.41` · RETO 13M.
+
+     **Seguridad del UPDATE.** Los 8 triggers de `picks` que disparan en UPDATE sin filtro
+     de columna se leyeron uno por uno antes de tocar nada. Ninguno actua si no cambia
+     `resultado`: `notify_pick_graded` exige `OLD.resultado='pendiente' AND NEW IN
+     ('ganado','perdido')` (**no se mando ninguna notificacion**);
+     `actualizar_bankroll_post_al_calificar`, `recalc_pick_on_result_change`,
+     `capture_pick_to_ai_learning` y `protect_picks_premature_grading` exigen transicion de
+     resultado; `protect_pa_picks` exige que NEW difiera de OLD; `proteger_ganancia_cashout`
+     exige `cashout_monto` no nulo (aqui es NULL). El unico con efecto es
+     `update_picks_updated_at`.
+     Ademas el UPDATE corrio dentro de un candado que **aborta la transaccion completa** si
+     cambiaba cualquier campo distinto de `origen` y `updated_at`, o si se movia la
+     exposicion.
+
+     **Diff real, verificado:**
+     | campo | antes | despues |
+     |---|---|---|
+     | `origen` | `ticket_escaneado` | `registro_externo_manual` |
+     | `updated_at` | 15:40:06 | 16:04:46 |
+
+     Todo lo demas identico: `apuesta` $500.00, `resultado` perdido, `ganancia_neta` -500.00,
+     `bankroll_post` 3908.19, `bet_id_casa` 5376349438, `created_at` 14:47:38.88888,
+     `stake_techo_al_guardar` 220.41, `scan_id` NULL (**no se fabrico**).
+     Exposicion abierta de "el dos": **$0.00 antes y $0.00 despues**.
+     No aplica `autoridad_economica`: esa columna solo existe en `parlays` y la fila es un pick.
+
+     **Evidencia durable**: fila 4 de `public.evidencia_procedencia`, que ya existia (se uso
+     esa en vez de inventar arquitectura nueva). Guarda la afirmacion completa
+     (`MIGRACION_PROCEDENCIA_PRE_ATTESTATION`, valor anterior, valor nuevo, `scan_id` original
+     NULL, motivo, y la declaracion explicita de cero cambio economico) y el **estado completo
+     de la fila antes del cambio** en la columna `sentencia`.
+
+     **Verificacion posterior**: `picks_contaminados = 0`, `parlays_contaminados = 0`.
+     `salud_ocr_ledger(24)` y `(168)` ya no levantan `declarados_ticket_sin_attestacion`;
+     ahora leen "Registros manuales sin ningun escaneo en la ventana: consistente con captura
+     deliberada sin escaner". `auditoria_e2e('el dos')` clasifica la fila como
+     **`LEDGER_OVERRIDE_HUMANO`**. La clase `TICKET_ESCANEADO_VERIFICADO` quedo limpia.
+
+     **RESIDUAL QUE NO TOQUE**: `stake_sobre_techo_razon` de esa fila sigue diciendo
+     literalmente "boleto escaneado en PlayDoIt folio 5376349438". Lo genero el trigger viejo
+     y es el acta original del momento. Reescribirlo seria alterar una declaracion historica,
+     asi que se deja como esta; la contradiccion aparente queda explicada en
+     `evidencia_procedencia`. Si el auditor prefiere anotarla, es un cambio aparte.
