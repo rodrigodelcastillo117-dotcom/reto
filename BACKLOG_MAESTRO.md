@@ -1904,3 +1904,37 @@ la prop `forzarReducedMotion` de `ZeusWinOverlay.tsx`.
 un toast de sonner `"¡GANASTE $X!"` por realtime cuando la base marca un
 parlay como ganado. En una ganada REAL veras ESE toast **y** el overlay de
 Zeus. El harness no reproduce el toast, asi que esa duplicacion no se ve en QA.
+
+### 254-B. Faltaba lo principal: no habia Zeus, habia un rayo
+
+**Reportado por el usuario al abrir el QA:** *"no sale ZEUS, sale puro rayo"*.
+Tenia razon. La primera entrega dibujaba un bolt SVG + tormenta en canvas y lo
+llamaba "Zeus", pero no habia ninguna figura del dios en pantalla. En
+`src/assets/` solo existian `fyb_logo.png`, `logo.png` y `reto13m_icon.png`:
+nunca hubo imagen de Zeus, y en vez de decirlo se entrego el rayo como si
+cumpliera. Error de reporte, no solo de implementacion.
+
+**Corregido:** dos ilustraciones originales generadas por Lovable, PNG con
+alpha, en `src/assets/`:
+- `zeus-sereno.png` — Zeus de pie, rayo en la mano baja, sereno. Variante
+  MODERADA (`zeus_pick_win`), altura `clamp(130px, 30vw, 180px)`.
+- `zeus-furioso.png` — mismo personaje, brazo alzado lanzando el rayo, capa
+  al viento. Variante EPICA (`zeus_parlay_win`), altura
+  `clamp(190px, 44vw, 280px)`.
+
+Estilo pedido: semi-silueta con luz de borde dorada/electrica para que se lea
+sobre el overlay negro. Obra original, sin copiar God of War, Hades ni Marvel.
+
+**Cableado:** `Preset` gana dos campos, `imagen` y `alturaZeus`, dentro del
+mismo bloque `ZEUS_PRESETS`. El tamano se ajusta ahi, igual que todo lo demas.
+La tormenta y el confeti siguen corriendo detras de la figura, sin cambios.
+
+**Fallback:** `imagenFallo` con `onError` en el `<img>`. Si la imagen no carga,
+vuelve el rayo SVG de antes. Vale mas un simbolo pobre que un hueco.
+
+**Sin verificar visualmente.** No puedo abrir el navegador ni leer los PNG
+binarios: no he visto como quedaron las ilustraciones. Lo tiene que mirar el
+usuario en `/?qa=zeus`. Puntos concretos a revisar: que la figura se lea sobre
+negro y no se pierda; que el fondo transparente sea real y no un recuadro
+blanco; y que en la epica el conjunto Zeus + VICTORY + monto + patas + boton
+CERRAR quepa en movil sin tapar el boton.
