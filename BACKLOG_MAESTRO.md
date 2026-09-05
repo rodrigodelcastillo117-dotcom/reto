@@ -1048,3 +1048,34 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     escaner degrada a `registro_externo_manual` (pide razon escrita). Es seguro pero
     NO es la ruta de boleto verificado, asi que el E2E de la ruta OCR sigue sin
     ejecutarse. **Yo no puedo correr el E2E**: mi proxy bloquea `reto13.lovable.app`.
+
+98. **#234 El fallback manual ya no puede tapar un fallo de integracion del OCR.**
+    Riesgo señalado por el auditor: si el escaneo sale bien pero el `scan_id` se
+    pierde, la pantalla pedia en silencio "escribe una razon manual", convirtiendo un
+    fallo tecnico en lo que parece una decision del usuario.
+    Dos capas:
+    - **UI** (enviado a Lovable): tres casos separados. Con `scan_id` no pide nada;
+      **vino de escaneo pero sin `scan_id`** muestra aviso ROJO diciendo que es una
+      falla tecnica y deja el guardado DESHABILITADO hasta que el usuario pulse
+      explicitamente "Registrar de todos modos sin comprobante"; captura a mano sin
+      escaner se comporta como antes.
+    - **Servidor**: `public.salud_ocr_ledger(horas)` detecta la degradacion silenciosa
+      cruzando attestaciones selladas, attestaciones consumidas y registros manuales.
+      Si se sellaron attestaciones que nadie uso Y entraron registros manuales,
+      levanta `sospecha_degradacion_silenciosa`.
+    - `public.auditoria_e2e(apodo, n)`: una fila por apuesta con `ruta_real` explicita
+      (`TICKET_ESCANEADO_VERIFICADO` / `DECLARADO SIN ATTESTACION` /
+      `LEDGER_OVERRIDE_HUMANO` / `AUTORIZACION NORMAL DEL MOTOR` / `PATA`).
+
+99. **#235 UNA fila real quedo mal etiquetada en la ventana de transicion. NO la toco.**
+    `salud_ocr_ledger` levanto bandera de inmediato y encontro:
+    pick de **"el dos"**, `2b693371`, **$500.00**, 5-sep 14:47 UTC, `origen='ticket_escaneado'`,
+    `scan_id = NULL`, `stake_techo_al_guardar = $220.41`.
+    Es una apuesta REAL, registrada entre mi primer despliegue de Lovable (que mandaba
+    `origen='ticket_escaneado'` con solo `bet_id_casa` como evidencia) y el
+    endurecimiento posterior. Obtuvo el bypass con las reglas viejas.
+    **Es dinero real de otro usuario: no la borro ni la reetiqueto por mi cuenta.**
+    Bajo la taxonomia nueva es un `LEDGER_OVERRIDE_HUMANO`, no un boleto verificado.
+    `auditoria_e2e` ya la muestra como `DECLARADO SIN ATTESTACION`. Queda a decision
+    del auditor si se reetiqueta a `registro_externo_manual` (seria un cambio de
+    procedencia, cero cambio de dinero).
