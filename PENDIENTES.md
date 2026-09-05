@@ -3964,3 +3964,122 @@ PENDIENTE de confirmar con el usuario: `build_bookmaker_link` devuelve
 `https://www.playdoit.mx/` (deep_link_quality: home_only). No pude verificar una ruta
 /login desde aqui porque Playdoit responde 403 a todo lo que no sea un navegador real
 (Cloudflare). Si quiere el link directo al login, hay que pegarme la URL exacta.
+
+---
+
+## 5-sep-2026 — BLOQUES #214 (Wilson), #35 (NFL) y #215 (CLV)
+
+### #214 kelly_stake: haircut continuo por varianza (Wilson)
+
+**La formula pedida NO servia.** Medido antes de tocar nada:
+
+| n     | sqrt(N/300) | ln(1+N)/ln(1+500) | Wilson |
+|-------|-------------|-------------------|--------|
+| 30    | 0.3162      | 0.5524            | 0.7722 |
+| 187   | 0.7895      | 0.8423            | 0.9067 |
+| 300   | 1.0000      | 0.9180            | 0.9262 |
+| 500   | 1.0000      | **1.0000**        | 0.9428 |
+| 853   | 1.0000      | **1.0000**        | 0.9562 |
+| 1963  | 1.0000      | **1.0000**        | 0.9711 |
+| 2612  | 1.0000      | **1.0000**        | 0.9749 |
+
+El escalado log tiene el MISMO defecto, solo mueve la saturacion de N>=300 a N>=500.
+Los dos tramos vivos de Moneyline son n=853 y n=1963: con la formula log el cambio
+habria sido un no-op exacto. Wilson no satura nunca.
+
+**El diff:**
+```diff
+-  v_factor_n  := least(1.0, sqrt(greatest(v_n,0)::numeric / 300.0));
++  v_p_hat := CASE WHEN COALESCE(v_n,0) > 0 THEN v_k::numeric / v_n ELSE NULL END;
++  IF v_p_hat IS NULL OR v_p_hat <= 0 THEN
++    v_factor_n := 1.0;   -- sin tasa medida no hay de donde sacar varianza: no inventa
++  ELSE
++    v_wl_den   := 1 + (Z10*Z10) / v_n;
++    v_wl_c     := (v_p_hat + (Z10*Z10) / (2*v_n)) / v_wl_den;
++    v_wl_m     := (Z10 / v_wl_den)
++                  * sqrt( v_p_hat*(1-v_p_hat)/v_n + (Z10*Z10)/(4*v_n::numeric*v_n) );
++    v_wilson   := greatest(v_wl_c - v_wl_m, 0);
++    v_factor_n := least(1.0, greatest(v_wilson / v_p_hat, 0.05));
++  END IF;
+```
+z = Z10 = 1.2816, el mismo que ya usaba el recorte bayesiano: una sola definicion de
+"que tan conservador" en toda la funcion. 6 candados de aborto.
+
+**Efecto medido:** factores vivos 0.956 / 0.950 / 0.913 / 0.825 — ninguno llega a 1.000.
+Exposicion autorizada $311.36 -> **$185.37 (2.6% del bankroll)**.
+
+### #35 NFL: orden determinista + FOR UPDATE SKIP LOCKED
+
+**Primero la verdad incomoda: NO hay deadlocks.** cron.job_run_details, 7 dias:
+- nfl-espejar-live: 2010 exitos, 5 fallos, TODOS "job startup timeout" (#88)
+- nfl-sync-cdn:     2001 exitos, 13 fallos, TODOS "job startup timeout"
+Cero deadlocks. En pretemporada los dos escritores casi no coinciden. Esto es
+endurecimiento PREVENTIVO para el 10-sep, no la cura de algo que ya este roto.
+
+**El mecanismo real:** `sync_nfl_cdn_tick()` y `espejar_nfl_a_live()` hacian
+INSERT ... ON CONFLICT DO UPDATE multi-fila sobre live_scores, cada uno tomando
+candados en el orden que le llegaban las filas (scoreboard de ESPN vs scan de
+nfl_partidos). Ordenes distintos sobre las mismas filas = deadlock de manual.
+Nota tecnica: FOR UPDATE SKIP LOCKED NO se puede pegar a un INSERT ... ON CONFLICT.
+Hay que pre-candar con un SELECT y luego insertar solo lo candado.
+
+**El script (identico en las dos funciones):**
+```sql
+  SELECT array_agg(s.espn_event_id ORDER BY s.espn_event_id) INTO v_lock
+  FROM (SELECT l.espn_event_id FROM live_scores l
+         WHERE l.espn_event_id = ANY(v_cand)
+         ORDER BY l.espn_event_id
+         FOR UPDATE SKIP LOCKED) s;
+
+  SELECT array_agg(t.espn_event_id ORDER BY t.espn_event_id) INTO v_nuevos
+  FROM <temp> t
+  WHERE NOT EXISTS (SELECT 1 FROM live_scores l WHERE l.espn_event_id = t.espn_event_id);
+
+  INSERT INTO live_scores (...)
+  SELECT ... FROM <temp> t
+  WHERE t.espn_event_id = ANY(COALESCE(v_lock,'{}') || COALESCE(v_nuevos,'{}'))
+  ORDER BY t.espn_event_id
+  ON CONFLICT (espn_event_id) DO UPDATE SET ...;
+```
+Dos candados, no uno: (1) MISMO orden ascendente en ambos -> no puede haber ciclo;
+(2) SKIP LOCKED -> la fila ocupada se omite este tick y se toma en el siguiente.
+Para un sondeo cada 5 min no se pierde nada.
+
+**Bonus encontrado:** sync_nfl_cdn_tick escribia `deporte = '🏈 Americano'` y el espejo
+escribe `'🏈 Futbol Americano'`. Las 284 filas de NFL usan la segunda. Un evento nuevo
+insertado por la ruta del CDN salia con un vocabulario que ningun lector espera.
+Corregido a un solo vocabulario. (NO es un bucle infinito: el ON CONFLICT del CDN no
+reescribia deporte, solo mordia en el INSERT de un evento nuevo.)
+
+**Prueba:** ambas corren limpio (`espejo:0`, `cdn:procesados:16 omitidos_por_candado:0`).
+La prueba de concurrencia real se hizo alineando los dos crons al MISMO minuto (*/5)
+en produccion; no hay dblink ni pg_background para dos sesiones desde SQL.
+
+### #215 CLV: identidad limpia y la regla T-5
+
+**Medido: la contaminacion en vivo NO es el problema principal.**
+De 73,364 snapshots, solo 11,342 se pueden ligar a una hora de saque.
+De esos: **106 en vivo (0.93%)** y 11,236 prepartido.
+
+**El problema real es que no hay precio cerca del cierre.** De 276 pares (evento, casa)
+con precio prepartido ligado a un saque, su ULTIMO precio cae asi:
+- dentro de T-5:   **10**
+- dentro de T-30:  37
+- dentro de T-2h:  47
+- dentro de T-6h:  66
+- a mas de 6h:     **210 de 276 (76%)**
+- mediana: **1,090 minutos (18 horas) antes del saque**
+
+Aplicar T-5 como FILTRO dejaria el CLV en n=10 para toda la historia.
+
+**Lo construido:**
+- `v_odds_prematch`: identidad canonica `(espn_event_id, mercado, linea, casa, snapshot_at)`,
+  formato largo (una fila por precio) desde la tabla ancha. REGLA DURA: solo
+  `snapshot_at < arranca_en`. Sin hora de saque conocida se descarta; no se asume prepartido.
+- `v_linea_de_cierre`: ultimo precio prepartido por identidad, con
+  `minutos_antes_del_saque`, `calidad_cierre` (T-5 oficial / T-30 aceptable / T-6h debil /
+  lejano) y `sirve_para_clv` (exige T-30).
+  Resultado: 40 precios T-5 (10 eventos), 106 T-30 (27 eventos), 876 demasiado lejos.
+
+T-5 queda como la META de captura, no como un filtro que tira el 99.9% del dato.
+El bloqueo real para un CLV honesto es la CADENCIA de captura, no la mezcla live/prematch.
