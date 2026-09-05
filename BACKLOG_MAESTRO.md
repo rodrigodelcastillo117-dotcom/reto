@@ -529,3 +529,31 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     exposición**. Apagarlo antes de validar `confidence` y portar la capa de cartera
     multiplicaría el riesgo. Es el argumento más fuerte para respetar el orden
     C -> D -> E y no adelantarlo.
+
+65. **CORRECCION: IMMUTABLE no demuestra pureza.** Sobreafirme que "Postgres le
+    prohibe consultar tablas". Es falso: IMMUTABLE es una declaracion al
+    planificador. Y peor: `kelly_full_v2` tenia **cuerpo de cadena**, con lo que
+    Postgres **no registraba ninguna dependencia**, asi que un `pg_depend` vacio
+    habria dado falso PASS para cualquier funcion. Reescrita con cuerpo SQL estandar
+    (`RETURN`), que si se parsea y si registra: su unica dependencia es el esquema
+    `public`. `inv_kelly_puro_v2()` hace siete comprobaciones y se conecta al event
+    trigger como regla I4. Probado en las tres direcciones: version legitima
+    aceptada; version impura con cuerpo estandar **rechazada** (`clases_halladas:
+    pg_class`); y la via astuta —cuerpo de cadena leyendo la misma tabla, que evade
+    k3— **rechazada por k2**.
+
+66. **RONGOL no es una capa de cartera, y bloquea con n=6.** Corrijo mi lectura del
+    turno anterior. `rongol_veto` es una lista de bloqueo por patron historico,
+    pick a pick, sin acumulacion y **sin depender del orden**. Solo hay **3**
+    lecciones con bloqueo total activas: MLB/OU **3-3 en n=6**, MLB/ML 15-27 en
+    n=42, y MLB/ML **4-4 en n=8**. Dos de las tres son 50/50 exactos. Y el criterio
+    es ROI historico, justo lo que el mandato prohibe como base de sizing.
+    Atribucion exacta del delta V1 vs V2 sobre 15 picks: S1 (Kelly puro) $2,008.64,
+    S2 (+techo/piso) $1,985.29, S3 (+RONGOL) $644.85, S0 (V1 real) $156.01.
+    **RONGOL explica el 72.4% del delta** (-$1,340.44); el techo y el piso el 1.3%;
+    el haircut de V1 mas el tope de exposicion, el 26.4%.
+    Ademas: `exposicion_viva` **no es CDaR** — no hay variable aleatoria, horizonte,
+    distribucion, escenarios, correlacion ni nivel de confianza. Es un tope de
+    exposicion bruta del 20% con llenado greedy **por monto y no por ventaja**.
+    Y la exposicion viva real esta en los parlays: **$1,003.36 en 2 parlays contra
+    $156.01 en sencillas**, sin ningun control de dependencia entre patas.

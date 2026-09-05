@@ -2589,3 +2589,235 @@ migracion C -> D -> E y no adelantarlo.
 | 8 | ningun stake real cambio | **PASS** |
 | 9 | EXP_OFF sigue 0.50 | **PASS** |
 | 10 | comparacion V1 vs V2 reproducible | **PASS** (`shadow_v1_v2`) |
+
+---
+
+# FASE 2 / 2A.32-2A.39
+
+## 2A.32 — Pureza de `kelly_full_v2`: CORRECCION ACEPTADA Y PRUEBA REAL
+
+**Me equivoque.** Dije "Postgres le prohibe consultar tablas". Falso: `IMMUTABLE` es
+una **declaracion al planificador**, no una restriccion. Postgres permite que una
+funcion IMMUTABLE lea tablas; simplemente asume que no lo hace y cachea en
+consecuencia, produciendo resultados incorrectos. No era prueba de nada.
+
+Prueba verificada: la funcion tenia **cuerpo de cadena** (`prosqlbody IS NULL`), y
+con cuerpo de cadena Postgres **no registra ninguna dependencia**. El resultado de
+`pg_depend` habria sido "0 dependencias" para cualquier funcion, pura o no.
+
+**Correccion:** se reescribio con **cuerpo SQL estandar** (`RETURN ...`), que Postgres
+parsea al crear la funcion y cuyas referencias **si** quedan registradas.
+
+Dependencias reales tras el cambio:
+
+| clase | objeto | deptype |
+|---|---|---|
+| `pg_namespace` | `public` | n |
+
+Nada mas. Ni `pg_class`, ni `pg_proc`. Los operadores numericos no aparecen porque
+son objetos *pinned* del sistema, que `pg_depend` excluye por definicion. Cualquier
+referencia a una tabla, vista o funcion de usuario **si** apareceria.
+
+### `inv_kelly_puro_v2()`: siete comprobaciones
+
+| # | comprobacion | por que |
+|---|---|---|
+| k1 | existe exactamente una | evita overloads |
+| **k2** | **cuerpo parseado, no cadena** | **es la que hace valida a k3** |
+| **k3** | **0 dependencias a `pg_class` / `pg_proc`** | la prueba de que no lee tablas |
+| k4 | `provolatile = 'i'` | coherencia declarada |
+| k5 | no `SECURITY DEFINER` | no escala privilegios |
+| k6 | sin `proconfig` | no manipula `search_path` |
+| k7 | sin tokens de estado | `now(`, `random(`, `current_setting`, `nextval`, `clock_timestamp`, `current_user`, `txid_`, `gen_random`... |
+| k8 | dos argumentos | firma cerrada |
+
+Conectada como regla **I4** al event trigger `tg_candado_temporal`.
+
+### Prueba de que el candado funciona
+
+| intento | resultado |
+|---|---|
+| version legitima | **aceptada**, `ok = true` en las 8 |
+| impura con cuerpo estandar leyendo `calibracion_coef` | **RECHAZADA**: `clases_halladas: "pg_class"`, k3 = false |
+| impura con **cuerpo de cadena** leyendo la misma tabla | **RECHAZADA**: k3 daba falso PASS (0 deps) pero **k2 = false** lo bloqueo |
+
+El segundo intento es el importante: demuestra que el candado **no se deja enganar**
+por la via que evadiria a k3. Ambas mutaciones revertidas; la version legitima sigue
+en su sitio y `inv_kelly_puro_v2().ok = true`.
+
+## 2A.33/2A.34 — RONGOL: **no es una capa de cartera**
+
+Correccion a mi propio reporte anterior. Dije "9 de 13 divergencias son de la capa de
+cartera". **RONGOL no controla riesgo de cartera.** `rongol_veto` es una **lista de
+bloqueo por patron historico**, evaluada **pick a pick, sin estado y sin acumulacion**:
+
+| fuente | efecto | condicion |
+|---|---|---|
+| `lecciones_aprendidas` con `bloqueo_total` | **bloqueo total** | mercado equivalente + liga del deporte |
+| `rongol_hallazgos` severidad `fuga` | advertencia | la clave hace match con mercado o rango de momio |
+| `ligas_calidad` no apta | advertencia | por liga |
+
+| propiedad | respuesta |
+|---|---|
+| que riesgo controla | resultado historico del **patron**, no concentracion ni dependencia |
+| depende de P o EV | **no** |
+| mezcla deportes | `liga_es_de_deporte()` acota por deporte |
+| depende del orden | **no**: es por pick, sin acumulador. Permutar la entrada no cambia su salida |
+| puede llevar stake a 0 | **si**, total |
+| puede reducir parcialmente | **no**: es binario |
+| evidencia empirica | **ver abajo. Es el hallazgo grave** |
+| activo en dinero real | **si** |
+
+### La evidencia con la que bloquea
+
+Solo hay **3** lecciones con `bloqueo_total` activas:
+
+| liga / mercado | registro | muestra |
+|---|---|---|
+| MLB / OU | 3-3 | **n = 6** |
+| MLB / ML | 15-27 | n = 42 |
+| MLB / ML | 4-4 | **n = 8** |
+
+**Dos de las tres son 50/50 exactos, con seis y ocho observaciones.** Un 3-3 no es
+evidencia de nada, y esta apagando un mercado completo con dinero real.
+
+Y el criterio es **resultado historico (wins/losses/unidades)**, es decir ROI — lo
+mismo que el mandato prohibe expresamente como base para `confidence`, operando de
+facto como control de tamano.
+
+## 2A.35 — "CDaR": **el nombre no corresponde**
+
+`exposicion_viva` **no calcula Conditional Drawdown at Risk**. Es un **tope de
+exposicion bruta**:
+
+```
+expuesto = suma(apuesta) de picks pendientes + suma(apuesta) de parlays pendientes
+limite   = bankroll * exposicion_max_pct/100     (default 20%)
+```
+
+| pregunta del mandato | respuesta |
+|---|---|
+| variable aleatoria modelada | **ninguna** |
+| horizonte | ninguno |
+| distribucion | ninguna |
+| escenarios | ninguno |
+| correlaciones asumidas | **ninguna** (suma aritmetica) |
+| nivel de confianza | ninguno |
+| funcion de perdida | ninguna |
+| que significa el limite | "no mas del 20% del bankroll comprometido a la vez" |
+| recalculo | incremental, suma corrida en `reto_picks_hoy` |
+| apuestas correlacionadas | **no las distingue** |
+| partidos simultaneos | **no los distingue** |
+
+**Es una heuristica de exposicion bruta llamada CDaR.** Como heuristica es
+defendible y conservadora; como CDaR es un nombre incorrecto. No la reemplazo.
+
+La suma corrida de `reto_picks_hoy` **si depende del orden**: llena el presupuesto
+`order by monto_cand desc, arranca_en, espn_event_id, pick_desc`. Es **determinista**
+(el desempate es explicito) pero **greedy por monto, no por edge**: un pick de menor
+ventaja puede entrar y uno de mayor ventaja quedarse fuera si su stake es mayor. Eso
+no esta formalmente justificado en ningun lado.
+
+## 2A.36 — Correlacion y parlays
+
+| medicion | resultado |
+|---|---|
+| picks vivos / eventos distintos | **15 / 15** |
+| eventos con mas de un pick hoy | **0** |
+| **parlays vivos** | **2, con $1,003.36** |
+| picks individuales autorizados | $156.01 |
+
+**El parlay es la exposicion dominante: 6.4 veces el total de las sencillas.** Y es
+justo donde la dependencia conjunta es real y no esta modelada. `exposicion_viva`
+los suma al mismo saco que las sencillas, sin tratar la dependencia entre patas.
+
+Hoy no hay clusters de mismo evento entre las sencillas, asi que **no se puede medir
+correlacion con los datos vivos**: la muestra es cero. Lo que si esta medido es que
+la exposicion viva esta concentrada en parlays sin control de dependencia.
+
+## 2A.37 — Shadow apples-to-apples: **atribucion exacta**
+
+| escenario | n | total |
+|---|---|---|
+| **S0** V1 completo (produccion) | 15 | **$156.01** |
+| **S1** V2 Kelly fraccional puro, sin cap/piso/cartera | 15 | **$2,008.64** |
+| **S2** S1 + techo 5% + piso $20 | 15 | **$1,985.29** |
+| **S3** S2 + RONGOL | 15 | **$644.85** |
+
+Atribucion del delta de **-$1,852.63** entre S1 y S0:
+
+| componente | efecto | % del delta |
+|---|---|---|
+| techo + piso | **-$23.35** | 1.3% |
+| **RONGOL** | **-$1,340.44** | **72.4%** |
+| residual: haircut de V1 + tope de exposicion | -$488.84 | 26.4% |
+
+**El 72% de la diferencia entre V1 y V2 es RONGOL** — un blocklist cuya regla mas
+activa tiene **seis observaciones**. El haircut probabilistico de V1, que era lo que
+yo suponia dominante, explica como mucho el 26%, y parte de eso es el tope de
+exposicion.
+
+Esto corrige mi conclusion del turno anterior: no es cierto que "V1 esta conteniendo
+exposicion por su capa de cartera". **V1 contiene exposicion sobre todo por una lista
+de bloqueo con n=6.**
+
+## 2A.38 — Confidence: evidencia, no formula
+
+Los Skill Score (0.1536 futbol O/U, 0.0093 MLB ML, -0.0126 BTTS) **no se convierten
+en multiplicadores**. Describen desempeno predictivo relativo, no una funcion
+economica de exposicion.
+
+Lo que falta antes de proponer forma funcional:
+
+| componente | evidencia disponible | lo que falta |
+|---|---|---|
+| `c_skill` | Skill Score puntual por deporte/mercado | **intervalo de confianza del propio Skill Score**, y que sea OOS de la misma version/poblacion |
+| `c_muestra` | N del universo | relacion demostrada entre N y error de estimacion |
+| `c_estabilidad` | rango del sesgo entre ventanas (MLB 2.85 pp, futbol 3.1 pp) | mas ventanas; 3-4 no bastan para una dispersion |
+| `c_frescura` | dias desde el ultimo dato (futbol 10, MLB 6) | relacion demostrada entre antiguedad y degradacion |
+
+**`confidence = 1.0` con `PENDIENTE_DE_VALIDACION` permanece en shadow.** Queda
+registrado que esta **prohibido** calibrar `confidence` para reproducir los $156
+actuales o para maximizar ROI historico.
+
+## 2A.39 — Riesgo individual contra riesgo de cartera
+
+| capa | que controla | quien lo hace hoy | estado |
+|---|---|---|---|
+| **confidence** | incertidumbre de la estimacion **individual** | nadie correctamente: V1 lo hace reescribiendo P | por disenar |
+| **portfolio_multiplier** | concentracion y dependencia **conjunta** | `exposicion_viva` (bruta, sin correlacion) | heuristica, sin modelo |
+| **blocklist** | patrones con historial perdedor | RONGOL | **evidencia insuficiente (n=6)** |
+
+Queda escrito: **RONGOL no es cartera y no puede contarse como tal**; `confidence` no
+puede usarse para tapar la falta de capa de cartera; y la capa de cartera no puede
+usarse para corregir una probabilidad mala.
+
+## Componentes de V1 que pueden portarse tal cual
+
+1. `bankroll_disponible()` — fuente unica de bankroll, ya corregida en #142/#192.
+2. Techo por porcentaje (`stake_max_pct`) — cap economico simple y solo aprieta.
+3. Piso (`stake_min`) — decision de producto, no de modelo.
+4. `exposicion_max_pct` como **tope de exposicion bruta**, renombrado honestamente.
+5. Los desempates explicitos del orden (`espn_event_id, pick_desc`) — evitan no determinismo.
+6. `mercados_sin_modelo` / `sin_modelo_independiente` — apagado por ausencia de motor, no por desempeno.
+
+## Componentes que deben redisenarse
+
+1. El sesgo aditivo por decil dentro de `kelly_stake` (invalidado OOS).
+2. `zona_realidad` como bandeador para dinero.
+3. Wilson y Beta como reescritura de P (pertenecen a `confidence`, no a la probabilidad).
+4. **RONGOL**: el mecanismo es razonable, la evidencia no. Necesita piso de muestra.
+5. El nombre "CDaR": o se implementa un CDaR real o se llama tope de exposicion.
+6. La asignacion greedy por monto: debe ordenarse por ventaja, no por tamano.
+7. El tratamiento de parlays dentro del tope de exposicion.
+
+## Riesgos residuales antes de migrar una sola superficie
+
+1. **`confidence` sin validar.** Migrar sizing hoy multiplicaria la exposicion.
+2. **Correlacion sin medir.** Hoy hay 0 clusters entre sencillas, o sea que la muestra
+   para estimarla es cero. Los $1,003 en parlays son dependencia real no modelada.
+3. **RONGOL con n=6.** Si se porta tal cual, se hereda el defecto; si se quita sin
+   reemplazo, la exposicion sube 72%.
+4. **El universo de MLB para O/U y Run Line** (`badrino_backtest`, 516+516) sigue sin medir.
+5. La comparacion shadow es de **un solo dia**, 15 picks. No permite concluir nada
+   sobre estabilidad.
