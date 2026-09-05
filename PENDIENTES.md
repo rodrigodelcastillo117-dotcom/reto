@@ -3542,3 +3542,77 @@ Mientras tanto, O/U se queda en modo proteccion/abstencion, como decidio el audi
     produce este modelo?
 58. **La isotonica necesita piso de bloque.** PAVA sin restriccion genera bloques de
     peso 1 con valor 0 o 1, que son probabilidades imposibles y destruyen el Log Loss.
+
+---
+
+# #212 AUDITORIA DE ORIGEN DE LA PROBABILIDAD (O/U) — el sistema ya lo sabia
+
+## El motor de O/U es UNO SOLO, y es el del LLM
+| fuente | n | % | son 0.55 | valores distintos |
+|---|---|---|---|---|
+| **ai_pro** | **1,306** | **95.6%** | 874 (66.9%) | 148 |
+| oraculo_premium | 28 | 2.0% | 0 | 22 |
+| oraculo | 24 | 1.8% | 2 | 15 |
+| oraculo_prob | 5 | 0.4% | 0 | 5 |
+| ai_parlay | 3 | 0.2% | 0 | 2 |
+
+## `features_json` YA trae la clasificacion que pedia el auditor
+Tiene `prob_source`, `prob_placeholder` y `prob_placeholder_motivo`. La procedencia
+nunca estuvo perdida: estaba escrita y nadie la leia.
+
+| prob_source | placeholder | n | son 0.55 | valores distintos | acierto |
+|---|---|---|---|---|---|
+| Poisson/ESPN | — | 918 | **649** | 103 | 0.4477 |
+| Poisson/ESPN | **true** | 225 | 225 | **1** | 0.4889 |
+| H2H | — | 95 | 0 | 27 | 0.4842 |
+| (sin prob_source) | — | 71 | 2 | 49 | 0.5070 |
+| Poisson | — | 57 | 0 | 23 | 0.4386 |
+
+El motivo declarado en las 225:
+```
+"prob 0.55 hardcodeada por refill <2 picks, no es prediccion"
+```
+
+## EL HALLAZGO: la etiqueta honesta cubre 225 de 874 (25.7%)
+Las otras **649 constantes van etiquetadas `Poisson/ESPN` SIN marca de placeholder**:
+disfrazadas de prediccion del motor. El problema no es el 0.55 -- el sistema sabe
+declararlo. El problema es que solo lo declara una de cada cuatro veces.
+
+## Experimento repetido separando A) todo y B) solo lo calculado por partido
+
+| clase | particion | n | prob media | tasa real | exceso | ventaja vs base |
+|---|---|---|---|---|---|---|
+| 1. calculada por partido | train | 303 | 0.5699 | 0.5017 | +6.8 pp | −0.0133 |
+| **1. calculada por partido** | **test** | **182** | 0.5333 | 0.4615 | **+7.2 pp** | **−0.0068** |
+| 2. placeholder declarado | train | 225 | 0.5500 | 0.4889 | +6.1 pp | −0.0037 |
+| 3. constante SIN declarar | train | 421 | 0.5500 | 0.4371 | +11.3 pp | −0.0128 |
+| **3. constante SIN declarar** | **test** | **230** | 0.5500 | 0.4174 | **+13.3 pp** | **−0.0176** |
+
+**Aislar la senal real NO la rescata.** La clase 1 sigue inflada ~7 pp y sigue sin
+ganarle a la tasa base. La constante sin declarar es la que mas dano hace (+13.3 pp).
+
+Nota: `placeholder declarado` no aparece en test. O dejo de etiquetarse, o esos picks
+son todos anteriores al 26-jul. Pendiente de aclarar.
+
+## ERROR PROPIO, CAZADO Y RETIRADO
+Reporte correlaciones de 0.091 y −0.127 para las clases 2 y 3. **Son basura numerica:**
+`corr()` sobre una variable de varianza cero. Verificado: 651 filas, **1 solo valor
+exacto, stddev = 0.0000000000**. Retiradas. Ninguna conclusion se apoya en ellas.
+
+## Rastreo del 0.55: NO esta en SQL
+Los 12 aciertos de `0.55` en funciones SQL son todos ajenos (umbrales de similitud,
+exponente de abridor en `predecir_mlb`, clasificacion de favorito). **El 0.55 de O/U
+vive en la ruta `ai_pro` de edge functions**, y el propio motivo nombra el mecanismo:
+**refill cuando hay menos de 2 picks**. Ahi es donde hay que ir.
+
+## Lecciones nuevas
+59. **La procedencia ya estaba escrita; nadie la leia.** `prob_source` y
+    `prob_placeholder` existian desde antes. Dos experimentos completos de calibracion
+    se hicieron sin abrir `features_json`. Antes de modelar una variable, leer los
+    metadatos que la acompanan.
+60. **Una etiqueta honesta que solo cubre el 26% de los casos es peor que ninguna**,
+    porque crea la ilusion de que lo NO etiquetado es limpio. Si un sistema sabe
+    marcar un placeholder, tiene que marcarlos TODOS o la marca miente por omision.
+61. **`corr()` sobre una constante devuelve ruido, no NULL.** Con varianza cero el
+    resultado es artefacto de redondeo en punto flotante. Verificar `stddev` antes de
+    reportar cualquier correlacion.
