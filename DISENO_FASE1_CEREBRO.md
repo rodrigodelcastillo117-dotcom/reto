@@ -2821,3 +2821,299 @@ usarse para corregir una probabilidad mala.
 4. **El universo de MLB para O/U y Run Line** (`badrino_backtest`, 516+516) sigue sin medir.
 5. La comparacion shadow es de **un solo dia**, 15 picks. No permite concluir nada
    sobre estabilidad.
+
+---
+
+# FASE 2 — BLOQUE 2A.40–2A.50: CONTABILIDAD REAL DEL RIESGO
+*(5-sep-2026. Nada de produccion fue modificado. Todos los INSERT de prueba se
+revirtieron por transaccion: base y estado final identicos en $1,003.36.)*
+
+## 2A.40 — Contabilidad total de exposicion
+
+**Respuesta explicita a la pregunta: SI, los $1,003.36 de parlays cuentan dentro
+del limite del 20%. La cadena exacta es:**
+
+```
+exposicion_viva(apodo)
+  ├─ v_bankroll  := stake_techo(apodo,false)->>'bankroll'
+  │                   └─ bankroll_disponible(apodo)
+  │                        = get_bankroll_actual(apodo)      -- $7,003.36
+  │                        - bankroll_expuesto(apodo)        -- $1,003.36
+  │                        = $6,000.00
+  ├─ v_limite_pct := config_staking.exposicion_max_pct       -- 20.0
+  ├─ v_picks      := sum(picks.apuesta)   pendientes, no prueba   -- $0.00
+  ├─ v_parlays    := sum(parlays.apuesta) pendientes              -- $1,003.36
+  └─ v_expuesto   := v_picks + v_parlays                          -- $1,003.36
+     limite_monto := 6000 * 0.20 = $1,200.00
+     disponible   := 1200 - 1003.36 = $196.64
+```
+
+`bankroll_expuesto` tambien suma parlays (con filtro `created_at >= reto_desde`,
+que hoy los incluye: reto desde 2026-09-02, parlays del 2026-09-05).
+
+**Pero el limite no es del 20%.** El denominador ya trae restada la exposicion, asi
+que el limite se mueve hacia abajo conforme sube la exposicion. Punto fijo:
+
+```
+E >= 0.20 * (C - E)   <=>   1.2E >= 0.20C   <=>   E >= C/6 = 0.166667*C
+```
+
+Con C = $7,003.36 el tope efectivo es **$1,167.23 (16.667%)**, no $1,400.67 (20%).
+Margen real restante: **$163.87**. `exposicion_viva` reporta **$196.64**: sobrestima
+un 20%. Confirmado contra los datos del test adversarial (el cruce cae exactamente
+en E = C/6).
+
+Ademas `expuesto_pct` = 16.7% es E/D, no E/C (14.33%). La pantalla sugiere holgura
+donde queda el 14% de la capacidad real.
+
+### Exposicion por evento / equipo / deporte
+
+| evento | liga | apuestas que lo tocan | stake prorrateado | max_loss expuesta |
+|---|---|---|---|---|
+| Inter Miami - Atlanta United | MLS | 1 | $100.67 | $503.36 |
+| Brighton - Leeds | Premier | 1 | $100.67 | $503.36 |
+| AGF - Silkeborg | Danish | 1 | $100.67 | $503.36 |
+| Tigres - Necaxa | Liga MX | 1 | $100.67 | $503.36 |
+| Leverkusen - Union Berlin | Bundesliga | 1 | $100.67 | $503.36 |
+| Athletic - Atletico Madrid | La Liga | 1 | $166.67 | $500.00 |
+| Villarreal - Deportivo | La Liga | 1 | $166.67 | $500.00 |
+| Rayo - Racing Santander | La Liga | 1 | $166.67 | $500.00 |
+
+Deporte: **8 de 8 patas son futbol (100%)**. Lado: **7 de 8 al equipo LOCAL**.
+Las 2 sencillas recomendadas hoy tambien son "Gana local". El libro entero apuesta
+al mismo factor latente y nada lo mide.
+
+## 2A.41 — Anatomia de cada parlay
+
+**`b848fb29` — $500, momio 7.5048 (= 2.36 x 2.12 x 1.50, producto exacto)**
+| pata | liga | momio | prob implicita |
+|---|---|---|---|
+| Atletico Madrid (visitante) | La Liga | 2.36 | 42.4% |
+| Rayo Vallecano (local) | La Liga | 2.12 | 47.2% |
+| Villarreal (local) | La Liga | 1.50 | 66.7% |
+
+`ai_prob_combinada` 7.22% · `ai_ev_pct` **-45.80%** · calificacion **D** · ambar.
+Break-even 13.32%. Sencilla equivalente: cada pata a su momio con Kelly habria
+recibido a lo sumo $300 (5%); aqui las tres comparten un solo boleto de $500.
+
+**`6c033d7d` — $503.36, momio 9.7331 (= 1.599 x 2.08 x 1.478 x 1.50 x 1.32)**
+| pata | liga | momio | prob implicita |
+|---|---|---|---|
+| Tigres UANL (local) | Liga MX | 1.599 | 62.5% |
+| Brighton (local) | Premier | 2.080 | 48.1% |
+| Bayer Leverkusen (local) | Bundesliga | 1.478 | 67.7% |
+| AGF Aarhus (local) | Danish | 1.500 | 66.7% |
+| Inter Miami (local) | MLS | 1.320 | 75.8% |
+
+`ai_prob_combinada` 5.89% · `ai_ev_pct` **-42.70%** · **D** · ambar.
+Break-even 10.27%.
+
+**Ninguna pata paso por el motor.** `tg_autoridad_stake` salta `es_pata_parlay`, y
+el parlay entra como objeto unico contra el techo del 15%. Ni Kelly, ni RONGOL, ni
+la lista de abstencion, ni la puerta de calibracion ven estas 8 selecciones.
+**Cero funciones SQL escriben `ai_prob_combinada`**: el numero lo produjo un LLM.
+
+## 2A.42 — Probabilidad conjunta: CORRELACION_NO_MODELADA
+
+Las tres cifras que hoy conviven para el mismo parlay `b848fb29`:
+- LLM (`ai_prob_combinada`): **7.22%** → EV -45.8%
+- `parlay_ev_real`: sin pares del mismo evento devuelve **independencia exacta**
+- `simular_parlay` con rho=0.12: **12.11%** → EV -9.1%
+
+`simular_parlay` no usa la probabilidad del modelo: parte de `1/momio` (precio con
+jugo) dividido entre un overround **asumido** de 1.05. Es una calculadora de jugo
+compuesto, no de valor esperado.
+
+Barrido de rho (40,000 sims, 5 repeticiones, CTE MATERIALIZED):
+
+| rho | prob $500 | EV $500 | prob $503.36 | EV $503.36 |
+|---|---|---|---|---|
+| 0.00 | 11.60% | -12.95% | 8.00% | -22.19% |
+| 0.05 | 11.61% | -12.88% | 8.15% | -20.68% |
+| 0.12 (produccion) | 12.11% | **-9.13%** | 8.60% | **-16.33%** |
+| 0.25 | 13.73% | **+3.05%** | 11.48% | **+11.75%** |
+| 0.40 | 16.96% | +27.26% | 16.17% | +57.40% |
+
+**El signo del veredicto lo decide una constante que nadie midio.** La unica tabla
+de correlacion medida (`correlacion_mercados`, 20 filas, n=1,860) es 100% de pares
+intra-partido. Cero evidencia sobre dependencia entre eventos distintos.
+
+**Conclusion obligatoria: `CORRELACION_NO_MODELADA`.** No se convierte la ausencia
+de evidencia en independencia, ni se adopta rho=0.12 como si estuviera medido.
+
+## 2A.43 — Cadena de stake de parlays + prueba adversarial
+
+Cadena: cliente → `INSERT parlays` → `tg_autoridad_stake` → `stake_techo(apodo,
+es_reto_13m)` → 15% del disponible (RETO) o 5% (general). Fin. **No hay segundo
+control.**
+
+Los dos parlays vivos pasaron sin firma porque 15% de $7,003.36 = $1,050.50 y 15%
+de $6,503.36 = $975.50; $500 y $503.36 caben. Por eso `stake_techo_al_guardar` y
+`stake_sobre_techo_razon` estan NULL.
+
+Prueba adversarial (INSERT reales, revertidos):
+
+| caso | resultado | exposicion despues |
+|---|---|---|
+| 1. Sencilla $93.25 (MLS 761781) | **ACEPTADA** | 18.6% |
+| 2. Parlay $500 con esa MISMA pata | **ACEPTADO** | **27.3%**, limite_alcanzado=true |
+| 3. Sencilla $93.25 + parlay $500 sobre el mismo evento | **ACEPTADOS** | **29.5%** |
+| 4. Dos parlays mas ($500 + $400) | **ACEPTADOS** | **37.3%** |
+| 5. Parlay $1,200 | **RECHAZADO** (techo $900 = 15%) | — |
+
+**El limite de cartera del 20% es informativo. Solo el techo por apuesta bloquea.**
+
+## 2A.44 — Duplicacion de riesgo
+
+Metricas definidas (no existen en produccion):
+- `stake_equivalente_por_evento` = sencillas sobre el evento + `apuesta/n_patas`
+  de cada parlay que lo contiene.
+- `max_loss_expuesta_por_evento` = sencillas + **la apuesta completa** de cada
+  parlay que lo contiene (una pata perdida mata el boleto entero).
+
+Hoy: 8 eventos, 1 apuesta cada uno, **duplicacion cero**. Pero
+`sum(max_loss) = $4,016.80` sobre $1,003.36 realmente en riesgo, y cada partido
+individual carga entre 7.1% y 8.4% del bankroll contable como gatillo propio,
+contra un techo de 5% para una sencilla sobre ese mismo partido.
+
+El CASO 3 demuestra que la duplicacion real (sencilla + pata, mismo evento) se
+acepta sin que nada la registre.
+
+## 2A.45 / 2A.46 — RONGOL: validez, incertidumbre y walk-forward
+
+Las 3 reglas activas con `bloqueo_total` (Wilson 95% sobre la tasa de acierto):
+
+| regla | n | registro | ROI | Wilson 95% WR |
+|---|---|---|---|---|
+| MLB · OU · 1.01-1.50 | 6 | 3-3 | -38.3% | [18.8%, 81.2%] |
+| MLB · ML · 1.01-1.50 | 8 | 4-4 | -33.1% | [21.5%, 78.5%] |
+| MLB · ML · 1.50-1.80 | 42 | 15-27 | -41.3% | [23.0%, 50.8%] |
+
+Los intervalos de las dos primeras cubren practicamente todo el espacio: no
+distinguen una moneda de un desastre.
+
+**Walk-forward (corte por mediana temporal dentro de cada celda):**
+
+| celda | n train | ROI train | n test | ROI test | WR test |
+|---|---|---|---|---|---|
+| ML 1.50-1.80 | 21 | -37.7% | 21 | **-44.8%** | 33.3% |
+| ML 1.01-1.50 | 4 | -63.8% | 4 | -2.5% | 75.0% |
+| OU 1.01-1.50 | 3 | +23.3% | 3 | -100.0% | 0.0% |
+
+**Solo ML 1.50-1.80 sobrevive fuera de muestra.**
+
+**Defecto estructural (P0): el veto ignora el rango de momio.** En `rongol_veto`,
+`v_rango` se calcula y nunca se usa; `la.rango_momio` no aparece en el WHERE.
+Y aunque se usara, los buckets del veto y los de `rango_momio()` son vocabularios
+distintos. El filtro de liga tambien es un no-op logico.
+
+Consecuencia medida (ai_pro, MLB, ML, 120 dias):
+
+| rango | n | ROI | IC95 |
+|---|---|---|---|
+| 1.01-1.50 | 8 | -33.1% | [-83.0, +16.8] |
+| 1.50-1.80 | 42 | -41.3% | [-65.4, -17.1] |
+| 1.80-2.20 | 350 | -4.5% | [-15.2, +6.1] |
+| 2.20-3.00 | 504 | **+10.0%** | [-0.9, +20.9] |
+| 3.00-5.00 | 118 | **+35.4%** | [+5.7, +65.2] |
+
+Los 10 picks de MLB bloqueados hoy (momios 1.893 a 3.02) **no caen en ningun rango
+medido**: 3 en 1.80-2.20, 6 en 2.20-3.00, 1 en 3.00-5.00.
+
+Ademas `extraer_lecciones_de_perdidas` **nunca escribe `bloqueo_total`**: las tres
+marcas son manuales y sobreviven cada reconstruccion, sobre una ventana movil de
+120 dias de la misma fuente que despues se bloquea (in-sample por construccion).
+
+**Clasificacion: `LEGACY_GUARD_NO_VALIDADO`**, con la unica excepcion de la celda
+ML 1.50-1.80.
+
+## 2A.47 — Orden greedy: sensibilidad a la permutacion
+
+`reto_picks_hoy` no llena: **corta por prefijo**. Ordena por `monto_cand desc` y
+descarta todo lo que cumpla `expuesto + acumulado > limite_monto`; si el primero
+no cabe, mueren todos los siguientes.
+
+Conjunto real de hoy (9 candidatos con Kelly > 0), presupuesto $196.64:
+
+| orden | financiados | monto | EV capturado |
+|---|---|---|---|
+| **A. monto desc (PRODUCCION)** | **0** | **$0.00** | **$0.00** |
+| B. monto asc | 3 | $187.99 | +$11.06 |
+| C. EV desc | 0 | $0.00 | $0.00 |
+| D. EV asc | 3 | $187.99 | +$11.06 |
+| E. hora de arranque | 1 | $177.59 | **+$32.16** |
+| F. prob que decide desc | 1 | $104.68 | +$8.98 |
+
+Optimo de mochila: **+$35.71**. La produccion captura **$0.00**.
+Hoy el defecto esta tapado: RONGOL borra 7 de 9 y los 2 restantes suman $156.01.
+
+## 2A.48 — Nomenclatura correcta
+
+- **`TOPE_EXPOSICION_BRUTA`** — suma de stakes vivos sobre el bankroll **contable**.
+  Es lo que `exposicion_viva` intenta hacer, con el denominador corregido.
+- **`EXPOSICION_POR_EVENTO`** — `max_loss_expuesta_por_evento`. No existe hoy.
+- **`CDaR`** — reservado. No se usa mientras no haya distribucion, horizonte,
+  escenarios y nivel de confianza.
+
+No se renombra nada en produccion en este bloque.
+
+## 2A.49 — Atribucion S0–S5
+
+Bankroll disponible $6,000. 16 picks candidatos.
+
+| escalon | monto | n | delta | % del recorte |
+|---|---|---|---|---|
+| S1 Kelly fraccional 0.25 sobre p_raw | $2,055.51 | 16 | — | — |
+| S2 + techo 5% + piso $20 | $2,032.15 | 16 | -$23.36 | 1.2% |
+| S3 + recorte V1 (sesgo + Wilson) | $1,161.35 | 9 | **-$870.80** | **45.9%** |
+| S4 + RONGOL | $156.01 | 2 | **-$1,005.34** | **52.9%** |
+| S5 + tope de exposicion (PRODUCCION) | $156.01 | 2 | -$0.00 | 0.0% |
+
+Reduccion total **-$1,899.50 (-92.4%)**.
+
+**Correccion a mi atribucion anterior**: antes reporte RONGOL = 72.4% del delta,
+con el recorte V1 escondido en el residual. Separados, **el recorte V1 (45.9%) y
+RONGOL (52.9%) pesan casi lo mismo**, y el tope de exposicion no aporta nada hoy.
+
+**S_parlays = $1,003.36 y no pasa por ninguno de esos escalones.** Es 6.4 veces
+toda la autorizacion de sencillas.
+
+## 2A.50 — Clasificacion de cada guarda
+
+| guarda | clasificacion | fundamento |
+|---|---|---|
+| `stake_techo` / `tg_autoridad_stake` (techo por apuesta) | **B — conservar, corregir** | Es el unico candado que realmente bloquea (CASO 5). Corregir: 15% por apuesta contra un tope de cartera de 16.667% permite 1.1 apuestas. |
+| `exposicion_viva` (tope de cartera) | **B — conservar, corregir** | Denominador circular (16.667% real, no 20%) y `disponible` sobrestimado 20%. Ademas no es candado: hay que darle un trigger. |
+| Llenado greedy de `reto_picks_hoy` | **C — reemplazar** | Corte por prefijo que captura $0 de $35.71 disponibles. Reemplazar por llenado real ordenado por ventaja. |
+| RONGOL celda ML 1.50-1.80 (n=42) | **B — conservar, corregir** | Sobrevive walk-forward (-44.8% OOS). Corregir el alcance para que aplique SOLO a su rango de momio. |
+| RONGOL celdas n=6 y n=8 | **D — retirar** | No sobreviven walk-forward; Wilson cubre casi todo el espacio. |
+| `rongol_veto` (mecanica de alcance) | **C — reemplazar** | `rango_momio` ignorado, buckets incompatibles, filtro de liga no-op. |
+| Recorte V1 (sesgo + Wilson en `kelly_stake`) | **A — portar tal cual (por ahora)** | Es el 45.9% del recorte y ya esta medido; su reemplazo es trabajo de 2B, no de este bloque. |
+| `simular_parlay` / `evaluar_parlay` (rho=0.12) | **D — retirar de toda decision de dinero** | Constante no medida que decide el signo del EV; parte del precio de la casa, no del modelo. |
+| `parlay_ev_real` + `correlacion_mercados` | **B — conservar, acotar** | Medido y correcto para pares intra-partido. Debe declarar explicitamente que no modela dependencia entre eventos. |
+| `ai_prob_combinada` / `ai_ev_pct` (LLM) | **D — retirar de toda decision de dinero** | Sin escritor SQL; numero de un LLM que ya convive con otras dos estimaciones distintas. |
+
+**No se aplica ninguna de estas decisiones en este bloque.** El mandato prohibe
+retirar RONGOL, migrar V2 y tocar produccion.
+
+## Riesgos que bloquean la migracion de V2
+
+1. **La capa de cartera no existe como candado.** Migrar V2 sin cerrar el hueco del
+   CASO 2/4 subiria el tamano individual dentro de un perimetro que no se cumple.
+2. **`CORRELACION_NO_MODELADA`.** V2 dimensiona apuestas individuales; el 100% de
+   la exposicion viva es un producto cuya dependencia conjunta no esta medida.
+3. **RONGOL sostiene el 52.9% del recorte actual y esta mal dirigido.** Quitarlo sin
+   reemplazo triplica la exposicion; dejarlo sigue bloqueando el unico tramo con
+   ROI positivo significativo.
+4. **El asignador de cartera captura $0 de EV cuando el presupuesto aprieta.**
+5. **El techo por apuesta del RETO (15%) es incompatible con el tope de cartera
+   (16.667%)**: una sola apuesta puede agotar el 90% de la cartera.
+
+## Metodo: dos errores propios corregidos en este bloque
+
+1. **Contrapuse "$156.01 en sencillas" contra "$1,003.36 en parlays"** como si fueran
+   la misma clase de dinero. `picks_vivos = 0`: los $156.01 son una recomendacion,
+   no exposicion.
+2. **El primer barrido de rho salio internamente incoherente** (tres promedios
+   distintos para el mismo grupo) porque `random()` dentro de una subconsulta
+   escalar se re-evalua por cada agregado. Repetido con `WITH ... AS MATERIALIZED`.
