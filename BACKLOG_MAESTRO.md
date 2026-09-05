@@ -1574,3 +1574,86 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
      CHECK y 0 filas.
      **#251 CLOSED / PASS sin asterisco**: same transaction, same statement/multi-row,
      sesiones concurrentes, ledger override legitimo y scan single-use, todo a la vez.
+
+122. **#247b CONTRAFACTUAL DE RONGOL — MEDIDO, SIN DESPLEGAR NADA.**
+     Regla simulada: alcance por deporte + mercado + liga + `rango_momio`;
+     `bloqueo_total` solo para la leccion **12** (MLB / Moneyline / 1.50-1.80 / n=42,
+     OOS train -37.7% -> test -44.8%); las **11** y **13** quedan activas como
+     advertencia; **cero bloqueos nuevos** para 1.80-2.20 ni otros tramos.
+     **Universo:** `v_pick_canonico` 277 filas, **15 con `es_pick`**.
+     **Agregado:**
+     | metrica | valor |
+     |---|---|
+     | filas bloqueadas hoy | 164 |
+     | de esas, `es_pick` | **13** |
+     | seguirian bloqueadas (filas) | 16 |
+     | de esas, `es_pick` | **0** |
+     | `es_pick` que se desbloquean | **13** |
+     | bloqueadas hoy sin momio (grupo C) | 64 (0 `es_pick`) |
+     Nota: el 5-sep a las 16:5x conte 9; ahora son 13. La cartelera se refresco
+     (nuevos juegos y precios). El numero vigente es 13.
+     **GRUPO A — SIGUEN BLOQUEADOS: 0 picks.** Las 16 filas que conservan el bloqueo
+     son MLB / Moneyline / 1.50-1.80, y **ninguna** es `es_pick` hoy.
+     **GRUPO B — SE DESBLOQUEAN: 13, todos MLB Moneyline.** Todos bloqueados hoy por
+     `13:ML/MLB/1.01-1.50 n=8 + 12:ML/MLB/1.50-1.80 n=42`, ninguna de las dos medida
+     en su tramo:
+     | momio | tramo | pick | P_V1 | EV mostrado | edge |
+     |---|---|---|---|---|---|
+     | 1.877 | 1.80-2.20 | ML Atlanta Braves | 54.9% | +3.1% | 1.6 |
+     | 1.909 | 1.80-2.20 | ML Kansas City Royals | 54.3% | +3.7% | 1.9 |
+     | 2.040 | 1.80-2.20 | ML Miami Marlins | 50.5% | +3.0% | 1.5 |
+     | 2.090 | 1.80-2.20 | ML New York Yankees | 54.7% | +14.3% | 6.9 |
+     | 2.130 | 1.80-2.20 | ML Baltimore Orioles | 48.4% | +3.1% | 1.5 |
+     | 2.340 | 2.20-3.00 | ML Detroit Tigers | 47.7% | +11.6% | 5.0 |
+     | 2.350 | 2.20-3.00 | ML Atlanta Braves | 52.2% | +22.7% | 9.6 |
+     | 2.380 | 2.20-3.00 | ML Detroit Tigers | 47.3% (P_RAW 38.5) | +12.6% | 5.3 |
+     | 2.380 | 2.20-3.00 | ML San Francisco Giants | 46.1% | +9.7% | 4.1 |
+     | 2.550 | 2.20-3.00 | ML Athletics | 48.7% | +24.2% | 9.5 |
+     | 2.570 | 2.20-3.00 | ML Los Angeles Angels | 41.7% | +7.2% | 2.8 |
+     | 2.830 | 2.20-3.00 | ML Washington Nationals | 41.4% (P_RAW 39.4) | +17.2% | 6.1 |
+     | 3.010 | 3.00-5.00 | ML Athletics | 45.2% | +36.1% | 12.0 |
+     **P_RAW solo existe en 2 de 13**: `picks_recomendados_hoy.probabilidad_real` viene
+     NULL en 11. Donde si existe, la brecha P_RAW -> P_V1 es grande
+     (38.5 -> 47.3 y 39.4 -> 41.4): es la recalibracion de MLB. **No lo fuerzo a B**,
+     queda anotado como dato incompleto.
+     **GRUPO C — AMBIGUOS: 64 filas bloqueadas sin momio** (32 ML + 32 OU de MLB),
+     `rango_momio` indeterminable. **Ninguna es `es_pick`**, asi que no hay dinero en
+     juego, pero con la regla corregida un `rango_lec` NULL **no** casa con
+     `1.50-1.80` y quedarian permitidas. Es una decision de diseno pendiente: sin
+     precio no se puede ubicar el tramo.
+     **IMPACTO ECONOMICO: $0. Y la razon importa.**
+     `stake_techo('rodelcast')` devuelve `ok:false, techo_monto:0` y `kelly_stake`
+     devuelve `"Usuario sin bankroll configurado"`, **porque `capital_libre = 0`**: la
+     cartera ya esta al 100% ($4,322.67 sobre un limite de $864.49).
+     | metrica | valor |
+     |---|---|
+     | stake autorizado hoy (13 picks) | **$0.00** |
+     | stake pre-RONGOL (Kelly) | **$0.00** (Kelly se niega) |
+     | stake contrafactual tras corregir | **$0.00** |
+     | **incremento de autorizacion** | **$0.00** |
+     **Corregir RONGOL hoy no autoriza un solo peso.** El cap agregado del 20% muerde
+     antes que RONGOL.
+     **Escenario de exposicion** (contrafactual puro, cartera vacia, techo individual
+     5% del capital libre que se encoge en cada apuesta):
+     | # | stake max | exposicion acumulada | cabe en el 20% ($864.49) |
+     |---|---|---|---|
+     | 1 | 216.12 | 216.12 | si |
+     | 2 | 205.32 | 421.44 | si |
+     | 3 | 195.05 | 616.49 | si |
+     | 4 | 185.30 | 801.79 | si |
+     | 5 | 176.03 | 977.82 | **NO** |
+     **Solo 4 de los 13 caben**; del 5º en adelante choca con el cap agregado.
+     **PRUEBAS DE AISLAMIENTO (predicado corregido, casos sinteticos):**
+     | caso | hoy | corregido |
+     |---|---|---|
+     | soccer ML 1.65 | ok | permitido |
+     | control MLB ML 1.65 | bloqueado (13+12) | **BLOQUEADO por 12** |
+     | MLB **O/U** 1.65 | bloqueado (11) | **permitido** — ML no bloquea O/U |
+     | MLB ML **1.95** | bloqueado (13+12) | **permitido** — 1.50-1.80 no bloquea 1.80-2.20 |
+     | MLB ML 1.55 | bloqueado | **BLOQUEADO por 12** — la 12 no se toca |
+     | MLB ML 1.30 (tramo de la 13) | bloqueado | permitido |
+     | MLB O/U 1.30 (tramo de la 11) | bloqueado | permitido |
+     Ojo con las dos ultimas: degradar 11 y 13 a advertencia **tambien abre el tramo
+     1.01-1.50**. Hoy son 2 filas, 0 `es_pick`, pero es consecuencia de la decision.
+     **NO se modifico nada:** `rongol_veto`, `lecciones_aprendidas`, Kelly, caps, V2,
+     `EXP_OFF` y produccion intactos. Solo medicion.
