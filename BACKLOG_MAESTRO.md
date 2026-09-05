@@ -2994,3 +2994,170 @@ formalmente abiertos** y solo se cierran empezando a persistir el precio del
 mercado junto a cada fila de backtest desde hoy.
 
 **FASE A COMPLETA. No se avanza a FASE B sin autorizacion.**
+
+---
+
+## #261 FASE B — MLB: ninguna calibracion mejora P_RAW, ni la de futbol ni la propia
+
+Laboratorio `public.lab_bloque_b_mlb`. **Cero cambios en produccion.**
+
+### Poblacion (verificada antes de medir)
+
+`bt_mlb_ml`: **1,056 filas, 1,056 eventos distintos** (una observacion por juego,
+lado local), **2026-05-20 a 2026-08-30**, 93 dias. **0 sin resultado, 0 sin
+probabilidad, 0 resultados fuera de {0,1}.** `prob_cruda` en PORCENTAJE, rango
+37.62-65.40, media 52.304. Tasa real de victoria local **51.894%**.
+
+**No hay seleccion de picks**: es el universo de juegos, no un subconjunto
+elegido. **No hay columna de momio** -> igual que en soccer, la parte economica
+(EV crossings, ROI, survivors/killed, IC95) **NO es computable**. No se fabrica.
+
+### Cobertura de celdas (descriptivo, sin cambiar el minimo n>=100)
+
+| tramo | banda | n MLB | con celda SOCCER | n medio | con celda MLB | n medio | P media | real |
+|---|---|---|---|---|---|---|---|---|
+| 4 | 30-40% | 3 | 3 | 557 | 0 | — | 38.29% | 0.00% |
+| 5 | 40-50% | 321 | 321 | 618 | 221 | 210 | 47.21% | 47.66% |
+| 6 | 50-60% | 680 | 374 | 157 | 580 | 389 | 54.03% | 53.24% |
+| 7 | 60-70% | 52 | **0** | — | **0** | — | 61.97% | 63.46% |
+
+El modelo MLB vive casi entero en dos bandas (5 y 6 = **94.8%**). La banda 7
+(52 juegos) **no tiene celda en ninguna de las dos familias**. Cobertura total:
+soccer 698/1056 (66.1%), MLB-native 801/1056 (75.9%).
+
+### B1 — EXPERIMENTO_CROSS_DOMAIN_SOCCER_TO_MLB
+
+Celda soccer `Moneyline` construida SOLO con `modelo_backtest.fecha < T`.
+Nomenclatura de variantes segun la especificacion de Fase B del auditor.
+
+| variante | Brier | delta x1000 | t | log loss | bias pp | esperadas | reales | z | pendiente |
+|---|---|---|---|---|---|---|---|---|---|
+| **A P_RAW** | **0.24732** | 0.000 | — | **0.68774** | **-0.41** | 552.3 | 548.0 | **-0.27** | **1.066** |
+| B +sesgo soccer | 0.24785 | +0.531 | 0.86 | 0.68880 | -1.45 | 563.3 | 548.0 | -0.95 | 1.185 |
+| C +Beta soccer | 0.25144 | +4.125 | 1.83 | 0.69607 | +6.03 | 484.3 | 548.0 | +3.95 | 1.140 |
+| D +Wilson soccer | 0.25177 | +4.452 | 1.91 | 0.69672 | +6.20 | 482.5 | 548.0 | +4.06 | 1.132 |
+| E Beta+Wilson | 0.26354 | +16.225 | **3.88** | 0.72133 | +11.61 | 425.4 | 548.0 | **+7.74** | 0.419 |
+| F sesgo+Beta | 0.25144 | +4.124 | — | 0.69604 | +4.99 | 495.3 | 548.0 | +3.26 | 0.712 |
+| G sesgo+Wilson | 0.25175 | +4.430 | — | 0.69666 | +5.22 | 492.9 | 548.0 | +3.41 | 0.695 |
+| **H cadena completa** | 0.26304 | **+15.723** | **3.82** | 0.72030 | **+10.63** | 435.8 | 548.0 | **+7.06** | **0.186** |
+
+**P_RAW gana a las 7 transformaciones**, en Brier y en log loss. La cadena
+completa de soccer aplicada a MLB destruye la discriminacion: pendiente
+**1.066 -> 0.186**.
+
+**Clasificacion B1 por componente:**
+
+| componente soccer -> MLB | clasificacion |
+|---|---|
+| `v_sesgo` | **NO_APORTA** (t=0.86) |
+| Beta | **DANINA_CROSS_DOMAIN** (t=1.83, direccion clara, z +3.95) |
+| Wilson | **DANINA_CROSS_DOMAIN** (t=1.91, z +4.06) |
+| Beta+Wilson | **DANINA_CROSS_DOMAIN** (t=3.88) |
+| cadena completa | **DANINA_CROSS_DOMAIN** (t=3.82) |
+
+### B2 — MLB-NATIVE WALK-FORWARD
+
+Celda construida SOLO con `bt_mlb_ml.fecha < T`, mismo tramo, mismo minimo.
+
+| variante | Brier | delta x1000 | t | IC95 x1000 | log loss | bias pp | z | pendiente |
+|---|---|---|---|---|---|---|---|---|
+| **A P_RAW** | **0.24732** | 0.000 | — | — | **0.68774** | -0.41 | -0.27 | **1.066** |
+| B +sesgo MLB | 0.24816 | +0.846 | 1.67 | 0.996 | 0.68945 | **+0.14** | **+0.09** | 0.932 |
+| C +Beta MLB | 0.25170 | +4.386 | **2.20** | 3.911 | 0.69672 | +5.20 | +3.41 | 0.600 |
+| D +Wilson MLB | 0.25190 | +4.580 | **2.26** | 3.974 | 0.69711 | +5.29 | +3.47 | 0.589 |
+| E Beta+Wilson | 0.26179 | +14.475 | **3.92** | 7.229 | 0.71846 | +10.07 | +6.71 | 0.308 |
+| F sesgo+Beta | 0.25281 | +5.497 | — | — | 0.69895 | +5.75 | +3.77 | 0.526 |
+| G sesgo+Wilson | 0.25295 | +5.635 | — | — | 0.69923 | +5.81 | +3.81 | 0.514 |
+| **H cadena completa** | 0.26309 | **+15.779** | **4.17** | 7.416 | 0.72106 | +10.59 | +7.05 | 0.242 |
+
+**Ninguna variante MLB-native mejora P_RAW.** Ni una.
+
+**Detalle importante sobre B (sesgo MLB-native):** SI mejora la calibracion de
+MEDIA (bias -0.41 -> +0.14 pp, z -0.27 -> +0.09) pero **empeora el Brier**
+(+0.846 x1000) y **degrada la pendiente** (1.066 -> 0.932). Corrige un sesgo que
+ya era despreciable a costa de discriminacion. Es el ejemplo limpio de por que
+no basta mirar la media.
+
+### CALIBRACION DE P_RAW MLB POR BIN — no hay nada que arreglar
+
+| bin | n | P declarada | real | gap pp | esperadas | reales | z |
+|---|---|---|---|---|---|---|---|
+| < 45% | 59 | 43.16% | 47.46% | +4.29 | 25.5 | 28.0 | +0.67 |
+| 45-48% | 129 | 46.87% | 43.41% | -3.46 | 60.5 | 56.0 | -0.79 |
+| 48-51% | 221 | 49.65% | 48.87% | -0.78 | 109.7 | 108.0 | -0.23 |
+| 51-54% | 263 | 52.42% | 50.95% | -1.47 | 137.9 | 134.0 | -0.48 |
+| 54-57% | 230 | 55.26% | 56.96% | +1.70 | 127.1 | 131.0 | +0.52 |
+| >= 57% | 154 | 59.54% | 59.09% | -0.45 | 91.7 | 91.0 | -0.11 |
+
+**Ningun bin supera |z| = 0.79.** P_RAW MLB esta bien calibrada en todo su rango
+operativo. Una calibracion no tiene error que corregir; solo puede meter ruido —
+que es exactamente lo que muestran B1 y B2.
+
+### B3 — COMPARACION DIRECTA
+
+| familia | mejor variante legitima | Brier | log loss | z | pendiente |
+|---|---|---|---|---|---|
+| **P_RAW MLB** | **A** | **0.24732** | **0.68774** | **-0.27** | **1.066** |
+| SOCCER -> MLB WF | B (+sesgo) | 0.24785 | 0.68880 | -0.95 | 1.185 |
+| MLB-NATIVE WF | B (+sesgo) | 0.24816 | 0.68945 | +0.09 | 0.932 |
+
+**P_RAW gana las tres columnas.**
+
+### RESPUESTAS A LAS CINCO PREGUNTAS
+
+1. **¿La transferencia soccer -> MLB ayuda o dana?** **Dana.** El sesgo no
+   aporta (t=0.86) y todo lo demas es DANINA_CROSS_DOMAIN, hasta +15.7 x1000 y
+   pendiente 0.186.
+2. **¿MLB necesita calibracion?** **No.** Bias global -0.41 pp, z -0.27,
+   pendiente 1.066, ningun bin con |z| > 0.79.
+3. **Si necesitara, ¿cual seria sport-specific?** Ninguna de las probadas.
+   La MLB-native tampoco mejora.
+4. **¿Beta/Wilson vuelven a danar en MLB?** **Si, en las dos familias**, con la
+   misma firma que en soccer: subestimacion sistematica (z de +3.4 a +7.7) y
+   colapso de la pendiente.
+5. **¿P_RAW sigue siendo la mejor opcion?** **Si**, contra las 14 alternativas.
+
+### HALLAZGO ADICIONAL — SKILL DE MLB MONEYLINE
+
+| metrica | modelo | tasa base (51.894%) |
+|---|---|---|
+| Brier | 0.24732 | 0.24964 |
+| log loss | 0.68774 | 0.69243 |
+
+**Skill Score = 0.932%.** Prueba pareada contra la tasa base:
+**delta = -2.3256 x1000, t = -1.678, IC95 = +-2.7160** -> intervalo
+**[-5.04, +0.39]**, **cruza el cero**.
+
+**La mejora de este modelo sobre "predice siempre 51.9%" NO es estadisticamente
+distinguible de cero con n=1,056.** La direccion es favorable; la evidencia no
+alcanza. Bajo el Model Skill Gate de la Parte 2, MLB Moneyline clasificaria
+**SKILL_INCIERTO**, no `SKILL_DEMOSTRADO`.
+
+Nota honesta: esto NO dice que el modelo sea malo; dice que esta bien calibrado
+y discrimina poco, y que la muestra no basta para afirmar skill. Son cosas
+distintas y la arquitectura nueva las separa bien.
+
+### RECOMENDACION DE ARQUITECTURA PARA `P_FAIR` MLB
+
+**Posibilidad 1: `P_FAIR_MLB = P_RAW_MLB`.**
+
+Ninguna transformacion mejora OOS. La corrección soccer queda confirmada como
+**HEURISTICA_CROSS_DOMAIN_SIN_VALIDACION_MLB** y ademas medida como danina.
+No se propone calibracion MLB-native.
+
+**NO IMPLEMENTADO.** Solo reporte, como se ordeno.
+
+### LIMITES DE ESTE RESULTADO
+
+- Una sola temporada parcial (93 dias, may-ago 2026);
+- solo Moneyline, solo lado local;
+- rango estrecho del modelo (37.6-65.4%): no dice nada fuera de ahi;
+- **sin momio**: cero conclusiones economicas;
+- la banda 60-70% (52 juegos) no tuvo celda en ninguna familia, asi que ahi
+  todas las variantes cayeron a la ruta `no medida` (n=30).
+
+### INVARIANTES CONFIRMADAS
+
+Kelly intacto; Beta/Wilson de produccion intactos; RONGOL intacto; allocator
+intacto; caps intactos; EXP_OFF=0.50; NFL sigue SIN_MODELO; V2 sin consumidores;
+residuos: solo `lab_bloque_a_wf` y `lab_bloque_b_mlb`, documentadas y borrables.
