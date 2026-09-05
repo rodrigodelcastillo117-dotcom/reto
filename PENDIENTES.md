@@ -3462,3 +3462,83 @@ Esto conecta con #157/#187: hay que acumular precios limpios y re-medir.
     superior de train tenia n chico y una tasa baja; el calibrador aplano ahi y
     empeoro justo donde el modelo crudo iba bien. Antes de desplegar un calibrador,
     mirar que hace en las COLAS, no solo en el promedio.
+
+---
+
+# #211 OVER/UNDER, SEGUNDA VUELTA — el hallazgo no es un calibrador, es una CONSTANTE
+
+## LO QUE CAMBIA TODO
+```
+876 de 1,361 picks de Over/Under (64.4%) tienen exactamente p = 0.5500
+aciertan 44.5%
+```
+**Para dos tercios del mercado NO HAY MODELO: hay una constante hardcodeada.**
+Lo delato el calibrador isotonico: uno de sus bloques tenia peso 383 en un solo valor
+de probabilidad. Conecta directo con #193, que ya habia visto el 0.55 en MLB.
+
+Esto reencuadra el experimento anterior: en su mayoria compare **una constante mala
+(0.55) contra una constante buena (la tasa base 0.437)**. Por eso "no habia senal":
+no habia prediccion que medir.
+
+### ¿Se salva excluyendo la constante? NO
+Sobre el 35.6% que si es pronostico por partido:
+
+| particion | n | prob media | tasa real | exceso | ventaja vs base | correlacion | t |
+|---|---|---|---|---|---|---|---|
+| train | 303 | 0.5699 | 0.5017 | **+6.8 pp** | −0.0133 | 0.022 | 0.38 |
+| test | 182 | 0.5333 | 0.4615 | **+7.2 pp** | −0.0068 | 0.146 | 1.95 |
+
+Sigue inflado ~7 pp. La correlacion es 0.146 en test pero **0.022 en train**:
+inconsistente entre periodos, o sea ruido, no senal.
+
+## Comparacion de los cinco — mismo test congelado (n=412)
+
+| modelo | prob media | exceso | Brier | Log Loss | ventaja vs base | t |
+|---|---|---|---|---|---|---|
+| **D. acotado 55-65%** | 0.4523 | +0.015 | **0.24384** | **0.68005** | +0.00327 | 0.65 |
+| C. tramos completo | 0.4331 | −0.004 | 0.24502 | 0.68315 | +0.00209 | 0.76 |
+| B. log-odds global | 0.4587 | +0.022 | 0.24672 | 0.68693 | +0.00039 | 0.08 |
+| F. tasa base | 0.4700 | +0.033 | 0.24711 | 0.68736 | — | — |
+| E. isotonica | 0.4423 | +0.005 | 0.24767 | **0.77691** | −0.00055 | −0.13 |
+| A. cruda | 0.5426 | +0.106 | 0.25837 | 0.70937 | −0.01126 | −1.91 |
+
+### Validacion economica (apuesta plana, EV>0)
+
+| estrategia | apuestas | % del test | momio medio | yield | IC 95% |
+|---|---|---|---|---|---|
+| A. cruda | 410 | **99.5%** | 2.12 | −8.37% | [−19.2, +2.4] |
+| **D. acotado** | **138** | **33.5%** | **2.52** | **+15.36%** | [−7.2, +37.9] |
+| E. isotonica | 96 | 23.3% | 2.34 | +1.83% | [−22.3, +26.0] |
+| C. tramos | 73 | 17.7% | 3.04 | +33.93% | [−2.9, +70.7] |
+| F. tasa base | 69 | 16.7% | 3.21 | +35.07% | [−4.2, +74.4] |
+
+**D gana en TODOS los criterios que fijo el auditor** (mejor Brier, mejor Log Loss, no
+toca las colas por construccion, volumen usable a momio moderado, IC mas estrecho de
+los positivos). **Pero t = 0.65: no es significativo.** Y C y F siguen siendo artefactos
+de longshot: momio 3.0+ e IC de 70 puntos.
+
+### La isotonica FALLO, y por una razon instructiva
+Log Loss 0.77691, la peor de todas, PEOR que la cruda. Causa: PAVA sin tamano minimo de
+bloque produjo bloques de peso 1 con `valor = 0.0000`. Cuando un pick de test cae ahi y
+GANA, el log-loss lo castiga casi infinito. **Una isotonica sin piso de bloque fabrica
+probabilidades de cero.**
+
+## VEREDICTO — no desplegar ningun calibrador todavia
+Calibrar una constante no es calibrar: es sustituir una constante por otra mejor. Y si
+el plan es sustituir una constante, **la tasa base es mas simple y rinde igual**.
+El arreglo correcto NO es un calibrador. Es que Over/Under **deje de emitir 0.55**.
+
+Mientras tanto, O/U se queda en modo proteccion/abstencion, como decidio el auditor.
+
+## Lecciones nuevas
+56. **Un calibrador puede delatar un bug del modelo.** El bloque isotonico de peso 383
+    en un solo valor no era una curiosidad estadistica: era la huella de una constante
+    hardcodeada. Cuando un metodo de ajuste encuentra masa concentrada en un punto
+    exacto, la pregunta no es como ajustarla, es de donde salio.
+57. **Antes de calibrar, verificar que hay algo que calibrar.** Medi Brier, Log Loss,
+    ROI, CLV, bandas e intervalos sobre una muestra en la que el 64% no era un
+    pronostico. Todo el aparato estadistico era correcto y la conclusion era vacia.
+    La primera pregunta de cualquier calibracion debe ser: ¿cuantos valores distintos
+    produce este modelo?
+58. **La isotonica necesita piso de bloque.** PAVA sin restriccion genera bloques de
+    peso 1 con valor 0 o 1, que son probabilidades imposibles y destruyen el Log Loss.
