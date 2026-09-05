@@ -2403,3 +2403,189 @@ comparacion de B es de **coherencia**, no de rendimiento.
 | 11 | corte temporal respetado | reusar la bateria A-E de Fase 1.5 |
 | 12 | no regresion de Fase 1.5 | `invariantes_temporales().ok = true` + event trigger activo |
 | 13 | `EXP_OFF = 0.50` | grep en `predecir_mlb` |
+
+---
+
+# FASE 2 / 2A.24-2A.31 — IMPLEMENTACION V2 EN PARALELO
+
+Nada de esto gobierna dinero. Ningun consumidor productivo lo lee.
+`kelly_stake` intacta, `zonas_confiables` intacta, `EXP_OFF = 0.50`.
+
+## 2A.25 — Kelly puro: `kelly_full_v2(p_fair, momio)`
+
+```
+f = (p*momio - 1) / (momio - 1) = EV_FAIR / b
+```
+
+Declarada **IMMUTABLE**, y eso no es cosmetico: una funcion IMMUTABLE **no puede
+consultar tablas**. El aislamiento respecto de `zonas_confiables`, Wilson, Beta,
+bankroll, CDaR y RONGOL es una propiedad del motor de Postgres, no una promesa del
+comentario. Ademas Kelly resulta ser el EV dividido entre la ganancia neta, asi que
+R8 (reconstruir el EV desde P_FAIR y momio) se cumple por identidad algebraica.
+
+`df/dp = momio/(momio-1) > 0` para todo momio > 1: **estrictamente creciente, sin
+depender de datos**.
+
+| prueba | resultado |
+|---|---|
+| EV <= 0 implica Kelly <= 0 (299 casos) | PASS |
+| monotonicidad (686 pasos) | PASS |
+| formula analitica exacta | PASS, desviacion maxima 0.000000000000000 |
+| limite P->1 = 1.0 ; P->0 = -1/(m-1) | PASS |
+| momio invalido devuelve NULL | PASS |
+| es IMMUTABLE (no puede leer tablas) | PASS (`provolatile = i`) |
+
+No se recorta en 0 dentro de la funcion a proposito: un Kelly negativo es
+informacion real. El recorte vive en la capa de sizing.
+
+## 2A.24 — `calibracion_estado_v2` y `decision_canonica_v2`
+
+`calibracion_estado_v2` (deporte, mercado) con `mercado = '*'` como regla por
+defecto. **Todas las filas declaran identidad.** Un CHECK
+(`chk_identidad_sin_version`) impide declarar `calibration_version` sin estado
+`CALIBRADO`: no puede volver a existir una calibracion silenciosa como fue P_CAL2.
+
+| deporte | mercado | estado | evidencia |
+|---|---|---|---|
+| baseball | Moneyline | `CALIBRACION_RECHAZADA_OOS` | pierde 3/3 ventanas en `bt_mlb_ml` |
+| baseball | `*` | `SIN_CALIBRACION_DEMOSTRADA` | no evaluado |
+| soccer | Moneyline, O/U, BTTS, Total Equipo, Doble Oportunidad | `CALIBRACION_NO_JUSTIFICADA` | empeora **en muestra**; no hay prueba OOS |
+| soccer | `*` | `SIN_CALIBRACION_DEMOSTRADA` | no evaluado |
+| football | `*` | `SIN_MODELO` | `nfl_backtest` vacio |
+
+`decision_canonica_v2` produce los 21 campos + provenance. Si alguna fila llegara a
+declarar `CALIBRADO` sin calibrador conectado, **lanza excepcion** en vez de devolver
+identidad callada.
+
+## 2A.26/2A.27 — confidence: componentes SI, formula NO
+
+`confidence_componentes_v2` guarda la **variable cruda** de cada componente con su
+dataset, poblacion (A/B/C/D), ventana, metodo, cutoff y **razon economica**. No
+guarda un puntaje normalizado: la forma funcional no esta decidida y no se inventa.
+
+`c_skill` medido como Skill Score contra la tasa base:
+
+| deporte / mercado | Skill Score | lectura |
+|---|---|---|
+| soccer Over/Under | **0.1536** | el mejor motor del sistema |
+| soccer Total Equipo | 0.1074 | |
+| soccer Moneyline | 0.0579 | |
+| soccer Doble Oportunidad | 0.0543 | |
+| **baseball Moneyline** | **0.0093** | apenas le gana a la tasa base: **16 veces menos skill que O/U de futbol** |
+| **soccer BTTS** | **-0.0126** | **NEGATIVO**: peor que la tasa base. Candidato a bloqueo, no a recorte |
+
+Esa tabla es la razon economica del diseno: **la exposicion debe escalar con la
+calidad del motor, no con la banda de probabilidad**. Es exactamente lo que
+`zonas_confiables` hace al reves.
+
+**Decision de 2A.27: no hay evidencia todavia para elegir agregador.** Por tanto en
+V2 `confidence = 1.0` con `confidence_reason = PENDIENTE_DE_VALIDACION`. Un 1.0
+declarado es preferible a un haircut inventado.
+
+## 2A.28 — Monotonicidad: PASS
+
+Malla P = 1%..99% x 5 momios x 5 combinaciones deporte/mercado = **2,475 filas,
+2,450 pasos**. Cero violaciones de `dEV >= 0`, `dKelly >= 0`, `dStake_pre >= 0`.
+
+Las tres regresiones obligatorias, V1 contra V2:
+
+| caso | V1 P_decide | V1 stake | V2 P_fair | V2 stake |
+|---|---|---|---|---|
+| ML 49% | 49.5 | **$110.07** | 49.0 | $97.50 |
+| ML 50% | **42.5** | **$0** | 50.0 | **$125.00** |
+| ML 59% | 50.8 | **$145.70** | 59.0 | $300.00 |
+| ML 60% | **39.4** | **$0** | 60.0 | **$300.00** |
+| BTTS 59% | 54.0 | **$235.91** | 59.0 | $300.00 |
+| BTTS 60% | **38.1** | **$0** | 60.0 | **$300.00** |
+
+**Las tres discontinuidades desaparecen por completo.** No es "salto menor": el
+salto no existe, porque no hay bucket que cruzar.
+
+## 2A.29 — Aislamiento entre deportes: PASS
+
+Prueba adversarial en subtransaccion con rollback. Se mutaron a la vez **todas** las
+fuentes exclusivas de un deporte (`calibracion_estado_v2`, `confidence_componentes_v2`,
+`calibracion_coef`) mas `zonas_confiables` completa:
+
+| direccion | resultado |
+|---|---|
+| mutar soccer | **MLB identico bit a bit = true**, y soccer SI cambio (el camino estaba vivo) |
+| mutar MLB | **soccer identico bit a bit = true**, y MLB SI cambio |
+
+El aislamiento es **por diseno**: la busqueda en `calibracion_estado_v2` es por
+(deporte, mercado) y no existe fila `'*'` global. No hay forma de que un deporte lea
+la evidencia de otro.
+
+## 2A.30 — Shadow V1 vs V2: mide COHERENCIA, y el resultado exige cautela
+
+| clase | n | suma V1 | suma V2 |
+|---|---|---|---|
+| **V1 no apuesta / V2 si** | 7 | $0 | $1,094.24 |
+| **contradiccion de signo** | 6 | $0 | $752.07 |
+| mismo signo, stake distinto | 2 | $156.01 | $120.97 |
+| **TOTAL (15 picks)** | | **$156.01** | **$1,967.28** |
+
+**V2 dimensionaria 12.6 veces mas que V1. Esto NO significa que V2 sea mejor: es la
+consecuencia directa de que su haircut todavia no existe.**
+
+Desglose de por que V1 dice $0 donde V2 apuesta:
+
+| motivo de V1 | n | V2 pondria |
+|---|---|---|
+| **rongol** (capa de cartera) | **9** | $1,322.43 |
+| kelly (el haircut de V1) | 3 | $223.88 |
+| muestra_chica | 1 | $300.00 |
+
+**Lectura honesta: 9 de las 13 divergencias no son del modelo, son de la capa de
+cartera**, que V2 todavia no tiene (`portfolio_multiplier = 1.0` por diseno en este
+bloque). La divergencia atribuible a la capa de probabilidad son 4 picks, $523.88.
+
+Conclusion operativa: **V1 esta mal construido pero esta conteniendo exposicion**.
+Apagarlo antes de tener `confidence` validado y la capa de cartera portada
+multiplicaria el riesgo. Ese es el argumento mas fuerte para respetar el orden de
+migracion C -> D -> E y no adelantarlo.
+
+## 2A.31 — Mapa de campos por superficie (sin migrar todavia)
+
+| superficie | campo actual | campo V2 que lo reemplazara |
+|---|---|---|
+| Reto13M | `probabilidad_pct` ("Prob. del motor") | `p_fair` + `calibration_status` |
+| Reto13M | `prob_que_decide_pct` | **desaparece** (la incertidumbre ya no reescribe P) |
+| Reto13M | `ev_pct` ("EV real") | `ev_fair_pct` |
+| Reto13M | `ev_pct_declarado` | **se elimina** (era el mismo numero con otro nombre) |
+| Reto13M | `factor_muestra` | `confidence` + `confidence_reason` |
+| Reto13M | `monto_autorizado` | `stake_final_v2` |
+| Reto13M | `bloqueado_por` | `reason_code` |
+| mejor_oportunidad_hoy | `prob_cruda_pct` | `p_raw` (y deja de llamarse "cruda" a una calibrada) |
+| mejor_oportunidad_hoy | `prob_pct` (**P_CAL2**) | **se elimina** |
+| mejor_oportunidad_hoy | `ev_crudo_pct` / `ev_pct` | **un solo** `ev_fair_pct` |
+| mejor_oportunidad_hoy | `kelly_pct`, `techo_kelly`, `piso_ev` | `kelly_fractional`, `stake_final_v2`, `reason_code` |
+| analisis_completo | `ev_pct` propio | `ev_fair_pct` **etiquetado como diagnostico** |
+| destacados_cache | EV propio | `ev_fair_pct` |
+| v_oraculo_canonico | `ev_pct` de canonico | `p_raw`, `p_fair`, `ev_fair_pct` con `as_of` |
+
+## Invariantes de Fase 1.5 revalidados
+
+| invariante | estado |
+|---|---|
+| `invariantes_temporales().ok` | **true** |
+| `tg_candado_temporal` habilitado | **1** |
+| `EXP_OFF` | **0.50** |
+| shadow MLB: lectores fuera de su generador | **0** |
+| `kelly_stake` intacta (sigue leyendo `zona_realidad`) | si |
+| consumidores productivos de `decision_canonica_v2` | **NINGUNO** |
+
+## Criterio de salida del bloque
+
+| # | criterio | estado |
+|---|---|---|
+| 1 | objeto V2 existe en paralelo | **PASS** |
+| 2 | P_FAIR con provenance explicito | **PASS** (`calibracion_estado_v2`) |
+| 3 | Kelly puro aislado | **PASS** (IMMUTABLE) |
+| 4 | no existe P_CAL2 | **PASS** (V2 no llama a ningun calibrador) |
+| 5 | V2 monotonico antes de cartera | **PASS** (2,450 pasos) |
+| 6 | soccer y MLB aislados | **PASS** (bit a bit, ambas direcciones) |
+| 7 | ninguna superficie productiva cambio | **PASS** |
+| 8 | ningun stake real cambio | **PASS** |
+| 9 | EXP_OFF sigue 0.50 | **PASS** |
+| 10 | comparacion V1 vs V2 reproducible | **PASS** (`shadow_v1_v2`) |

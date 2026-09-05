@@ -505,3 +505,27 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     contra tasa base 0.2494); en MLB apenas (0.24732 contra 0.24964). Son dos
     motores de calidad muy distinta, y eso es lo que `confidence` debe reflejar,
     no la banda de probabilidad.
+
+63. **V2 construido EN PARALELO: Kelly puro aislado, monotonicidad demostrada y
+    aislamiento entre deportes bit a bit.** `kelly_full_v2` se declara IMMUTABLE, y
+    eso hace que Postgres **le prohiba consultar tablas**: el aislamiento respecto de
+    `zonas_confiables`, Wilson, Beta, bankroll y CDaR es una propiedad del motor, no
+    una promesa del comentario. Malla de 2,475 filas y 2,450 pasos: **cero
+    violaciones** de monotonicidad. Las tres regresiones obligatorias desaparecen —
+    ML 49->50 pasa de $110.07->$0 a $97.50->$125.00, y ML 59->60 de $145.70->$0 a
+    $300->$300. Prueba adversarial de aislamiento: mutar TODAS las fuentes de un
+    deporte deja al otro **idéntico bit a bit**, en las dos direcciones, y cada
+    mutación sí movió su propio deporte.
+    `confidence = 1.0` con estado `PENDIENTE_DE_VALIDACION`: no hay evidencia todavía
+    para elegir agregador y un 1.0 declarado es preferible a un haircut inventado.
+
+64. **AVISO DE SEGURIDAD del shadow: V2 dimensionaría 12.6 veces más que V1.**
+    Sobre 15 picks vivos: V1 autoriza $156.01 y V2 pondría $1,967.28. **Eso NO
+    significa que V2 sea mejor** — es la consecuencia directa de que su haircut aún
+    no existe. Y el desglose importa: **9 de las 13 divergencias no son del modelo,
+    son de la capa de cartera** (RONGOL, $1,322.43) que V2 todavía no tiene. La
+    divergencia atribuible a la probabilidad son 4 picks, $523.88.
+    Conclusión operativa: **V1 está mal construido pero está conteniendo
+    exposición**. Apagarlo antes de validar `confidence` y portar la capa de cartera
+    multiplicaría el riesgo. Es el argumento más fuerte para respetar el orden
+    C -> D -> E y no adelantarlo.
