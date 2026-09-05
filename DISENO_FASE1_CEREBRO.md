@@ -1954,3 +1954,205 @@ construccion y la tolerancia solo acota el lado positivo.
 - Malla de aceptacion: P de 1% a 99% x mercado x deporte x momios representativos,
   detectando `dP_CAL > 0 && dP_DECIDE < 0` y `dEV > 0 && dstake < 0` no explicados
   por una restriccion de cartera con nombre.
+
+---
+
+## 2A.10 — WALK-FORWARD DE `zonas_confiables`
+
+Reconstruccion estricta: TRAIN con eventos `fecha < T` y misma receta que
+`recalcular_zonas_confiables` (deciles, `HAVING count>=100`); TEST solo con
+eventos en `[T, T+1 mes)`. Cortes: 1-may, 1-jun, 1-jul, 1-ago de 2026.
+
+### Brier fuera de muestra, prueba pareada por observacion
+
+| mercado | n OOS | mejora media de Brier | t | veredicto |
+|---|---|---|---|---|
+| **Corners** | 2,472 | **+0.012946** | **4.93** | **significativo** |
+| Doble Oportunidad | 2,020 | +0.000714 | 1.67 | no significativo |
+| Moneyline | 3,030 | +0.000459 | 1.40 | no significativo |
+| BTTS | 1,010 | +0.000856 | 0.35 | no significativo |
+| Total Equipo | 3,030 | **-0.000517** | -1.19 | no significativo |
+| Over/Under | 5,050 | **-0.000657** | -1.83 | no significativo |
+| Tarjetas | 1,806 | **-0.001404** | -1.33 | no significativo |
+| TODOS | 18,418 | +0.001535 | 3.68 | significativo **solo por Corners** |
+
+Quitando Corners, la mejora global es **-0.000234**: negativa.
+Y **Corners tiene el dinero apagado** desde Fase 1 (`corners_sin_modelo`).
+
+**En ningun mercado que gobierna dinero `zonas_confiables` mejora la probabilidad
+fuera de muestra de forma significativa.** El unico donde funciona esta apagado.
+
+### Supervivencia de los sesgos concretos que el mandato pide verificar
+
+| sesgo | train por pliegue | test por pliegue | mismo signo | veredicto |
+|---|---|---|---|---|
+| **ML t5 (+4.9)** | +2.3 / +2.2 / +3.9 | +3.4 / +7.6 / +10.4 | **3/3** | **SOBREVIVE** (y crece) |
+| **ML t6 (+1.2)** | -1.4 (1 solo pliegue, n_tr=142) | +9.5 (n_te=45, SE 7.2) | **0/1** | **NO SOBREVIVE** |
+| ML t4 (-1.7) | -3.3 / -2.6 / -1.5 | -1.7 / +0.7 / -2.4 | 2/3 | debil |
+| **BTTS t5 (+9.1)** | +8.8 / +8.2 / +7.1 | +8.0 / +5.0 / **-1.9** | 2/3 | se apaga con el tiempo |
+| **BTTS t7 (-13.7)** | -16.3 / -15.3 | -13.5 / -5.9 | **2/2** | sobrevive en signo, se encoge |
+| BTTS t6 (+4.2) | +4.2 / +3.4 | +1.8 / **-8.4** | 1/2 | **falla, y a mas de 2 SE** |
+
+**El detalle que importa economicamente:** el tramo que produce la peor
+discontinuidad de dinero (Moneyline t6, banda 50-60%, el que tira el stake de
+$145.70 a $0) es precisamente **el que NO sobrevive**: un solo pliegue, n=45 en
+test, error estandar de 7.2 pp y el signo invertido.
+
+**Conclusion 2A.10:** `zonas_confiables` **queda invalidada como estimador de
+probabilidad**. Algunos sesgos individuales son reales (ML t5, BTTS t7), pero el
+objeto en conjunto no aporta valor OOS medible en los mercados que mueven dinero,
+y su aporte agregado fuera de Corners es negativo.
+
+## 2A.11 — EVIDENCIA MLB
+
+**Corrijo mi propia hipotesis previa.** MLB **NO** esta sin evidencia:
+
+| fuente | N | cobertura |
+|---|---|---|
+| `oraculo_picks_tracking` liga='MLB' resueltos | **2,152** | 2026-05-04 a 2026-09-05 |
+| ... con probabilidad y `match_date` | 2,076 | idem |
+| ... con momio | 2,124 | idem |
+| por mercado | **Moneyline 1,101** / Over/Under 1,049 / Handicap 2 | |
+| `mlb_shadow_predicciones` con brier | 800 | |
+| `badrino_partidos` con ambos lados + resultado | 386 | 2026-07-31 a 2026-09-06 |
+
+Los 1,101 picks resueltos de MLB Moneyline son **mas** que los 853 de futbol del
+tramo 5 que hoy los gobierna.
+
+### Walk-forward propio de MLB (cortes 1-jul, 20-jul, 10-ago)
+
+| mercado / tramo | sesgo TRAIN | sesgo TEST | mismo signo | lo que recibe hoy de futbol |
+|---|---|---|---|---|
+| **ML t5 (40-50%)** | +1.9 / +1.4 / +0.7 | **-0.4 / -3.4 / -4.0** | **0/3** | **+4.9** |
+| ML t4 (30-40%) | +9.1 / +6.3 / +7.8 | -3.5 / +16.1 / +8.4 | 2/3 | -1.7 |
+| **O/U t6 (50-60%)** | -5.6 / -5.0 / -5.7 | **-3.4 / -9.5 / -9.8** | **3/3** | **+0.3** |
+
+**MLB tiene sesgo propio, estable, y de signo CONTRARIO al que recibe.**
+
+- MLB Moneyline en la banda 40-50%: su dato dice entre **-0.4 y -4.0 pp**. Le
+  aplicamos **+4.9 pp** de futbol. Error de direccion de ~**7.5 pp** sobre la
+  probabilidad que decide el dinero. **6 de los 10 picks de MLB de hoy caen ahi.**
+- MLB Over/Under en 50-60%: sesgo **-3.4 / -9.5 / -9.8** en 3 de 3 pliegues, la
+  senal mas estable que encontre en todo el sistema. Futbol le pasa **+0.3**.
+
+**El veredicto correcto no es `MLB_SIN_EVIDENCIA_PARA_HAIRCUT`.** Es:
+**`MLB_TIENE_EVIDENCIA_PROPIA_Y_LA_CORRECCION_ACTUAL_VA_AL_REVES`.**
+
+Salvedad declarada: `oraculo_picks_tracking` son picks **publicados**, no un barrido
+sistematico como `modelo_backtest`. Es la poblacion correcta para estimar el sesgo
+de los picks que el sistema realmente emite, pero no es un backtest neutral y hay
+que decirlo al usarlo.
+
+## 2A.12 — P_MARKET: que se puede construir de verdad
+
+| deporte / mercado | ambos lados | de-vig posible | cobertura temporal | overround |
+|---|---|---|---|---|
+| **MLB Moneyline** | **401** partidos (386 con resultado) | si, 2 vias | 2026-07-31 a 2026-09-06 (**5 semanas**) | mediana **1.78%**, p10-p90 **1.62%-4.62%**, 0 valores absurdos |
+| **Futbol 1X2** | **197** con los TRES lados | si | — | — |
+| Futbol 1X2 parcial | **87** con solo home/away | **NO**: falta el empate | — | — |
+| Futbol Over/Under | **294** con over y under | si | — | — |
+
+Nota de metodo: `badrino_partidos.ml_home/ml_away` son **momios americanos enteros**,
+no decimales. Mi primera medicion dio 0 partidos por no convertir; el dato estaba
+bien y la consulta mal. Convertido (`+n -> 1+n/100`, `-n -> 1+100/n`) aparecen 401.
+
+`1/momio` **no es** P_MARKET_FAIR: con overround mediano de 1.78% en MLB, usarlo
+crudo infla cada lado ~0.9 pp. Con ambos lados el de-vig proporcional es trivial y
+verificable. **Sin la contraparte no se construye**, y en futbol 1X2 faltan 87 de
+284 casos (el 31%).
+
+**Limite duro:** P_MARKET_FAIR verificable existe para ~401 partidos de MLB y ~197
+de futbol. Contra 2,152 picks de MLB resueltos y 30,876 filas de backtest de futbol,
+**la cobertura es minoritaria**. Cualquier arquitectura que dependa de P_MARKET
+solo puede validarse en ese subconjunto.
+
+## 2A.13 — COMPARACION A vs B
+
+| criterio | **A** calibracion + haircut de stake | **B** ensemble modelo+mercado |
+|---|---|---|
+| monotonicidad | garantizada si CAL es monotona y `confidence` no depende de P | garantizada si `w` no depende de P |
+| continuidad | si | si |
+| datos necesarios | solo historico propio: **2,152 MLB + 30,876 futbol** | **exige P_MARKET_FAIR: 401 MLB + 197 futbol** |
+| validable OOS hoy | **si, en todo el historico** | **no: solo en el 19% de MLB y el 0.6% de futbol** |
+| leakage | controlable con cutoff + walk-forward | idem, pero con muestra 5x menor |
+| semantica | `confidence` reduce EXPOSICION, no reescribe la probabilidad | **cambia el significado de la probabilidad**: es otro modelo |
+| versionado | igual que `calibracion_coef` | igual, mas la version del snapshot de mercado |
+| riesgo | bajo | alto: encoge hacia un precio con 5 semanas de historia |
+
+**A gana por disponibilidad de evidencia, no por elegancia.** B no es rechazable en
+teoria — es **no evaluable hoy**: no hay P_MARKET_FAIR suficiente para demostrar
+mejora OOS en Brier/log loss, y el mandato prohibe adoptarla sin esa demostracion.
+
+**Consecuencia para mi propia recomendacion anterior:** la formula que propuse en
+2A.9, `P_MERCADO + s(n)*(CAL(P_CAL) - P_MERCADO)`, **es arquitectura B**. Con
+401 partidos de MLB y 197 de futbol con precio fair verificable, **no puedo
+demostrarla**. La retiro como recomendacion y paso a A.
+
+## 2A.14 — CANON ECONOMICO (diseno, sin implementar)
+
+Una sola salida, un solo significado por nombre:
+
+| campo | definicion | quien lo produce |
+|---|---|---|
+| `p_raw` | salida cruda del motor del deporte | motor por deporte |
+| `p_fair` | `CAL_deporte_mercado(p_raw)`, **monotona**, versionada con `effective_from`/`data_cutoff_at` | calibracion unica |
+| `ev_fair` | `p_fair * momio - 1` | derivado |
+| `confidence` | en [0,1], **funcion solo de la evidencia** (n, varianza del tramo), nunca de la banda de P | motor de incertidumbre |
+| `kelly_base` | `Kelly(p_fair, momio) * fraccion` | sizing |
+| `risk_multiplier` | producto de restricciones con nombre (cartera, correlacion, veto) | riesgo |
+| `stake_pre_portfolio` | `kelly_base * confidence` | sizing |
+| `stake_final` | `stake_pre_portfolio * risk_multiplier`, con cap y floor | sizing |
+| `reason_code` | por que se bloqueo o se recorto | todos |
+
+Solo si B llegara a demostrarse: `p_market_fair`, `p_ensemble`, `ev_ensemble`.
+
+`P_CAL2` **no sobrevive**: `mejor_oportunidad_hoy` deja de recalibrar por su cuenta.
+Ninguna superficie recalcula: todas leen `p_fair` / `ev_fair` / `stake_final`.
+
+Punto fino que el diseno resuelve: hoy la incertidumbre **reescribe la
+probabilidad** (`p_decide`), asi que el numero que la pantalla llama "probabilidad"
+ya no es una probabilidad, es una probabilidad castigada. En A la probabilidad
+sigue siendo `p_fair` y el castigo vive en `confidence`, que es lo que reduce
+exposicion. Eso es lo que hace auditable la cadena.
+
+## 2A.15 — CONTRATO POR SUPERFICIE
+
+| superficie | proposito | debe mostrar | debe ordenar/filtrar por | prohibido |
+|---|---|---|---|---|
+| **Reto13M** | recomendacion economica | `p_fair`, `ev_fair`, `confidence`, `stake_final`, `reason_code` | `ev_fair` / `stake_final` | recalcular nada |
+| **mejor_oportunidad_hoy** | recomendacion economica | lo mismo | **`ev_fair`** (hoy ordena por un EV propio) | su `P_CAL2` y su `ev_pct` propio; publicar `kelly_pct` que no venga de la autoridad de sizing |
+| **analisis_completo** | diagnostico | `p_raw`, `p_fair`, `ev_fair` **etiquetados como diagnostico** | no ordena dinero | presentarse como accionable |
+| **destacados_cache** | vitrina | `ev_fair` | `ev_fair` | EV propio |
+| **v_oraculo_canonico** | trazabilidad/histórico | `p_raw`, `p_fair`, `ev_fair` con su fecha | no aplica | servir de fuente a UI de recomendacion sin pasar por la autoridad |
+
+Regla: **una superficie que recomienda una accion economica ordena y filtra por el
+mismo EV que gobierna el dinero.** Una que muestra EV del modelo como diagnostico
+lo etiqueta y no lo presenta como accionable.
+
+## Elementos a deprecar
+
+1. `zonas_confiables` **como estimador de probabilidad** (invalidada OOS). Su papel
+   de medir evidencia (`n`) puede sobrevivir dentro de `confidence`.
+2. El sesgo aditivo por decil dentro de `kelly_stake`.
+3. `zona_realidad` como bandeador de deciles para dinero.
+4. `P_CAL2` y el `ev_pct` propio de `mejor_oportunidad_hoy`.
+5. `ev_pct_declarado` como campo publicable (queda solo para auditoria).
+6. La etiqueta "Prob. del motor" sobre una probabilidad ya calibrada, y
+   `prob_cruda_pct` como nombre de P_CAL.
+7. El fallback silencioso a probabilidad cruda cuando `fuera_de_rango = true`.
+
+## Pruebas adversariales que debera superar la implementacion
+
+1. **Malla completa**: P de 1% a 99% paso 1, por mercado y deporte, con momios
+   representativos. Cero casos de `dP_FAIR > 0 && dP_DECIDE < 0` y cero de
+   `dEV > 0 && dstake < 0` no explicados por una restriccion con nombre.
+2. **Regresiones obligatorias**: Moneyline momio 2.20 en 49->50 y 59->60 (hoy
+   $110.07->$0 y $145.70->$0); peor ruptura BTTS (-15.9 pp, -$235.91).
+3. **Cero transferencia entre deportes**: inyectar un sesgo extremo en la
+   calibracion de futbol no puede mover ni un centavo de un pick de MLB.
+4. **Corte temporal**: reconstruir un pick pasado no puede usar una calibracion
+   posterior a su `game_date` (mismo candado que Fase 1.5).
+5. **Coherencia de superficies**: para el mismo pick, el orden y el signo del EV
+   deben coincidir en Reto13M y en `mejor_oportunidad_hoy`. Hoy fallan en 4 de 16.
+6. **Sin fallback mudo**: si no hay calibracion valida, la salida es un
+   `reason_code`, nunca la probabilidad cruda disfrazada.

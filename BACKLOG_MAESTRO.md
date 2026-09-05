@@ -447,3 +447,35 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     solapamiento es la causa raiz de la no monotonicidad — `zona_realidad` bandea
     con `width_bucket(p,0,1,10)`, deciles fijos, asi que las fronteras caen exactas
     en 0.50 y 0.60, justo donde medimos los saltos.
+
+59. **`zonas_confiables` NO sobrevive fuera de muestra, y MLB tiene sesgo propio de
+    signo contrario al que recibe.** Walk-forward con 4 cortes sobre 18,418
+    observaciones: la mejora de Brier es significativa en **un solo mercado,
+    Corners** (t=4.93) — que tiene el dinero apagado. Moneyline t=1.40,
+    Over/Under **t=-1.83 (negativo)**, BTTS t=0.35. **Quitando Corners la mejora
+    global es -0.00023: negativa.**
+    Del detalle: el sesgo ML t5 (+4.9) sí sobrevive 3/3 pliegues, pero **ML t6
+    (+1.2) no sobrevive** — y es justo el tramo que produce la peor discontinuidad
+    de dinero (el que tira el stake de $145.70 a $0): un pliegue, n=45 en test,
+    SE 7.2 pp y el signo invertido.
+    **Corrijo mi hipotesis previa sobre MLB**: NO esta sin evidencia. Hay 2,152
+    picks resueltos, 1,101 de Moneyline — mas que los 853 de futbol que hoy los
+    gobiernan. Y su walk-forward propio dice lo contrario que futbol: MLB Moneyline
+    40-50% mide **-0.4 / -3.4 / -4.0** en 3 pliegues y le aplicamos **+4.9** de
+    futbol; MLB Over/Under 50-60% mide **-3.4 / -9.5 / -9.8** (3/3, la senal mas
+    estable del sistema) y le pasamos **+0.3**. **6 de los 10 picks de MLB de hoy
+    reciben una correccion de ~7.5 pp en la direccion equivocada.**
+    El veredicto no es MLB_SIN_EVIDENCIA: es MLB_TIENE_EVIDENCIA_Y_LA_CORRECCION_VA_AL_REVES.
+
+60. **Retiro mi propia recomendacion de 2A.9.** La formula
+    `P_MERCADO + s(n)*(CAL - P_MERCADO)` es arquitectura de ensemble con el
+    mercado, y **no se puede demostrar hoy**: P_MARKET_FAIR verificable existe para
+    **401 partidos de MLB** (overround mediano 1.78%) y **197 de futbol con los tres
+    lados de 1X2**; 87 de 284 casos de futbol no tienen empate, o sea que no se
+    puede quitar el vig. Contra 2,152 picks de MLB y 30,876 filas de backtest, la
+    cobertura es minoritaria. Se recomienda en su lugar la arquitectura A:
+    calibracion monotona por deporte y mercado, y la incertidumbre reduciendo
+    EXPOSICION (`confidence`) en vez de reescribir la probabilidad.
+    Nota de metodo: `badrino_partidos.ml_home/ml_away` son momios AMERICANOS
+    enteros. Mi primera medicion dio "0 partidos con ambos lados" por no convertir;
+    el dato estaba bien y la consulta mal.
