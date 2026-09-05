@@ -741,3 +741,80 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
     casi lo mismo (46% y 53%)** y el tope de exposicion **no aporta nada hoy**.
     **S_parlays = $1,003.36 y NO pasa por ningun escalon de S1–S5.** Es 6.4 veces
     toda la autorizacion de sencillas y su unica puerta fue el 15% por apuesta.
+
+---
+
+79. **#215 REGISTRO DE REALIDAD: un boleto ya pagado afuera no puede ser rechazado.**
+    *(5-sep-2026. Necesidad operativa independiente de Fase 2. No es un cambio de
+    politica de sizing: ningun techo se aflojo.)*
+
+    **Donde estaba el bloqueo.** Ruta completa del Ticket Scanner:
+    `SmartUploadButton.tsx` -> `scan-betslip` (OCR) -> modal de confirmacion
+    (`SingleConfirmModal` / `ParlayConfirmModal`) -> `supabase.from("picks"|"parlays")
+    .insert()` via PostgREST -> trigger `zzz_autoridad_stake` -> `tg_autoridad_stake()`.
+    **El unico bloqueo real estaba ahi, en Postgres.** `revisar_tamano_apuesta`,
+    `tamano_apuesta` y `revisar_apuesta` devuelven jsonb y solo informan; el
+    `useTamanoApuesta` del modal solo pinta. `reto_picks_hoy` es una funcion de
+    LECTURA (SECURITY DEFINER, STABLE) y no escribe nada: el productor real es el
+    cliente contra las tablas.
+    El mensaje era `STAKE NO AUTORIZADO: $X supera el techo de $Y`, lanzado con
+    `errcode = check_violation`, y el cliente lo pintaba como un toast generico
+    "Error guardando pick" sin ofrecer salida.
+
+    **Que ya existia y que faltaba.** El escape hatch YA estaba (`stake_sobre_techo_razon`
+    >= 15 caracteres) pero el escaner nunca lo usaba, y no habia forma de distinguir
+    un boleto escaneado de una captura a mano: `boleto_path` esta en 0 de 32 picks y
+    0 de 53 parlays; `parlays.source` vale 'manual' en las 53 filas y ya lo leen
+    `capture_parlay_legs_to_ai_learning` y `sync_parlay_legs_to_learning_data`, asi
+    que sobrecargarlo habria roto el aprendizaje. `manual_override` tiene CERO
+    lectores SQL y ya significa otra cosa ("correccion manual del RESULTADO", 3 filas
+    con motivos de calificacion): tampoco se reutiliza.
+
+    **Cambio minimo.**
+    - `picks.origen` y `parlays.origen` (columna nueva, `text`, con CHECK sobre el
+      vocabulario `ticket_escaneado | app_manual | app_recomendacion`). NULL = filas
+      previas, procedencia desconocida.
+    - `tg_autoridad_stake()`: una sola rama nueva en el camino "por encima del techo".
+      Si `origen = 'ticket_escaneado'` **Y** hay evidencia (`bet_id_casa` o
+      `boleto_path`), no se lanza excepcion: se estampa `stake_techo_al_guardar` con
+      el cap vigente y se autogenera `stake_sobre_techo_razon` con el prefijo
+      `APUESTA_EXTERNA_YA_REALIZADA | fecha UTC | casa y folio | stake real y %% del
+      bankroll | techo recomendado`. Todo lo demas del trigger queda intacto.
+    - `v_stake_provenance` (vista, `security_invoker = true`, sin acceso anon):
+      separa `stake_real` / `cap_recomendado` / `origen` / `override_riesgo`.
+    - Frontend (`SmartUploadButton.tsx`): manda `origen: 'ticket_escaneado'` en los
+      dos inserts y pinta el aviso + boton "Registrar ticket de todos modos".
+
+    **La bandera NO es suelta.** Exige evidencia del boleto. `origen='ticket_escaneado'`
+    sin folio ni imagen sigue rebotando con `STAKE NO AUTORIZADO` (prueba C2).
+    Esto no debilita nada respecto de antes: el escape hatch previo (escribir 15
+    caracteres) era igual de accesible desde el cliente.
+
+    **Mapeo de campos pedidos vs campos usados** (no se invento ninguno de mas):
+    | pedido | campo real |
+    |---|---|
+    | `origen = 'ticket_escaneado'` | `picks.origen` / `parlays.origen` (NUEVO) |
+    | `stake_real` | `apuesta` (ya existia, se guarda el monto REAL sin recortar) |
+    | `cap_recomendado` | `stake_techo_al_guardar` (ya existia, lo estampa el trigger) |
+    | `override_riesgo = true` | derivado en `v_stake_provenance` |
+    | `override_motivo` | `stake_sobre_techo_razon` con prefijo `APUESTA_EXTERNA_YA_REALIZADA` |
+    | `override_timestamp` | `created_at` / `updated_at` + la fecha dentro del motivo |
+    | `stake_recomendado` | **NO se creo.** Para un boleto de OCR no hay probabilidad del modelo, asi que Kelly no tiene punto estimado que guardar. Crear la columna seria repetir la enfermedad de BTTS (columna que nadie llena). El separador honesto para auditar sizing es `cap_recomendado`, que si es un hecho. |
+
+    **Contabilidad de riesgo (PASO 4): la apuesta externa SI cuenta.** `bankroll_expuesto`
+    y `exposicion_viva` filtran por `resultado` y `es_prueba`, nunca por `origen`.
+    Medido: al registrar un parlay externo de $1,000 la exposicion pasa de $1,003.36
+    (16.7%) a **$2,003.36 (40.1%)**, `parlays_vivos` 2 -> 3.
+
+    **Pruebas A-H (INSERT reales, rollback transaccional, estado final $1,003.36 = inicial):**
+    | prueba | resultado |
+    |---|---|
+    | A) escaneado DENTRO del 5% | ACEPTADO sin marca de override (razon NULL, cap NULL) |
+    | B) escaneado $500 SOBRE el 5% | ACEPTADO, cap $300, motivo `APUESTA_EXTERNA_YA_REALIZADA ... stake real $500.00 = 8.3% ... techo recomendado $300.00 (5.0%)` |
+    | C) pick del sistema $500 sin `origen` | **SIGUE BLOQUEADO**: `STAKE NO AUTORIZADO: $500.00 supera el techo de $300.00` |
+    | C2) `origen` escaneado SIN folio ni boleto | **SIGUE BLOQUEADO** |
+    | D) parlay escaneado $1,000 sobre el techo RETO ($900) | ACEPTADO con override `[RETO 13M]` |
+    | E) exposicion viva | $1,003.36 (16.7%) -> **$2,003.36 (40.1%)** |
+    | F) `v_stake_provenance` | `stake_real=$500.00 | cap_recomendado=$300.00 | origen=ticket_escaneado | override_riesgo=t` |
+    | G) `kelly_stake` sin cambios | MLS 761781: $93.25 / EV 10.57% (identico); `reto_picks_hoy` total $156.01 (identico) |
+    | H) `EXP_OFF` | `constant numeric := 0.50` intacto |
