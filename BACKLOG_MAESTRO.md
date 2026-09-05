@@ -2842,3 +2842,155 @@ stake / risk_multiplier, no `P_FAIR`. Hoy vive dentro de P, donde decide si la
 apuesta existe, y ahi hace dano medible.
 
 **NO SE TOCA PRODUCCION.** Sigue siendo solo medicion.
+
+---
+
+## #260 FASE A CERRADA — soccer, economia OOS completa
+
+Todo sobre el mismo walk-forward estricto (`lab_bloque_a_wf`, n=24,618, futbol).
+**Cero cambios en produccion.**
+
+### PRINCIPIO 0 — expected vs actual wins, con desviacion Bernoulli no identica
+
+`z = (Sum y - Sum P) / sqrt(Sum P(1-P))` (Poisson-binomial).
+
+| mercado | n | z de A (P0) | z de B (sesgo) | z de E (+Beta) | z de H (produccion) | wins que H NO predice |
+|---|---|---|---|---|---|---|
+| Over/Under | 6,775 | **-0.63** | -0.44 | +6.21 | **+12.09** | **453.0** |
+| Moneyline | 4,065 | 0.00 * | -0.06 | +4.89 | **+9.20** | 255.7 |
+| Total Equipo | 4,065 | **-0.88** | -1.53 | +4.36 | **+9.63** | 283.9 |
+| Corners | 3,272 | 0.00 * | +0.01 | +7.11 | **+13.23** | 347.6 |
+| Doble Oportunidad | 2,710 | **-0.83** | -0.49 | +4.28 | **+8.61** | 217.4 |
+| Tarjetas | 2,376 | 0.00 * | 0.00 * | +6.95 | **+12.81** | 277.6 |
+| BTTS | 1,355 | **+1.05** | -0.94 | +4.15 | **+8.55** | 149.7 |
+
+`*` **CAVEAT ESTRUCTURAL:** en Moneyline (3 filas/fixture que suman 1), Corners
+(8 filas = 4 pares complementarios) y Tarjetas (6 filas = 3 pares), `Sum P = Sum y`
+por construccion de la rejilla. Ese `z = 0.00` **no es evidencia de
+calibracion**, es aritmetica. Los z informativos son Over/Under, Total Equipo,
+Doble Oportunidad y BTTS — y ahi **P0 esta insesgado** (|z| <= 1.05).
+
+**El titular:** produccion (H) deja de predecir **~1,785 victorias** en 24,618
+observaciones, con z entre **+8.55 y +13.23 en los 7 mercados**. Eso no es
+prudencia: es una probabilidad mal especificada. En el lenguaje del Principio 0,
+produccion es el caso "esperaba 5.7 de 10 y ganaron 6" **al reves**: dice 4.4 y
+ganan 6.
+
+### Log loss (misma direccion que Brier, sin excepcion)
+
+| mercado | A | B | E | H |
+|---|---|---|---|---|
+| Over/Under | **0.60840** | 0.60957 | 0.61440 | 0.62654 |
+| Moneyline | 0.60800 | **0.60748** | 0.61211 | 0.62326 |
+| Total Equipo | **0.60738** | 0.60827 | 0.61355 | 0.62840 |
+| Corners | 0.76738 | **0.71628** | 0.73473 | 0.75760 |
+| Doble Oportunidad | 0.63617 | **0.63557** | 0.64106 | 0.65612 |
+| Tarjetas | **0.68009** | 0.68245 | 0.70330 | 0.72955 |
+| BTTS | 0.70004 | **0.69799** | 0.71048 | 0.73930 |
+
+H es el peor en los 7. Brier y log loss coinciden en todo.
+
+### Pendiente e intercepto de calibracion lineal (de P0)
+
+| mercado | pendiente | intercepto | lectura |
+|---|---|---|---|
+| Doble Oportunidad | **1.359** | -0.233 | sub-dispersa: la realidad varia MAS que el modelo |
+| Moneyline | **1.295** | -0.098 | sub-dispersa |
+| Over/Under | **1.061** | -0.037 | **bien especificada** |
+| Total Equipo | **1.016** | -0.017 | **bien especificada** |
+| Tarjetas | 0.668 | 0.166 | sobre-dispersa |
+| BTTS | 0.371 | 0.326 | muy sobre-dispersa: casi todo es ruido |
+| Corners | **0.347** | 0.327 | muy sobre-dispersa: casi todo es ruido |
+
+Esto es informacion de SKILL por mercado, no de calibracion media, y es nueva.
+Over/Under y Total Equipo tienen pendiente ~1: el modelo discrimina de verdad.
+Corners y BTTS con pendiente ~0.35: el ancho de sus predicciones es
+mayoritariamente ruido.
+
+### Estratificacion por TRAMO DE P (lo que faltaba)
+
+Umbral cuota 2.00. Sobre la base de B:
+
+| banda de P_B | base B | mata Beta | % de la banda | hit de los matados | P declarada | mata Wilson | hit |
+|---|---|---|---|---|---|---|---|
+| **50-60%** | 4,536 | **2,124** | **46.8%** | **54.19%** | 52.92% | 1,376 | **55.31%** |
+| 60-70% | 3,800 | 62 | 1.6% | 48.39% | 60.53% | 600 | 61.17% |
+| 70-80% | 3,742 | **0** | 0% | — | — | 39 | 74.36% |
+| 80-90% | 1,322 | **0** | 0% | — | — | 0 | — |
+| 90-100% | 193 | **0** | 0% | — | — | 0 | — |
+
+**Beta mata el 46.8% de la banda 50-60% y CERO por encima del 70%.** En la banda
+que arrasa, los eliminados aciertan **54.19%** contra una P declarada de 52.92%
+(el modelo los SUBESTIMABA) y contra un breakeven de 50%.
+
+Los unicos que Beta acierta en matar son 62 filas de la banda 60-70%
+(aciertan 48.39% contra 60.53% declarado): reales fallos, pero encuentra 62 de
+24,618.
+
+**Y donde SI hay un problema real de calibracion, el filtro esta inerte:** banda
+90-100%, 193 filas, aciertan **73.06%** contra una P declarada de 90%+. Beta
+mata 0. Wilson mata 0.
+
+### MECANISMO (juntando las tres estratificaciones)
+
+El recorte es una funcion de **(n chico, P cerca del breakeven)**, no de calidad:
+
+- por `n`: con `n >= 1000` mata 19 de 1,066 (**1.8%**); con celda delgada o
+  inexistente mata **27-31%**;
+- por tramo de P: mata **46.8%** de 50-60% y **0%** por encima de 70%;
+- por mercado: mata en los 7, y en los 14 grupos eliminados el hit real queda
+  por encima del breakeven.
+
+Es exactamente el perfil de una penalizacion proporcional a `1/sqrt(n)` aplicada
+sobre `p`. **Beta y Wilson son un castigo por falta de muestra disfrazado de
+probabilidad.**
+
+### CLASIFICACION FINAL POR MERCADO — `v_sesgo`
+
+| mercado | n | delta Brier x1000 | t | clasificacion |
+|---|---|---|---|---|
+| Corners | 3,272 | **-15.810** | **-6.95** | **SOPORTADA_OOS** (con reserva, ver abajo) |
+| Moneyline | 4,065 | -0.250 | -0.93 | **NO_APORTA_OOS** |
+| Doble Oportunidad | 2,710 | -0.309 | -0.82 | **NO_APORTA_OOS** |
+| Over/Under | 6,775 | +0.495 | +1.68 | **NO_APORTA_OOS** (tendencia a danina) |
+| Total Equipo | 4,065 | +0.361 | +1.14 | **NO_APORTA_OOS** |
+| Tarjetas | 2,376 | +1.124 | +1.41 | **NO_APORTA_OOS** |
+| BTTS | 1,355 | -0.975 | -0.52 | **INCONCLUSA** (menor n, |t| menor) |
+
+**Reserva sobre Corners:** es el mercado de rejilla perfectamente simetrica
+(8 filas = 4 pares complementarios, `Sum P = Sum y` exacto) y el de pendiente de
+calibracion mas baja (0.347). La correccion de media rinde ahi justo porque casi
+todo es ruido. **Soportada en esta poblacion; transferibilidad NO probada.**
+
+**Global:** `v_sesgo` **NO es `SOPORTADA_OOS_GLOBAL`**. La mejora agregada
+(-1.926 x1000) es menor que la aportacion de Corners solo
+(-15.810 x 3272/24618 = **-2.10 x1000**). Sin Corners, el sesgo no aporta.
+
+### CLASIFICACION FINAL — Beta y Wilson
+
+**DANINA_OOS en los 7 mercados**, sin una sola excepcion, por Brier (t entre
++2.52 y +11.18), por log loss y por el z del Principio 0.
+
+### RESPUESTA A LA PREGUNTA ECONOMICA
+
+**¿Beta o Wilson mejoran la seleccion economica OOS aunque empeoren la
+probabilidad?** **NO.**
+
+- 14 de 14 grupos eliminados por mercado quedan por encima del breakeven;
+- 6 de 6 grupos eliminados a cuotas 1.80 / 2.00 / 2.50 quedan por encima;
+- en la banda que arrasan (50-60%), los eliminados aciertan mas de lo que su
+  propia P decia;
+- estan inertes en la banda 90-100%, que es donde si hay error real.
+
+**Caso A del auditor: empeoran probabilidad Y economia.**
+
+### LIMITE QUE SIGUE ABIERTO
+
+**No existe momio historico** para esta poblacion (cobertura maxima 5.3%,
+sesgada al tramo reciente). Por eso el ROI unit-stake se reporta como barrido de
+precio sintetico y **no como economia**: con precio plano `ROI = hit x q - 1`,
+una reescala monotona del hit rate. **A-ECO-2 y A-ECO-6 (Kelly) siguen
+formalmente abiertos** y solo se cierran empezando a persistir el precio del
+mercado junto a cada fila de backtest desde hoy.
+
+**FASE A COMPLETA. No se avanza a FASE B sin autorizacion.**
