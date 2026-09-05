@@ -3284,3 +3284,122 @@ distintas a la misma pregunta economica.
 negativo) y **4 picks de Over/Under que hoy salen con Kelly 0.00% pasarian a
 mostrar el stake que produccion ya autoriza**. La tarjeta va a ensenar menos
 picks y mas honestos.
+
+---
+
+## #262-B EV_DECISION_V1 CONSTRUIDO Y VALIDADO — pero **NO-GO** para promocion
+
+**Produccion intacta. V2 sin consumidores.** Se cumplio el mandato: implementar
+y llevar hasta validacion pre-produccion, sin deploy ciego.
+
+### Lo construido
+
+**`public.ev_decision_v1(apodo, prob_pct, momio, mercado)`** -> `(ev_pct,
+kelly_pct, prob_que_decide_pct, ok, origen)`. `LANGUAGE sql STABLE`.
+**Wrapper puro**: su cuerpo entero es un `select` de cuatro casts sobre el jsonb
+de `kelly_stake`. **Cero aritmetica.** Si `kelly_stake` cambia, la UI cambia con
+el. Candado 1 cumplido por construccion.
+
+**`public.mejor_oportunidad_hoy_v2(limite, apodo)`** — misma firma de retorno
+(22 columnas) que la productiva. Admision, orden, EV y Kelly salen TODOS de
+`ev_decision_v1`. `calibrar_prob_motor_live` queda reducida al rotulo
+`fuera_de_rango` y su aviso, sin tocar `where`, orden, EV ni stake.
+
+### CANDADO 3 (C7) — **PASA PERFECTO**
+
+| metrica | resultado |
+|---|---|
+| picks accionables evaluados | 4 |
+| fallas `abs(EV_UI - EV_DINERO) > 0.1 pp` | **0** |
+| fallas `abs(Kelly_UI - Kelly_prod) > 0.01 pp` | **0** |
+| contradicciones de signo | **0** |
+| picks con EV <= 0 mostrados | **0** |
+| **desvio maximo de EV** | **0.000000** |
+| **desvio maximo de Kelly** | **0.000000** |
+
+Cero exacto, no "dentro de tolerancia": es un passthrough literal.
+
+### CANDADO 4 — LOS 9 CASOS DE REGRESION
+
+| pick | momio | EV_UI v1 | EV dinero | EV_UI v2 | Kelly_UI v1 | Kelly prod | Kelly_UI v2 | resultado |
+|---|---|---|---|---|---|---|---|---|
+| Under 3.5 | 1.952 | 18.7 | 16.06 | **16.06** | 0.39 | 4.22 | **4.22** | coherente |
+| Under 3.5 | 1.645 | 19.3 | 16.03 | **16.03** | **0.00** | 6.21 | **6.21** | coherente |
+| Under 3.5 | 1.741 | 9.2 | 7.07 | **7.07** | **0.00** | 2.38 | **2.38** | coherente |
+| Over 3.5 | 2.050 | 8.0 | 3.15 | **3.15** | 1.57 | 0.75 | **0.75** | coherente |
+| Gana Austin | 2.250 | 16.1 | **+0.84** | — | 3.22 | 0.17 | — | **retirado** (piso ML 2.0) |
+| ML NY Yankees | 2.050 | **+11.5** | **-4.01** | — | 1.57 | 0.00 | — | **retirado** (EV negativo) |
+| ML Atlanta Braves | 1.917 | **+4.9** | **-9.89** | — | 0.00 | 0.00 | — | **retirado** |
+| ML KC Royals | 1.9259 | **+4.0** | **-10.52** | — | 0.04 | 0.00 | — | **retirado** |
+| Gana FC Dallas | 1.370 | **+8.0** | **-17.55** | — | 0.00 | 0.00 | — | **retirado** |
+
+**Los 4 de Over/Under que escondian stake ahora lo muestran.** Los que tenian EV
+real negativo **desaparecieron**. Cero contradicciones de signo sobreviven.
+
+Nota honesta: los momios se movieron entre la traza de C2 y esta (mercado vivo:
+FC Dallas 1.377->1.370, Atlanta 1.926->1.917). El patron es identico. Y
+**"Gana Austin" no se retira por signo sino por el piso de 2.0 que ya existia**,
+ahora aplicado al EV real (+0.84). No se re-ajusto ningun umbral.
+
+### CANDADO 2 — **FALLA. Este es el NO-GO.**
+
+Busqueda de referencias a `calibrar_prob_motor_live` despues del diff. Sigue
+viva en rutas que **no** son diagnostico:
+
+| objeto | por que importa |
+|---|---|
+| **`refrescar_destacados(integer)`** | escribe `destacados_cache`, que alimenta la tarjeta DESTACADOS. **Accionable.** |
+| **`vale_la_pena_cerrar(uuid,numeric)`** | decide cash out. **Es dinero real.** |
+| **`favoritos_bien_pagados(numeric,numeric,numeric)`** | pantalla Favoritos, presenta picks |
+| `veredicto_vivo(text,text,numeric)` | veredicto en vivo |
+| `calibrar_prob_motor(...)` | variante base de la misma familia |
+| `invariantes_temporales()`, `tg_candado_temporal()` | guardas temporales, no economicas |
+| `mejor_oportunidad_hoy(integer)` | la productiva, aun sin tocar |
+
+**Tu condicion de NO-GO se cumple literalmente:** quedan al menos tres rutas de
+UI/decision recomputando fuera de `kelly_stake`, y una de ellas
+(`vale_la_pena_cerrar`) mueve dinero de verdad.
+
+### SEGUNDO BLOQUEO: como se resuelve el apodo
+
+`kelly_stake` necesita bankroll, o sea apodo. La funcion productiva
+`mejor_oportunidad_hoy(integer)` no lo tiene. Promoverla implica **cambiar la
+firma del RPC** (y con ella la llamada del frontend) o resolver el apodo desde
+`auth.uid()` -> `usuarios.user_id`. **Es una decision de diseno con
+consecuencias de a-quien-pertenece-el-bankroll, y no la tomo yo.**
+
+Por eso `v2` se dejo con apodo explicito: es una funcion de validacion, no una
+candidata a swap directo.
+
+### ESTADO
+
+- `ev_decision_v1`: **creada, validada, sin consumidores productivos.**
+- `mejor_oportunidad_hoy_v2`: **creada, validada, sin consumidores productivos.**
+- `mejor_oportunidad_hoy`: **intacta.** Sigue siendo la que ve el usuario.
+- **NO se promovio nada.**
+
+### LO QUE FALTA PARA EL GO
+
+1. Extender `ev_decision_v1` a `refrescar_destacados`, `vale_la_pena_cerrar` y
+   `favoritos_bien_pagados`, o justificar por escrito por que cada una puede
+   quedarse fuera.
+2. Resolver la decision del apodo.
+3. Repetir C7 sobre las cuatro superficies, no solo sobre una.
+
+### C9 — HISTORICO INTACTO
+
+Cero escrituras. `picks.ev_estimado` y `oraculo_picks_tracking.ev_estimado`
+quedan como **EV_V0**, sin reinterpretar.
+
+### INVARIANTES
+
+Kelly intacto (v2 no lo recalcula, lo lee); RONGOL intacto; allocator intacto;
+caps intactos; EXP_OFF=0.50; NFL `SIN_MODELO`; V2 sin consumidores; residuos:
+las dos funciones nuevas, ambas sin lectores, mas `lab_bloque_a_wf` y
+`lab_bloque_b_mlb`.
+
+### TICKET NUEVO ABIERTO (no bloquea)
+
+**#263 ODDS_DISPLAY != ODDS_DECISION.** Medir cuantas apuestas registradas
+tienen `picks.momio` distinto del `momio_mercado` que vio el usuario, y cuanto
+cambia el EV real por ese slippage. No se mezcla con #209.
