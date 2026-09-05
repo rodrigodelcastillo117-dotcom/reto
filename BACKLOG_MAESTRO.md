@@ -1315,3 +1315,37 @@ Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierr
      `marcar_patas_parlay` (escribe `picks`) siguen `SECURITY INVOKER`. No fallan
      porque ambas tablas SI tienen politica `ALL` para el dueno; pero si un dia una
      pata pertenece a otro apodo, no daran error: **no haran nada**.
+
+113. **#249 Cash out: el dinero no era un bug del cash out. Era el boton que se eligio.**
+     **CORRECCION A LO QUE YO MISMO DIJE HACE UN MOMENTO.** Vi `cashout_monto` en NULL
+     en los 54 parlays y conclui "la app nunca manda ese campo". **Falso.** La ruta
+     existe y esta bien hecha:
+     `CorregirApuesta.tsx` (la hoja "¿COMO QUEDO?") llama al RPC
+     `editar_resultado_parlay(p_id, p_resultado, p_cashout_monto, p_nota)`, y ese RPC
+     escribe `cashout_monto` **solo cuando `p_resultado = 'retirado'`**:
+     ```sql
+     cashout_monto = CASE WHEN p_resultado = 'retirado' THEN p_cashout_monto ELSE NULL END
+     ```
+     El usuario eligio **❌ PERDIDO** (se ve marcado en ambar en su captura), no
+     **💰 LO CERRE ANTES (CASH OUT)**. Con `perdido` el campo de monto ni siquiera
+     aparece en pantalla, y el RPC pone `cashout_monto` en NULL a proposito.
+     La razon real de que ningun parlay tuviera cash out: nadie habia elegido nunca
+     "retirado", y hasta #248 la RLS mataba cualquier cierre manual de todas formas.
+     **Correccion aplicada al parlay `0c20f6c6`** ($300, Lens + Inter):
+     `cashout_monto = 75.00` -> el trigger `proteger_ganancia_cashout()` recalculo
+     `ganancia_neta = 75 - 300 = -225.00`. Bankroll $4,247.45 -> **$4,322.45**.
+     No se toco apuesta, momio, bono ni fecha.
+     **NO se cambio `resultado` a 'retirado', y es deliberado.** Medido: **107**
+     funciones y vistas mencionan `'ganado'`/`'perdido'` y **nunca** `'retirado'`,
+     entre ellas `get_bankroll_evolution`, `get_dashboard_stats`,
+     `get_performance_breakdown`, `get_historial_reciente`, `get_parlays_evolution`,
+     `recalc_user_stats_for_user` y `get_leaderboard`. Marcarlo 'retirado' lo haria
+     **desaparecer** del historial, las stats y la curva, aunque
+     `get_bankroll_actual` si lo cuenta. Ninguna fila de la base usa hoy ese valor.
+     Se verifico que las seis lecturas de dinero leen `ganancia_neta` y **ninguna**
+     recalcula desde `apuesta`: con `perdido` + `ganancia_neta = -225` todas pintan
+     el numero correcto.
+     **Pendiente de producto (NO es bug de datos):** "cerre antes Y iba perdiendo" es
+     el caso natural del usuario y hoy obliga a elegir entre dos botones que se
+     sienten excluyentes. O el estado 'retirado' se ensena en las 107 lecturas, o el
+     campo de cash out se ofrece tambien bajo PERDIDO/GANADO. Decision del usuario.
