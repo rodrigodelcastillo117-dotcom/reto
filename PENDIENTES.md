@@ -3729,3 +3729,92 @@ No se toco ninguna edge function en #213, asi que no hay TypeScript nuevo.
 ### Congelado para el fin de semana
 Sin cambios pendientes de mi parte. A vigilar: `contraste_motores_futbol` (A/B) y las
 notificaciones durante los partidos.
+
+---
+
+# #214 CIERRE DE LOS 5 BLOQUEADORES (5-sep-2026)
+
+## 1. Despliegue + abstencion global — HECHO
+- **Desplegado** `a79d0e7` a produccion (`reto13.lovable.app`, publicado 05:02).
+- **`v_pick_canonico` lee `mercados_en_abstencion`.** Edicion QUIRURGICA: 20,790 chars y
+  **47 dependientes**, asi que no se reescribio a mano — se tomo su propia definicion,
+  se inserto la condicion y se recreo, con candados de aborto sobre (a) el ancla unica
+  y (b) el contrato de columnas.
+
+```diff
+  c.momio_mercado IS NOT NULL
+  AND COALESCE(c.ev_pct, '-1'::numeric) >= 2.5
+  AND NOT (c.deporte ~~ 'baseball%' AND c.mercado = 'Over/Under')
+  AND COALESCE(c.calibracion_confiable, true)
+  AND pick_sin_discrepancia_motores(c.espn_event_id, c.mercado, c.pick_desc)
++ AND NOT public.mercado_en_abstencion(c.mercado, c.pick_desc)
+  AS es_pick
+```
+
+| verificacion | resultado |
+|---|---|
+| picks canonicos con dinero | 25 -> **18** |
+| mercados vetados CON dinero | **0** |
+| filas de mercados vetados visibles como analisis | 131 (correcto: abstencion != borrado) |
+| dependientes intactos | **47** |
+
+## 2. A/B `contraste_motores_futbol` — RETRACTACION DE MI BLOQUEADOR
+**NO estaba roto.** Mi matriz decia "540 filas, 10 calificadas" y lo presente como fallo.
+La verdad medida:
+
+| dato | valor |
+|---|---|
+| total | 540 |
+| calificadas | 10 |
+| `estado='sin_contraste'` (los motores coinciden, nada que medir) | **390** |
+| pendientes | 140 |
+| de esas 140, con partido ya jugado | **0** |
+| status real de sus eventos | **`pre`**, partidos del **5 y 6 de septiembre** |
+| filas sin ambas probabilidades | 0 |
+
+Y los crons existen y corren: `contraste-motores-futbol` a **:08 y :38**,
+`calificar-contraste-motores` a **:21 y :51**, cada hora.
+`calificar_contraste_motores()` ejecutada a mano: `{"calificados": 0}` — **correcto**,
+no hay partido terminado que calificar. Se calificara solo este fin de semana.
+
+## 3. Corners — gobernado por tabla, ya no por accidente
+Antes `mercado_en_abstencion('Corners','Corners Under 10')` daba true **solo porque el
+texto contiene "under"**. Acertaba por suerte. Ahora Corners esta en la tabla con su
+medicion (n=127: declara 67.9%, acierta 53.5%, Brier 0.35865 vs 0.24874 de la tasa base)
+y la funcion reconoce su vocabulario propio (`corners`, `tiros de esquina`, `esquinas`).
+
+Vocabulario verificado: Corners ✔, Tiros de esquina ✔, Over/Under ✔,
+Moneyline ✗, BTTS ✗, "Bublik +1.5 Sets" ✗ (no se pasa de listo).
+
+## 4. NFL — CORRECCION DE UN HALLAZGO MIO
+Dije que `nfl_picks_premium` no tenia `espn_event_id` y que su identidad era
+**"imposible"**. **ERA FALSO.** `fixture_id` YA ES el espn_event_id, solo renombrado:
+**1,358 de 1,358** filas cruzan con `nfl_partidos` Y con `live_scores`, con ids del
+vocabulario `401xxxxxx`.
+
+Se expuso la columna con su nombre canonico (DROP+CREATE en una sola transaccion,
+0 dependientes). Verificado: 1,358 con `espn_event_id`, 1,358 iguales a `fixture_id`,
+1,358 cruzando `live_scores`.
+
+## LO QUE NO HICE, Y POR QUE
+- **Quitar el 0.55 de `prob_corners` en `analizar-partido`.** Son 239,475 caracteres,
+  `deploy_edge_function` exige reenviar el archivo ENTERO y voltea `verify_jwt` en
+  silencio. El riesgo que mitiga **ya esta cubierto**: Corners no llega a dinero en
+  ninguna superficie. Es higiene, no seguridad. Merece ventana propia, no la vispera
+  de un fin de semana con partidos.
+- **`nfl-sync-cdn` (#35).** Choca con una restriccion vigente: no tocarlo hasta despues
+  de la apertura del 9-10 de septiembre. Faltan 4 dias y es sabado de partidos.
+  **Necesito tu confirmacion explicita** para operarlo ahora.
+
+## Lecciones nuevas
+64. **Un guard que busca una cadena en el TEXTO de una definicion da falsos positivos.**
+    Mi candado aborto la cirugia de `nfl_picks_premium` porque la vista referencia
+    `nfl_partidos.espn_event_id` por dentro. El guard correcto mira `pg_attribute`, no
+    el texto. El aborto fue el comportamiento correcto por la razon equivocada.
+65. **"Pocas filas calificadas" no es "el calificador esta roto".** Reporte el A/B como
+    bloqueador critico. Estaba sano: 390 filas sin contraste que medir y 140 esperando
+    partidos que se juegan hoy. Antes de declarar un instrumento averiado, preguntar si
+    ya hay algo que medir.
+66. **"Identidad imposible" merecia una consulta, no una conclusion.** `nfl_picks_premium`
+    tenia la identidad todo el tiempo bajo el nombre `fixture_id`. Un `count(*) filter`
+    de un minuto lo habria mostrado. Lo di por perdido durante dos auditorias.
