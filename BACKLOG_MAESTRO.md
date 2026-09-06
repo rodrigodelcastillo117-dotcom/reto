@@ -3712,3 +3712,88 @@ P/EV, y recien entonces GO/NO-GO.
 
 **#263 sigue fuera de scope.** **Sin cambios en** Beta, Wilson, sesgo, Kelly,
 caps, RONGOL, allocator, NFL, EXP_OFF=0.50, V2.
+
+---
+
+## #262-F — POLITICA DE IDENTIDAD DE TRES ROLES (`resolver_identidad_economica`)
+
+**Fecha:** 6-sep-2026. **Estado:** construido y probado. **Cero consumidores.**
+**Produccion intacta.**
+
+El auditor fijo la politica, textual:
+
+```
+authenticated:  p_apodo NO es autoridad -> auth.uid() -> usuario propio
+                -> si p_apodo != propio, rechaza o ignora
+anon:           -> SIN_IDENTIDAD_ECONOMICA
+service_role / ruta interna: -> puede usar apodo explicito
+```
+
+Se implemento en **un solo lugar reutilizable**, `public.resolver_identidad_economica(p_apodo text)`,
+precisamente para que endurecer una funcion que ya recibe apodo (como `kelly_stake`)
+sea **un cambio de una linea** y no una reescritura.
+
+Devuelve `{ok, apodo, origen, motivo}`. `origen` ∈
+`auth_uid` | `service_role_explicito` | `interno_sin_jwt`.
+
+### HALLAZGO: `current_user` NO SIRVE DENTRO DE `SECURITY DEFINER`
+
+La primera version detectaba el rol con `current_user`. **Dentro de una funcion
+`SECURITY DEFINER`, `current_user` es el DUENO (`postgres`), no el llamador.**
+Con eso, **todos** los llamadores — incluido `anon` — habrian sido clasificados
+como "ruta interna" y la politica habria quedado invertida: el agujero, en vez
+de cerrarse, se habria abierto por completo.
+
+Se detecto antes de probar. La version buena lee la reclamacion del JWT:
+
+```sql
+v_rol_jwt := nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role';
+v_interno := (v_rol_jwt IS NULL) OR (v_rol_jwt = 'service_role');
+```
+
+JWT nulo = conexion directa (cron, psql, backend) = interna. Es la unica lectura
+que sobrevive dentro de `SECURITY DEFINER`.
+
+### R1-R8 — PRUEBA CON JWT SIMULADOS (8/8 PASS)
+
+| caso | rol | p_apodo | resultado | veredicto |
+|---|---|---|---|---|
+| R1 | authenticated | (null) | ok, `rodelcast` (por `auth.uid()`) | PASS |
+| R2 | authenticated | `rodelcast` (propio) | ok, `rodelcast` | PASS |
+| R3 | authenticated | **apodo ajeno** | `IDENTIDAD_AJENA_RECHAZADA` | PASS |
+| R4 | anon | (null) | `SIN_IDENTIDAD_ECONOMICA` | PASS |
+| R5 | anon | apodo ajeno (intento) | `SIN_IDENTIDAD_ECONOMICA` | PASS |
+| R6 | service_role | apodo explicito | ok, ese apodo | PASS |
+| R7 | service_role | (null) | `INTERNAL_SIN_APODO` | PASS |
+| R8 | conexion directa (cron) | apodo explicito | ok, ese apodo | PASS |
+
+R3 y R5 son los dos casos que hoy estan abiertos en produccion.
+
+### PERMISOS
+
+`resolver_identidad_economica`: revocada de `public` y de `anon`;
+concedida a `authenticated` y `service_role`.
+
+### RADIO DE IMPACTO MEDIDO DE ENDURECER `kelly_stake` (no ejecutado)
+
+Llamadores **reales** de `kelly_stake` (se excluyeron las menciones en comentario):
+
+| llamador | pasa apodo | riesgo si se endurece |
+|---|---|---|
+| `autodiagnostico()` | **'rodelcast' hardcodeado** | falla para cualquier otro usuario autenticado |
+| `devils_advocate(...)` | `p_apodo` | ok si el apodo es el propio |
+| `devils_advocate_parlay(...)` | `p_apodo` | ok si el apodo es el propio |
+| `reto_picks_hoy(p_apodo)` | `p_apodo` | ok si el apodo es el propio |
+| `revisar_apuesta(...)` | `p_apodo` | ok si el apodo es el propio |
+| `ev_decision_v1(...)` | `p_apodo` | sombra, sin consumidores |
+
+`mejor_oportunidad_hoy` (produccion) **no** llama a `kelly_stake`: tiene su
+propia cuenta con `kelly_fraccion_pct`. Eso es exactamente #209.
+
+**No se endurecio nada.** El diff existe y esta sin aplicar; requiere ademas
+medir con que rol llega cada superficie del front antes de tocarla.
+
+### RESIDUOS
+
+`lab_test_roles()` creada para correr R1-R8 y **borrada** al terminar.
+Verificado: no queda ninguna funcion `lab_test_*` en la base.
