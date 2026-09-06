@@ -4674,3 +4674,76 @@ PENDIENTE E.2C.2:
   lab_resolver_hist_goles_v1 (reforzado con cargado_at) ; lab_dq_capture_queue ; lab_dq_capture_misses
   lab_dq_tg_captura_oraculo (enqueue-only) + trigger trg_dq_captura_oraculo en oraculo_picks_tracking
   lab_dq_drain_queue(worker async)
+
+
+## 6-sep-2026 — BLOQUE M (Market Data / CLV) — inventario, semantica canonica, CLV shadow, A_ECO
+
+Todo SHADOW. Sin dinero/risk_multiplier. Capas: SKILL/MODEL_EVIDENCE/SEMANTIC_VALIDITY/EMPIRICAL_SUFFICIENCY/PRICE_QUALITY/ELIGIBILITY/RISK.
+
+### M1 — INVENTARIO REAL de fuentes de odds
+Tablas de precio (33 candidatas). Nucleos medidos:
+  radar_odds_snapshots : 91,545 filas, 826 fixtures, May6-Sep6. snapshot_at + open/close cols + bookmaker + fase. FUENTE intradia real.
+  oraculo_picks_tracking: 3,520 decisiones (1,959 fixtures). odds_apertura 98.6%; odds_cierre 23.3% (821/493 fix); clv_pct 23.3%.
+  otras: fut_odds_history (sin espn_event_id), odds_pro_snapshots, momios_cierre_espn, clv_real/clv_tracking/clv_dashboard, v_linea_de_cierre, v_cierre_limpio.
+Campos por registro disponibles en radar: fixture(espn_event_id/odds_event_id), sport_key, mercados (ML/OU/BTTS/spread), selection (cols), book(bookmaker), odds, snapshot_at, overround, confiable, open/close.
+
+### M2 — SEMANTICA CANONICA (versionada en lab_price_policy)
+  PRICE_POLICY_V1 DECISION_ODDS = snapshot con snapshot_at <= decision_time, pregame (fase<>en_vivo); nunca posterior; forward congelado via lab_dq_decision.odds_snapshot_id. Si no existe: NO_DECISION_ODDS.
+  CLOSE_POLICY_V1 CLOSING_ODDS  = ultimo snapshot pregame valido antes del kickoff (agenda.fecha), mismo selection/book. Evaluacion, no predictor.
+  OPENING = primer snapshot pregame; CURRENT = ultimo observado en un momento.
+  LINE_SHOPPING_V1 = book del snapshot de decision (consenso multi-book = version futura). Nunca best-line retrospectivo.
+
+### M3 — NO SUSTITUCIONES + HALLAZGO DE CONTAMINACION
+Prohibido closing/current-posterior como decision, interpolar, inferir, best-line retrospectiva. Si no existe: NO_DECISION_ODDS.
+HALLAZGO: el odds_cierre ALMACENADO en oraculo_picks_tracking esta CONTAMINADO -> sobre 821 con cierre:
+  decision prom 2.256 vs "cierre" prom 8.963 (imposible mismo lado); CLV recalculado -0.0016 no reconcilia con clv_pct guardado 2.29.
+  => la CLV almacenada NO es confiable; se descarta y se recalcula canonicamente desde radar. (Defecto a corregir en la capa de ingesta de cierre.)
+
+### M4 — LINE SHOPPING POLICY
+Versionada (LINE_SHOPPING_V1). Precio de decision = book realmente accesible en decision_time (el del snapshot de decision). Consenso/mejor-precio-accesible = version futura, versionada. No retrospectivo.
+
+### M5 — CLV (SHADOW)
+Artefacto canonico creado: v_lab_closing_canonico_ml (soccer Moneyline) = ultimo snapshot pregame antes del kickoff.
+  137 fixtures, home_ml_close prom 2.07 (SANO, vs 8.96 contaminado), snapshots Sep2-6.
+CLV = implied(close) - implied(decision) en probabilidad; >0 = vencimos el cierre. Precio: decision vs close.
+Reportables (cuando haya decisiones forward cerradas): odds_decision, odds_close, implied_dec, implied_close, CLV_prob, CLV_precio, book, timestamps, tiempo decision->close.
+VIG: la version no-vig requiere ambos lados del cierre (radar los tiene: home/draw/away); se computara no-vig ademas de cruda.
+  NOTA: CLV+ NO demuestra model skill por si solo; es calidad de precio/decision.
+PRIMERAS METRICAS: la CLV historica utilizable es ~0 porque el unico cierre almacenado esta contaminado; la CLV canonica
+  se acumula FORWARD sobre lab_dq_decision.odds_snapshot_id (decision congelada) x v_lab_closing_canonico (post-evento). Sin numeros crudos validos aun.
+
+### M6 — A_ECO (decision-odds verdaderas)
+Cobertura de decision-odds temporalmente demostrable (radar pregame con mapping espn):
+  radar 826 fixtures; solo 137 mapean a agenda por espn_event_id (los otros 689 usan odds_event_id -> DEFECTO DE MAPPING).
+  De esos 137: todos con >=1 snapshot pregame (prom 90.4/fixture), 118 con >=2, 137 con cierre derivable.
+  => decision-odds verdaderas disponibles hoy: 137 fixtures (sube de 82). Insuficiente para cerrar A_ECO global.
+A_ECO = PENDIENTE_ODDS_DECISION (se mantiene). Solo cerrar sobre observaciones con precio de decision temporalmente demostrable;
+  nunca completar el faltante con closing/backfill. Camino: (a) arreglar mapping odds_event_id<->espn_event_id (+689 fixtures),
+  (b) acumular forward con la captura forense (odds_snapshot_id en decision_time).
+
+### M7 — FORENSIA
+lab_dq_decision ya liga odds_snapshot_id + eligibility_version + p_fair/skill versions (E.2C). Se agrega price_policy_version
+(lab_price_policy) y, post-evento, closing_snapshot_id (v_lab_closing_canonico_ml.closing_snapshot_id) + CLV_version. Sin reescribir el snapshot original.
+
+### SALIDA (9 items)
+1. Cobertura opening/current/decision/closing por sport/market: radar 826 fix (137 espn-mapped, 90 snaps/fix pregame, cierre derivable);
+   oraculo apertura 98.6%, cierre 23.3% CONTAMINADO. Desglose fino por mercado: pendiente (Moneyline cubierto por v_lab_closing_canonico_ml).
+2. Politica decision price: PRICE_POLICY_V1 (snapshot<=decision_time, pregame, book del snapshot; forward congelado).
+3. Politica close: CLOSE_POLICY_V1 (ultimo pregame antes de kickoff, mismo selection/book).
+4. % decisiones con CLV calculable: almacenado 23.3% pero CONTAMINADO -> ~0 confiable; canonico forward sobre 137 fix con cierre sano.
+5. Primeras metricas CLV: sin numeros crudos validos (cierre almacenado contaminado); maquinaria canonica lista, acumula forward.
+6. A_ECO: 137 fixtures con decision-odds verdaderas (de 826 radar); bloqueado por mapping odds_event_id<->espn_event_id (689). PENDING.
+7. Anomalias/mapping: (a) odds_cierre contaminado en oraculo; (b) 689/826 radar sin mapping espn.
+8. Cero lookahead: decision snapshot_at<=decision_time; closing snapshot_at<kickoff; ambos timestamped; + candado cargado_at (E.2C.1); forward congela odds_snapshot_id.
+9. Dinero desconectado: confirmado; sin risk_multiplier; todo SHADOW.
+
+### OBJETOS SHADOW nuevos
+  lab_price_policy (PRICE_POLICY_V1, CLOSE_POLICY_V1, LINE_SHOPPING_V1) ; v_lab_closing_canonico_ml (cierre canonico Moneyline).
+
+### PENDIENTE (no Feature Audit todavia)
+  - CLV canonico forward: vista que une lab_dq_decision.odds_snapshot_id (decision) con v_lab_closing_canonico (close) post-evento;
+    version no-vig (ambos lados) + cruda; acumula al cerrar partidos.
+  - Extender cierre canonico a Over/Under y BTTS (columnas over/under/btts en radar).
+  - Arreglar mapping odds_event_id<->espn_event_id (+689 fixtures a la cobertura de decision-odds).
+  - Corregir ingesta contaminada de odds_cierre en oraculo_picks_tracking (defecto de infraestructura).
+  - Programar drain de la cola DQ (E.2C.2) para que la captura forense acumule sola.
