@@ -43,6 +43,12 @@ push con apodo inexistente.
 | función | ver | sin sesión | service (no user) | A→recurso de B | dueño→propio | callers |
 |---|---|---|---|---|---|---|
 | confirmar-fecha-pick | 14→15 | 401 | 401 | **404 y pick de B intacto** | 200 ok | solo frontend (0 cron, 0 db_fn) |
+| get-parlay-with-scores | 60→61 | 401 | 401 | **200 ok pero 0 parlays (ignora body.apodo)** | 200 ok, 1 parlay | solo frontend (0 cron, 0 db_fn) |
+
+get-parlay-with-scores: exploit legado (sin JWT + body.apodo='rongo' + uuid) devolvía
+el parlay de rongo; ahora 401. Con JWT de A pidiendo el parlay de rongo → 0 parlays.
+Verificado con JWT real acuñado server-side; solo lectura (cero mutación); sesión
+revocada al terminar. Dependencia de frontend: mismo patrón (invoke manda el token).
 
 Verificación de confirmar-fecha-pick con JWT de usuario REAL acuñado server-side
 (admin generate_link → verify; sesión revocada con /logout al terminar; token nunca
