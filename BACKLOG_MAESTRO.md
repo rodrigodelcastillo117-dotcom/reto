@@ -3923,3 +3923,115 @@ Borrados: `lab_ctx_capturar()`, `lab_ctx_probe`, `lab_chunks`, `lab_diag`,
 cron `lab-ctx-probe-once` (jobid 414). Se conservan a proposito:
 `lab_baseline_kelly` (evidencia del punto 7) y `lab_respaldo_defs`
 (definicion exacta previa de `kelly_stake` para revertir en una linea).
+
+---
+
+## #262-H — P0 PRIVACIDAD: `live-day-dashboard` ESTABA ABIERTA A INTERNET
+
+**Fecha:** 6-sep-2026. **Clasificacion:** `HIGH_SENSITIVITY_PRIVATE / INTERNET_OPEN`.
+**Estado:** CERRADA en produccion (v18). Frontend migrado.
+
+### LA FUGA
+
+Edge Function con `verify_jwt = false` que tomaba `body.apodo` y no validaba nada:
+
+```ts
+const action = body?.action || 'today';
+result = await getDayDashboard(body.apodo, todayCDMX());
+...
+async function getDayDashboard(apodo, fechaYMD) {
+  if (!apodo) throw new Error('apodo requerido');   // unica "validacion"
+```
+
+Prueba real, **sin `apikey` y sin `Authorization`**, solo `Content-Type`:
+
+```
+POST /functions/v1/live-day-dashboard {"action":"date","apodo":"<cualquiera>","fecha":"2026-09-05"}
+-> HTTP 200 · 121,220 bytes
+{"ok":true,"apodo":"...","resumen":{"total_apuestas":8,"total_apostado":8353.8,
+ "ganancia_neta_actual":345.97, ... "bankroll_actual": ...}}
+```
+
+Devolvia el dia financiero completo: cada pick y cada parlay con montos, momios,
+`picks_data`, **ids de registro** y bankroll. Peor que la fuga de las 19 RPC: esa
+al menos exigia la llave `anon`; esta no exigia **nada**.
+
+### EL ARREGLO (v5 / version 18)
+
+Se uso el patron que YA existia en el repo, `_shared/auth.ts` -> `requireCaller()`,
+cuyo comentario dice literalmente *"Nunca confies en el apodo que manda el cliente"*.
+`live-day-dashboard` simplemente no lo usaba.
+
+```diff
++import { requireCaller, unauthorizedResponse } from "../_shared/auth.ts";
+ Deno.serve(async (req) => {
+   if (req.method === "OPTIONS") return new Response(null, { headers: CH });
++  let caller;
++  try { caller = await requireCaller(req); }
++  catch (e:any) {
++    const msg = String(e?.message || "");
++    return unauthorizedResponse(CH,
++      msg === "sin_apodo" ? "Tu cuenta todavia no tiene apodo vinculado" : "No autorizado");
++  }
+   try {
+     const body = ...; const action = body?.action || 'today';
++    const targetApodo = caller.isService ? (body?.apodo || null) : caller.apodo;
++    if (caller.isService && !targetApodo) return 400 'ruta interna sin apodo explicito';
+-      result = await getDayDashboard(body.apodo, todayCDMX());
++      result = await getDayDashboard(targetApodo, todayCDMX());
+-      result = await getDayDashboard(body.apodo, body.fecha);
++      result = await getDayDashboard(targetApodo, body.fecha);
+```
+
+`verify_jwt` se dejo en **false a proposito** (se paso explicito en el deploy):
+la autenticacion la hace `requireCaller` dentro de la funcion. No se mezclo ese
+cambio con el hotfix. **Cero cambios** en consultas, resumen, bankroll, picks,
+parlays, fechas, EV, Kelly o caps.
+
+### LD1-LD8 (medidas, no argumentadas)
+
+| caso | contexto | resultado |
+|---|---|---|
+| LD1 | sin apikey, sin Authorization | **401** `No autorizado` |
+| LD2 | apikey/publicable, sin sesion | **401** `No autorizado` |
+| LD3 | JWT real de A + `apodo=A` | 200, dashboard de A |
+| LD3b | JWT real de A, sin apodo | 200, dashboard de A |
+| LD4 | **JWT real de A + `apodo=B`** | 200 pero devuelve **A**: el apodo del cuerpo se ignora |
+| LD5 | JWT de B + `apodo=A` | mismo camino de codigo que LD4; NO se ejecuto para no crear sesion de la cuenta de otra persona |
+| LD6 | service_role + `apodo=B` | 200, dashboard de B (ruta interna legitima) |
+| LD6b | service_role sin apodo | **400** `ruta interna sin apodo explicito` |
+| LD7 | JWT valido sin apodo mapeado | `requireCaller` lanza `sin_apodo` -> 401; no se ejecuto en vivo (habria requerido tocar `usuarios`) |
+| LD8 | equivalencia A antes/despues | **JSON identico** salvo `version` y `timestamp` |
+
+LD8 al detalle: `resumen`, `picks`, `parlays`, `apuestas` y `pit_picks` **iguales
+byte a byte** (121,220 bytes en las dos versiones).
+
+El JWT de usuario para LD3/LD4 se genero **dentro de Postgres** (admin
+`generate_link` -> `verify` con `token_hash`), nunca paso por el chat, y la sesion
+se revoco al terminar (`/auth/v1/logout` -> 204).
+
+### CONSUMIDOR MIGRADO
+
+`src/components/track/LiveDayTab.tsx` mandaba **la llave publica como Bearer**:
+
+```ts
+headers: { apikey: ANON, Authorization: `Bearer ${ANON}` },
+body: JSON.stringify({ action: "today", apodo }),
+```
+
+Eso es exactamente lo que LD2 rechaza. Se migro al patron correcto:
+`supabase.auth.getSession()` -> `Authorization: Bearer <access_token>` y el cuerpo
+ya **no manda apodo**. Sin ese cambio la pestana LIVE DAY quedaba en 401.
+Cron: **0** trabajos llaman a esta funcion. Edge->Edge: ninguno.
+
+### `leaderboard-roi` — TICKET APARTE
+
+`PUBLIC_LEADERBOARD_DATA_MINIMIZATION`. Tambien `verify_jwt=false` y sin auth,
+pero es publico por diseno. Expone hoy: `roi_pct`, `ganancia_neta`, `drawdown_max`,
+`drawdown_actual`, `avg_stake`, `max_stake`, `clv_promedio`, rachas, `total_apostado`.
+`avg_stake` / `max_stake` / `total_apostado` / drawdown en pesos revelan **tamano de
+banca**, no habilidad. No se toco.
+
+### ROLLBACK
+
+Version anterior = 17. `deploy_edge_function` con la v4 restaura en un paso.
