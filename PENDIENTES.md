@@ -4131,3 +4131,35 @@ ECONOMIA OOS: A_ECO = PENDIENTE_ODDS_DECISION.
 
 SIGUIENTE: FASE B1/B2 MLB (probabilidad, medible sin odds) + andamiaje Skill/Eligibility en SHADOW.
 No promover produccion. No optimizar thresholds. No tocar Kelly/caps/allocator/RONGOL/EXP_OFF/NFL.
+
+
+## 6-sep-2026 — P_FAIR bloque / FASE B (MLB) + FASE C P_FAIR_V1_SHADOW
+DATASET: lab_bloque_b_mlb = 1,056 obs MLB ML (gano_local), base_rate=0.5189.
+Trae p0 (cruda), y, y DOS juegos de componentes: s_* = transformacion CROSS-DOMAIN soccer->MLB
+(la de produccion), m_* = MLB-NATIVE walk-forward (challenger). Formula reconstruida:
+clip(clip(p0+sesgo-recorte,0.01,0.99)*factor,0.01,0.99).
+
+PROBABILIDAD (Brier, n=1,056):
+  p0 crudo .................... 0.24732   (el mejor)
+  cross-domain full .......... 0.26304   (+0.0157 vs crudo)  -> DANINA_OOS
+  MLB-native full ............ 0.26309   (+0.0158 vs crudo)  -> NO_APORTA (peor que crudo, ~= cross)
+  cross sesgo-solo ........... 0.24785   (+0.0005)           -> NO_APORTA
+  native sesgo-solo .......... 0.24816   (+0.0008)           -> NO_APORTA
+  corr(p0,y)=0.097 ; meanP0=0.523 (~base).
+
+VEREDICTO FASE B:
+  B1 cross-domain soccer->MLB = DANINA_OOS (empeora Brier).
+  B2 MLB-native challenger    = NO_APORTA_OOS (no le gana al crudo; ~= cross-domain).
+  Para MLB ML la probabilidad CRUDA ya es la mejor; ninguna calibracion (soccer ni native)
+  se justifica OOS. Beta/Wilson danan (consistente con FASE A).
+
+FASE C — P_FAIR_V1_SHADOW (preliminar, SHADOW, NO produccion):
+  | sport/market        | P_FAIR            | metodo                    | evidencia_oos        | n      | status |
+  | soccer (agregado 7) | P0 + sesgo        | sesgo SOPORTADA_OOS       | Brier 0.22169<0.22362| 24,618 | CALIBRACION_SESGO_OK; Beta/Wilson EXCLUIDOS (DANINA) |
+  | MLB / Moneyline     | P0 (crudo)        | sin correccion            | crudo=mejor Brier    | 1,056  | SIN_CALIBRACION_OOS_JUSTIFICADA |
+  Regla: nunca usar correcciones de otro deporte por compartir nombre de mercado (cross-domain DANINA lo confirma).
+  Beta/Wilson NO calibran P_FAIR; su eventual uso seria risk_multiplier/abstencion aparte.
+  Refinamiento pendiente: breakdown de soccer por mercado (lab_bloque_a_wf.mercado) para P_FAIR por mercado.
+
+SIGUIENTE: FASE D Skill Gate (OOS: Brier vs baseline, LogLoss, calibracion, estabilidad WF, N),
+categorico SKILL_PASS/FAIL/INSUFFICIENT, sin score 0-100, sin EV como prueba de skill. Todo SHADOW.
