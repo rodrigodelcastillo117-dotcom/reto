@@ -5010,3 +5010,74 @@ Todo SHADOW. Sin dinero/risk_multiplier. P_FAIR productivo intacto. EXP_OFF=0.50
   - Total Equipo: champion en holdout propio.
   - Economia/CLV: sigue PENDING_FORWARD_EVIDENCE (0 EXACT_DECISION_PRICE).
   - REAL_EVENT_E2E: PENDING (cron 415 activo).
+
+
+## 6-sep-2026 — S3-REAL (split temporal virgen) + S3.4 skill gate + xG forward. DETENTE. NO promover.
+
+Correccion metodologica: el "holdout 30%" anterior NO era virgen (el 30% final participo en las ablaciones
+S2 sobre el universo completo n=1159 -> influyo en la seleccion de estructura). Se rehizo con split temporal REAL.
+Todo SHADOW. Produccion intacta. Dinero desconectado. EXP_OFF=0.50 intacto. Soccer NO declarado 100%.
+
+### S3.0 — SPLIT TEMPORAL REAL (3 vias, FINAL TEST nunca tocado hasta S3.3)
+  Dataset futbol_5ligas_2526, rango 2025-08-15 .. 2026-05-24, n=1750 partidos con resultado.
+  Cortes por fecha: DISCOVERY fecha<=2026-01-10 (n=878) ; VALIDATION 2026-01-10<fecha<=2026-03-14 (n=436) ;
+  FINAL TEST fecha>2026-03-14 (n=436 partidos / 456 predicciones WF 1X2/OU, 912 obs TeamTotal).
+  Sin tuning de hiperparametros continuos en FINAL TEST (enc=4.0 fijo; xG excluido; rho=-0.05 fijo).
+
+### S3.1 — CHALLENGERS LIMPIOS (sin xG, sin H2H; candado temporal walk-forward estricto)
+  C0 = produccion (team ON + venue split ON). C1 = team ON, venue split OFF (agrupado). C2 = base liga pura (team OFF).
+
+### S3.2 — SELECCION EN VALIDATION (Brier primaria; NO ROI). Champion por mercado:
+  Moneyline (1X2):    C1 0.19867  <  C0 0.21098  <  C2 0.21625   -> CHAMPION C1
+  Over/Under 2.5:     C2 0.25140  <  C0 0.26172   (C1 0.25348)   -> CHAMPION C2
+  Total Equipo 1.5:   C1 0.23172  <  C0 0.24125 ~ C2 0.24136     -> CHAMPION C1  (n=856 obs)
+  Doble Oport.:       = transformacion del 1X2 -> hereda C1
+  (Seleccion hecha SOLO en validation; el final test se abrio una sola vez despues.)
+
+### S3.3 — FINAL TEST (abierto UNA sola vez; champion vs produccion; pareado + IC95)
+  Moneyline C1 vs C0(prod):   Brier 0.20388 vs 0.21239 ; dBrier -0.00895 IC +/-0.00654 (excluye 0) -> CHAMPION_MEJORA
+  Over/Under C2 vs C0(prod):  Brier 0.24354 vs 0.24282 ; dBrier ~ +0.0007 IC +/-0.0112             -> EMPATE
+  Total Eq. C1 vs C0(prod):   Brier 0.23354 vs 0.24306 ; dBrier -0.00952 IC +/-0.00690 (excluye 0) -> CHAMPION_MEJORA
+  (Convencion Brier: 1X2 per-componente suma/3 ~0.204 ; O/U y TeamTotal binario ~0.24.)
+
+### S3.4 — RE-EJECUTAR SKILL GATE (D.1) SOBRE EL CHAMPION FINAL (slice virgen). Solo PASS continua.
+  Moneyline C1: team vs base liga  dBrier -0.01227 IC +/-0.00847 (excluye 0), LogLoss 1.0211 vs 1.0724 -> SKILL_PASS
+  Doble Oport.: heredado del 1X2 (transformacion monotona) -> SKILL_PASS (recalibracion por-seleccion recomendada)
+  Over/Under C2: base-Poisson vs tasa-over naive as-of  dBrier -0.00516 IC +/-0.00528 (CRUZA 0 por +0.00012) -> SKILL_INSUFFICIENT
+  Total Eq. C1: team vs base  dBrier -0.00358 IC +/-0.00896 (CRUZA 0) -> SKILL_MARGINAL
+  NO se inventa PASS. Solo Moneyline (y su transformacion Doble Oport.) pasan skill gate en el slice virgen.
+
+### MATRIZ FINAL S3-REAL (mercado x champion x veredicto)
+  Mercado          Champion                 vs Prod (final)      Skill gate (final)     Market data              Continua shadow
+  Moneyline        C1 team ON, venue OFF     MEJORA (-0.0089*)    SKILL_PASS             CLOSING_CANONICO_OK      SI (shadow)
+  Doble Oport.     C1 (=1X2 transform)       MEJORA (hereda)      SKILL_PASS             NO_MARKET_DATA_SOURCE    NO (sin momios)
+  Over/Under 2.5   C2 base liga pura         EMPATE               SKILL_INSUFFICIENT     CLOSING_CANONICO_OK      NO (skill no demostrado)
+  Total Equipo 1.5 C1 team ON, venue OFF     MEJORA (-0.0095*)    SKILL_MARGINAL         NO_MARKET_DATA_SOURCE    NO (marginal + sin momios)
+  (*IC excluye 0). UNICO mercado que pasa skill gate Y tiene market data: MONEYLINE. Aun asi NO se promociona.
+
+### HALLAZGO CENTRAL (confirmado en slice VIRGEN)
+  El cerebro de futbol mejora QUITANDO complejidad: quitar el split por sede (venue_split DAÑINA) mejora ML,
+  Doble Oport. y Total Equipo vs produccion en datos nunca vistos. El skill real de equipo solo se demuestra
+  al 95% en Moneyline; en O/U el champion es la base de liga pura y NO separa de la tasa naive; en Total Equipo
+  el team-sobre-base es marginal. Es el "cerebro mas simple, mas calibrado" — pero honesto sobre sus limites.
+
+### xG — CAPTURA FORWARD INSTRUMENTADA (en paralelo, NO bloquea, NO backfill)
+  Creada lab_soccer_xg_forward (SHADOW, append-only, REVOKE a anon/authenticated/public). Campos:
+  match_id, equipo_id, lado, xg_value, source, model_version, computed_at, available_at (as_of), ingested_at,
+  kickoff_at, usable_pre_kickoff (generated: available_at<kickoff_at). SOCCER_XG_CHALLENGER.
+  xG solo podra competir cuando acumule capturas forward con as_of real y usable_pre_kickoff=true (nested WF).
+  Sigue: xG_TEMPORAL_INTEGRITY = TEMPORALLY_UNPROVEN (el dataset historico no tiene as_of).
+
+### CANDADOS (en vigor)
+  Produccion intacta (P_FAIR / motor / trigger sin tocar). Dinero desconectado. Sin risk_multiplier.
+  EXP_OFF=0.50 intacto. Soccer NO declarado 100%. Ningun champion promovido. Nada cableado a decisiones reales.
+
+### OBJETOS SHADOW (S3-real)
+  lab_champion_soccer (reescrito con numeros de slice virgen + skill_gate_final + market_data + continua_shadow) ;
+  lab_soccer_xg_forward (nueva, captura forward). Harness reutilizados: lab_wf_1x2_preds/ou/teamtotal.
+
+### PENDIENTE (deferido explicitamente; NO ahora)
+  - Acumular xG forward -> competir xG con nested WF (solo si usable_pre_kickoff).
+  - Cadena monetaria Kelly/risk/allocator: bloqueada (EXACT_DECISION_PRICE ~0 forward; A_ECO=PENDIENTE_FORWARD_EVIDENCE).
+  - O/U: no continua hasta demostrar skill sobre naive en slice virgen (o instrumentar mejor fuente).
+  - REAL_EVENT_E2E: PENDING (cron 415 activo).
