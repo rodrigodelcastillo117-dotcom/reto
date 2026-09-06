@@ -4504,3 +4504,114 @@ CONFIDENCE_POLICY_VALIDATION=PENDING; CONFIDENCE_AUDIT sigue SIN declararse PASS
 - Hardening: cron para lab_dq_capturar_v1 (captura periodica); extender features (lineups/clima/arbitro).
 - Corregir en produccion el cableado de odds BTTS (ODDS_AVAILABLE_BUT_NOT_WIRED) cuando se priorice.
 - Recien despues: decidir si se puede cerrar CONFIDENCE_AUDIT y, aparte, disenar risk_multiplier. NO ahora.
+
+
+## 6-sep-2026 — E.2C CAPTURA FORENSE EN DECISION_TIME + politica semantica de Data Readiness
+
+Todo SHADOW. Sin Kelly/risk_multiplier/caps/allocator/promocion/dinero. A_ECO=PENDIENTE_ODDS_DECISION.
+Arquitectura de capas: SKILL / MODEL_EVIDENCE / SEMANTIC_VALIDITY / EMPIRICAL_SUFFICIENCY / PRICE_QUALITY / ELIGIBILITY / RISK.
+
+### (1) DIAGRAMA decision -> DQ -> eligibility (hook event-driven)
+  pick generado (v_pick_canonico)
+    -> decision_time FIJADO por el flujo (input, no now() interno)
+    -> lab_dq_capturar_decision_v2(fixture,mercado,pick,decision_time)  [SECURITY DEFINER, idempotente]
+         - resuelve identidad (lab_resolver_hist_goles_v1: espn_id->alias->catalogo)
+         - lee odds snapshot con snapshot_at <= decision_time (sin closing retrospectivo)
+         - calcula SEMANTIC_VALIDITY (objetiva) y EMPIRICAL_SUFFICIENCY=PENDING
+         - escribe cabecera forense (lab_dq_decision) + detalle (lab_dq_event_log)
+         - evalua lab_elegibilidad_shadow_v3
+    -> ELIGIBILITY (fail-closed; puede_mover_stake=false)
+  CRON = solo backstop: v_lab_dq_capturas_faltantes detecta decisiones SIN captura (DQ_CAPTURE_MISSED); NO backfillea.
+
+### (2) PRIVILEGIOS EFECTIVOS del log (append-only real)
+Antes: anon y authenticated tenian INSERT/UPDATE/DELETE/TRUNCATE (agujero: podian fabricar snapshots).
+Ahora (REVOKE aplicado a lab_dq_event_log y lab_dq_decision):
+  - anon: sin nada (revocado tambien SELECT).
+  - authenticated/public: sin INSERT/UPDATE/DELETE/TRUNCATE/REFERENCES/TRIGGER; authenticated conserva SELECT (lectura).
+  - INSERT unicamente via lab_dq_capturar_decision_v2 (SECURITY DEFINER, owner con privilegio).
+  - UPDATE/DELETE bloqueados por trigger append-only en ambas tablas.
+PRUEBA: como authenticated, INSERT directo -> "permission denied for table lab_dq_event_log". Un usuario normal
+NO puede fabricar un DQ snapshot que haga elegible su pick.
+
+### (3) IDEMPOTENCIA
+decision_id = md5(pick_id | decision_time | model_version | p_fair_version | skill_policy_version), PK en lab_dq_decision.
+PRUEBA: 2 llamadas con el mismo decision_time -> call_1 idempotent=false (crea decision_id 9d5b..., batch b774...);
+call_2 idempotent=true, MISMO decision_id y batch, sin filas nuevas. Una decision con distinto decision_time
+produce otro decision_id (verdad explicitamente diferenciada, nunca dos verdades indistinguibles).
+
+### (4) GARANTIA TEMPORAL REAL de historico_partidos_espn
+fecha = timestamptz; ~99% de filas recientes con hora real de KICKOFF (1% a medianoche). Existe cargado_at.
+NO existe timestamp de fin/resultado. Garantia declarada por fila:
+  TEMPORAL_KICKOFF_TS + RESULT_FINALITY_NOT_STORED  (hora de kickoff, no de resultado final)
+  TEMPORAL_DAY_LEVEL_ONLY  para filas a medianoche.
+Predicado del resolver: fecha < decision_time (partido inicio antes de decidir). Se distingue de "resultado
+disponible antes de decision_time", que requeriria kickoff+duracion; sin timestamp de fin NO se afirma
+perfeccion intradia del resultado. No se inventa hora.
+
+### (5) MATRIZ SEMANTIC_VALIDITY por feature (objetiva, sin tuning) -- lab_semantic_validity_v1
+  identidad requerida resuelta      -> IDENTITY_UNRESOLVED_{HOME,AWAY} si falla
+  feature requerida presente        -> REQUIRED_FEATURE_MISSING_{HOME,AWAY} (TRUE_MISSING)
+  sin future timestamp              -> FUTURE_TIMESTAMP
+  fuente correcta                   -> (fija; se lee la tabla canonica)
+  sin fallback prohibido            -> PROHIBITED_FALLBACK
+  odds cableadas cuando requeridas  -> ODDS_REQUIRED_NOT_WIRED
+  todo ok -> SEMANTIC_OK. validity = PASS/FAIL.
+
+### (6) EMPIRICAL_SUFFICIENCY = PENDING (fail-closed para dinero)
+No se define aun (requiere evidencia, sin inventar thresholds): cuantos partidos historicos bastan; que
+antiguedad degrada; cuanto missing tolerar; cualquier threshold continuo. Mientras siga PENDING, la
+eligibility no puede dar OK -> fail-closed.
+
+### (7) CAPTURA FORENSE COMPLETA de un pick real (PSV Eindhoven vs Shakhtar, Under 3.5, decision 21:10)
+  decision_id=9d5b8324a10343c25feea17bdd2eebb9  dq_batch_id=b774f569-...  pick_id=401915422|Over/Under|Under 3.5 Goles
+  p_raw=71  model_version=motor_picks  p_fair_version=P_FAIR_V1_SHADOW  skill_policy_version=SKILL_D1_2026-09-06
+  odds_snapshot_id=6aa878c2-4414-476f-b3e9-2512d8424860  eligibility_version=lab_elegibilidad_shadow_v3
+  semantic_validity=PASS (SEMANTIC_OK)  empirical_sufficiency=PENDING  eligibility_status=EMPIRICAL_SUFFICIENCY_PENDING
+  puede_mover_stake=false
+  Detalle (4 features): odds_decision PRICE_AT_DECISION; agenda_kickoff AGENDA_OK;
+    hist_goles_home RESOLVED (PSV 148); hist_goles_away RESOLVED (Shakhtar 493). Reconstruccion 1:1.
+
+### (8) DINERO DESCONECTADO
+puede_mover_stake=false en cabecera, detalle y eligibility v3. Ningun camino llega a mover stake.
+EMPIRICAL_SUFFICIENCY=PENDING mantiene fail-closed. No se diseno risk_multiplier.
+
+### REGRESIONES (10/10)
+  misma decision x2 -> idempotente (mismo batch) .................... PASS
+  source_timestamp posterior (decision 00:00) -> future -> FAIL ..... PASS (SEMANTIC_INVALID)
+  identity unresolved -> FAIL ....................................... PASS
+  required feature missing (TRUE_MISSING) -> FAIL ................... PASS
+  odds available/not wired -> FAIL price-quality (ODDS_AVAILABLE_BUT_NOT_WIRED) . PASS (funcion + captura batch previa)
+  authenticated fabricando DQ -> rechazado (permission denied) ...... PASS
+  decision sin captura -> eligibility fail-closed (sin cabecera no hay OK; reconciliador la marca) . PASS
+  cron detecta missing snapshot pero NO inventa estado historico .... PASS (v_lab_dq_capturas_faltantes: 3 faltantes, DQ_CAPTURE_MISSED)
+  todo-ok pero empirical pending -> EMPIRICAL_SUFFICIENCY_PENDING .... PASS
+  contrafactual empirical OK -> BET_CANDIDATE (gate unico) .......... PASS
+
+### BTTS
+ODDS_AVAILABLE_BUT_NOT_WIRED sigue como defecto de infraestructura (capa PRICE_QUALITY). No se promueve BTTS
+(sigue SKILL_INSUFFICIENT). Capa que debe corregirlo: ingesta/cableado de odds (radar -> momio del pick),
+NO el motor de skill ni el resolver.
+
+### E.3 mantenido
+MODEL_EVIDENCE (PROVISIONAL_STAT_CONFIDENCE, no mueve stake) separado de SEMANTIC_VALIDITY y de
+EMPIRICAL_SUFFICIENCY. HIGH/MEDIUM NO se usan para dinero.
+
+### OBJETOS SHADOW creados E.2C
+  lab_dq_decision (cabecera forense, PK decision_id, append-only, revocado)
+  lab_dq_event_log (+ columna decision_id; privilegios revocados a anon/authenticated/public)
+  lab_semantic_validity_v1 ; lab_elegibilidad_shadow_v3
+  lab_dq_capturar_decision_v2 (hook SECURITY DEFINER idempotente)
+  v_lab_dq_capturas_faltantes (reconciliador backstop)
+
+### FLAGS
+CONFIDENCE_DETERMINISM=PASS; CONFIDENCE_EV_INDEPENDENCE=PASS; ELIGIBILITY_REGRESSION=PASS;
+SEMANTIC_VALIDITY_POLICY=DEFINIDA (objetiva); EMPIRICAL_SUFFICIENCY=PENDING; CONFIDENCE_POLICY_VALIDATION=PENDING;
+CONFIDENCE_AUDIT sigue SIN declararse PASS. Dinero desconectado.
+
+### PENDIENTE
+- Wiring del hook al flujo REAL de generacion de picks (produccion/Lovable): hoy demostrado en SHADOW; el
+  cron backstop se programa cuando el hook viva en el flujo (evitar #88 saturacion; no programar antes).
+- Acumular forward evidence del log para justificar EMPIRICAL_SUFFICIENCY con datos (sin inventar thresholds).
+- Corregir cableado de odds BTTS en la capa de ingesta (ODDS_AVAILABLE_BUT_NOT_WIRED).
+- En paralelo (no requiere dinero): auditoria de features, market-data open/current/close + CLV,
+  model registry / champion-challenger.
