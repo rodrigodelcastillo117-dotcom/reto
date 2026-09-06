@@ -4615,3 +4615,62 @@ CONFIDENCE_AUDIT sigue SIN declararse PASS. Dinero desconectado.
 - Corregir cableado de odds BTTS en la capa de ingesta (ODDS_AVAILABLE_BUT_NOT_WIRED).
 - En paralelo (no requiere dinero): auditoria de features, market-data open/current/close + CLV,
   model registry / champion-challenger.
+
+
+## 6-sep-2026 — E.2C.1 (disponibilidad real de resultados) + E.2C.2 (cableado forense al flujo real)
+
+Todo SHADOW. Sin dinero/risk_multiplier. Produccion sin cambio de decisiones (baseline oraculo 3520 filas intacto).
+
+### E.2C.1 — DISPONIBILIDAD REAL DE RESULTADOS (candado temporal reforzado)
+Investigado historico_partidos_espn.cargado_at:
+  - 0 nulls; 0 filas cargadas antes/durante el juego; TODAS >=2h despues del kickoff (p05=14.5h).
+  - cargado_at = momento de ingreso a NUESTRA BD (backfill masivo Ago30-Sep6 2026), NO timestamp publico de fin.
+  - Es un lower bound confiable de disponibilidad-EN-BD (siempre posterior al fin del partido).
+Conclusion: `fecha < decision_time` NO basta. Candado reforzado en lab_resolver_hist_goles_v1:
+  `fecha < decision_time AND cargado_at <= decision_time`.
+Efecto medido (equipo 227):
+  - live (hoy): 174 elegibles, 0 excluidos por availability (no-op forward).
+  - backtest 2026-05-01: por kickoff habria 161, pero n_hist_elegible=0 (los 161 backfilleados despues del 1-may
+    -> quien decidia el 1-may NO tenia esa historia en BD -> TRUE_MISSING). Anti-lookahead real para backtests.
+Garantia declarada por fila: TEMPORAL_KICKOFF_TS + DB_AVAILABILITY_VIA_cargado_at (RESULT_FINALITY_PUBLIC_NOT_STORED).
+No se afirma perfeccion intradia de disponibilidad publica del resultado (no hay timestamp de fin). Sin inventar hora.
+IMPLICACION A_ECO: no se puede cerrar A_ECO con historia backfilleada como si hubiera estado disponible; refuerza forward-only.
+
+### E.2C.2 — CABLEADO FORENSE AL FLUJO REAL (observacional, seguro)
+Inventario de callers: picks_recomendados_hoy, v_picks_futbol_calibrado, v_picks_mlb_modelo son VISTAS
+(se recomputan al leer; NO hay evento de INSERT de "pick generado"). Los eventos de escritura de una decision
+son TABLAS: oraculo_picks_tracking (candidato rastreado, con created_at=decision_time y odds_apertura/cierre/clv),
+picks, parlays. Punto de enganche = INSERT en oraculo_picks_tracking.
+
+Hallazgo: oraculo_picks_tracking tiene 9 triggers, varios BEFORE que GATEAN inserts (zzz_prob_solo_del_motor,
+trg_validar_calibracion_oraculo, trg_bloquear_momio_tardio...). Un insert hecho a mano se absorbe en silencio:
+solo persisten filas generadas por el motor. Buena integridad; pero impide validar la captura con insert sintetico,
+y correr el resolver (2 scans) por fila en el path de dinero es riesgo de latencia no validado bajo rafagas del motor.
+
+ARQUITECTURA SEGURA (desplegada):
+  1. trigger trg_dq_captura_oraculo (AFTER INSERT) = ENQUEUE-ONLY O(1), exception-safe: solo inserta en
+     lab_dq_capture_queue con decision_time CONGELADO=NEW.created_at. Nunca corre resolver en el path de dinero.
+     Cero cambio a NEW (observacional). Baseline produccion intacto (3520).
+  2. worker lab_dq_drain_queue() (async) procesa la cola con el decision_time congelado -> lab_dq_capturar_decision_v2.
+     Temporalmente fiel: el resolver usa cutoff=decision_time congelado y exige cargado_at<=decision_time
+     (no es reconstruccion retrospectiva). Fail-closed: hook error/PICK_NO_ENCONTRADO -> resultado DQ_CAPTURE_MISSED.
+  3. reconciliador v_lab_dq_capturas_faltantes (backstop): decisiones sin captura, sin backfill inventado.
+
+PRUEBA end-to-end del path async: encolado un pick real (PSV vs Shakhtar, decision 22:40) -> drain ->
+1 procesado_ok, 0 misses -> lab_dq_decision(22:40): semantic PASS, eligibility EMPIRICAL_SUFFICIENCY_PENDING,
+puede_mover_stake=false, 4 filas de detalle. Idempotencia y regresiones ya probadas en E.2C.
+
+CERO CAMBIO EN PRODUCCION: trigger AFTER + enqueue O(1) exception-safe; no toca P/EV/picks/stake; baseline 3520 intacto;
+inserts sinteticos absorbidos por los guards del motor (no persisten). Dinero desconectado.
+
+PENDIENTE E.2C.2:
+  - Programar drain (cron ligero, p.ej. cada 5 min) como procesador de la cola + reconciliador; se difiere para no
+    sumar cron sin observacion (#88) — la cola solo crece con inserts reales del motor. Es el unico paso restante
+    para "captura automatica de varias decisiones reales" (se acumula solo una vez programado el drain).
+  - Nota: para el flujo del motor de soccer (vistas sin INSERT), la captura solo ocurre cuando el pick se
+    materializa en oraculo_picks_tracking; picks que nunca se rastrean quedan como DQ_CAPTURE_MISSED (reconciliador).
+
+### OBJETOS SHADOW nuevos
+  lab_resolver_hist_goles_v1 (reforzado con cargado_at) ; lab_dq_capture_queue ; lab_dq_capture_misses
+  lab_dq_tg_captura_oraculo (enqueue-only) + trigger trg_dq_captura_oraculo en oraculo_picks_tracking
+  lab_dq_drain_queue(worker async)
