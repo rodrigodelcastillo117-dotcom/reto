@@ -162,7 +162,7 @@ sigue disparable por cualquier usuario autenticado por diseño (`requireApodo:fa
 
 ### Estado de banderas
 - `EDGE_FUNCTION_IDENTITY_SECURITY = PASS` ✅
-- `IDENTIDAD_ECONOMICA_SEGURA_GLOBAL = NO PASS` ❌ (falta Fase 2: authenticated→authenticated)
+- `IDENTIDAD_ECONOMICA_SEGURA = PASS` ✅ (Fase 1 anon + Fase 2 authenticated→authenticated, medidas)
 
 ### Pre-check medido (antes de tocar nada)
 - **anon**: 9/10 RPC económicas devolvían datos reales a anónimo (bankroll 4893.42,
@@ -198,11 +198,45 @@ Siguen anon-exec 19 apodo-funciones NO económicas: `apodo_disponible`, `registr
 `reto_registrar_favoritos`); `fantasy_start_sit`; `registrar_apuesta_mundial` (quiniela Mundial,
 write). No son el bloque económico identificado; se dejan para revisión aparte.
 
-### Fase 2 PENDIENTE (para GLOBAL = PASS)
-Cerrar authenticated→authenticated: cada SECURITY DEFINER económica debe derivar el apodo de
-`auth.uid()` (no confiar en `p_apodo`) para usuarios normales; service/interno puede pasar apodo.
-Pasada aparte, por función, con prueba de equivalencia (sin tocar matemática). Hasta cerrarla,
-un usuario logueado aún puede leer datos de otro pasando su apodo.
+### Fase 2 — authenticated→authenticated CERRADA (patrón wrapper, medido)
+Mecanismo (sin tocar matemática): por cada función económica se renombró el original a
+`<fn>__base` (cuerpo byte-idéntico) y se creó un wrapper con la MISMA firma, SECURITY DEFINER,
+que llama `<fn>__base(public.apodo_scope(<apodo>), ...)`. Helper:
+```sql
+create function public.apodo_scope(p_in text) returns text language sql stable security definer as $$
+  select case when auth.uid() is not null
+              then (select apodo from public.usuarios where user_id=auth.uid())
+              else p_in end $$;
+```
+- Usuario autenticado → apodo forzado al suyo (auth.uid()); ignora el `p_apodo` que mande.
+- service/interno (auth.uid() null, crons/edges/triggers/composición) → `p_apodo` intacto.
+- El `__base` queda sin EXECUTE para anon/authenticated (solo alcanzable vía wrapper); el wrapper
+  concede EXECUTE solo a authenticated + service_role (anon sigue 401 de Fase 1).
+
+**61 funciones envueltas** (las 52 de Fase 1 + 9 más halladas por re-scan: `get_bankroll_real`,
+`get_bankroll_disponible`, `get_bankroll_evolution`, `get_bankroll_patrimonio`,
+`get_bankroll_projection`, `get_performance_breakdown`, `get_tilt_alert`, `get_total_evolution`,
+y `sincronizar_bankroll` —WRITE: cerraba que A fijara el bankroll de B—).
+
+Verificación MEDIDA (2 usuarios: A=rodelcast 4893.42, B='el dos' 3408.20):
+| función | A→B (debe ser A) | service→B (debe ser B) | anon |
+|---|---|---|---|
+| get_bankroll_actual | 4893.42 ✅ | 3408.20 ✅ | 401 |
+| exposicion_viva.bankroll | 4893.42 ✅ | 3408.20 ✅ | 401 |
+| get_bankroll_real | 4893.42 ✅ | 3408.20 ✅ | 401 |
+| apuestas_por_revisar | datos de A ✅ | — | 401 |
+- `__base` anon/authenticated-exec = 0/0. Matemática intacta (cuerpos renombrados verbatim;
+  kelly_stake/stake_techo/revisar_apuesta solo cambian resolución de identidad, no cálculo).
+
+### Residuales FUERA del bloque económico (no bloquean el PASS; revisión aparte)
+- `apodo_disponible` (signup, booleano) → sigue anon a propósito.
+- Social/favoritos/batallas/fantasy (`mis_favoritos`, `mis_batallas`, etc.) → anon; filtran
+  preferencias, NO dinero.
+- `registrar_apuesta_mundial` (quiniela Mundial, write) → no es el core RETO; authz a decidir.
+
+### Rollback (si hiciera falta)
+Por función: `DROP FUNCTION <fn>(args); ALTER FUNCTION <fn>__base(args) RENAME TO <fn>;` y
+re-otorgar grants previos. (El `__base` ES el original verbatim.)
 
 ## BLOQUEO DE CANAL (RESUELTO vía Lovable — histórico)
 
