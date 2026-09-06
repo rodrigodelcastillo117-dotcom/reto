@@ -3626,3 +3626,89 @@ Construido y validado, **sin consumidores productivos**:
 **#263 (ODDS_DISPLAY != ODDS_DECISION) sigue sin mezclarse.**
 **Sin cambios en:** Beta, Wilson, sesgo, Kelly, caps, RONGOL, allocator, NFL,
 EXP_OFF=0.50.
+
+---
+
+## #262-E PASO 1 — IDENTIDAD ECONOMICA SEGURA. ID1-ID6 PASS. Y un hallazgo en produccion.
+
+**Produccion intacta. Sin consumidores.**
+
+### Lo construido
+
+**`public.usuario_economico_actual()`** — `SECURITY DEFINER`, `STABLE`.
+Unica fuente de "de quien es el bankroll": `auth.uid() -> usuarios.user_id ->
+apodo`. Devuelve NULL si no hay sesion o no hay mapping. El cliente no participa.
+(Recordatorio del sistema: `usuarios.id` NO es el auth uid; el enlace real es
+`usuarios.user_id`.)
+
+**`public.kelly_usuario(prob, momio, stake_propuesto, mercado, techo_custom)`**
+— **USER_PATH**. **No tiene parametro de apodo.** El spoof no se valida: es
+**imposible por firma**. Sin identidad devuelve `SIN_IDENTIDAD_ECONOMICA`,
+`stake 0`, y cero fallback.
+
+**`kelly_sombra`** pasa a **INTERNAL_PATH**: acepta apodo, asi que se le retiro
+EXECUTE a `authenticated`, `anon` y `public`, y se dejo solo a `service_role`.
+
+### Matriz de rutas (medida, no declarada)
+
+| funcion | ruta | acepta apodo | anon | authenticated | service_role |
+|---|---|---|---|---|---|
+| `usuario_economico_actual()` | USER_PATH | no | **false** | true | true |
+| `kelly_usuario(...)` | USER_PATH | **no** | **false** | true | true |
+| `kelly_sombra(...)` | **INTERNAL_PATH** | si | **false** | **false** | **true** |
+| `decision_economica_v1(...)` | NUCLEO universal | no | true | true | true |
+
+### PRUEBAS DE IDENTIDAD — 6 de 6 PASS (con JWT simulado real)
+
+Se simulo `request.jwt.claims` con los `user_id` reales de tres cuentas, que es
+exactamente lo que lee `auth.uid()`.
+
+| caso | escenario | resultado | evidencia |
+|---|---|---|---|
+| **ID1** | JWT de rodelcast | **PASS** | apodo resuelto `rodelcast`, bankroll **4,893.42**, stake 244.67 |
+| **ID2** | JWT de rodelcast intentando el bankroll de "el dos" | **PASS** | bankroll usado **4,893.42** (rodelcast), NO 3,764.44 ("el dos"). `kelly_usuario` no tiene parametro de apodo: **imposible por firma** |
+| **ID3** | `auth.uid()` valido sin fila en `usuarios` | **PASS** | apodo NULL, `SIN_IDENTIDAD_ECONOMICA`, **stake 0**, cero fallback |
+| **ID4** | sin sesion (anon) | **PASS** | apodo NULL, error explicito, **ningun bankroll por omision** |
+| **ID5** | service_role / cron | **PASS** | `kelly_sombra` queda solo para `service_role`; `authenticated` y `anon` en **false** |
+| **ID6** | mismo pick, dos identidades | **PASS** | **EV 25.17 en las dos**; stake **244.67** (rodelcast) vs **75.00** (joaquinbadillo) |
+
+ID6 vuelve a demostrar la separacion: **lo universal no se mueve, lo personal si.**
+
+### HALLAZGO DE SEGURIDAD EN PRODUCCION (no tocado)
+
+Al construir la matriz aparecio esto:
+
+| funcion | acepta apodo | anon | authenticated |
+|---|---|---|---|
+| **`kelly_stake(text,...)`** — la de produccion | **si** | **true** | **true** |
+
+**Hoy, cualquier usuario autenticado — y `anon` tambien — puede llamar
+`kelly_stake('<apodo_ajeno>', ...)` y recibir el bankroll, el techo y la
+configuracion de staking de esa persona.**
+
+Alcance real, sin exagerarlo: `kelly_stake` es `STABLE` y **no mueve dinero**;
+lo que se filtra es **informacion** — bankroll disponible, `stake_max_pct`,
+`fraccion_kelly` y el stake recomendado de cualquier apodo que se adivine o se
+lea del feed de Comunidad. No permite apostar por otro.
+
+**NO lo toque**: es produccion y la orden es no promover nada sin autorizacion.
+Queda como decision del auditor. La arquitectura nueva lo cierra por diseno
+(USER_PATH sin apodo + INTERNAL_PATH solo service_role); la pregunta es si se
+quiere cerrar el agujero actual **antes** del swap o **con** el swap.
+
+### RESIDUOS
+
+`lab_test_identidad()` creada para correr ID1-ID6 y **borrada** al terminar.
+
+### ESTADO
+
+Construido y validado, **cero consumidores productivos**:
+`ev_decision_v1`, `mejor_oportunidad_hoy_v2`, `decision_economica_v1`,
+`kelly_sombra`, `usuario_economico_actual`, `kelly_usuario`.
+
+**Falta (pasos 2-5 del auditor):** cinco superficies en sombra, C7 ampliado,
+inventario final de `calibrar_prob_motor_live` y de otras recomputaciones de
+P/EV, y recien entonces GO/NO-GO.
+
+**#263 sigue fuera de scope.** **Sin cambios en** Beta, Wilson, sesgo, Kelly,
+caps, RONGOL, allocator, NFL, EXP_OFF=0.50, V2.
