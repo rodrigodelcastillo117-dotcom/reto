@@ -125,7 +125,40 @@ reanalizar_analisis_vacios) todas con service key real (compatibles con el fix).
   el único Authorization es saliente a Resend). Exposición = abuso de costo (disparar grading +
   correos). Necesita SNIPPET A. 157KB → también bloqueada por tamaño.
 
-## BLOQUEO DE CANAL (grave, requiere decisión del auditor)
+## 3 FUNCIONES GRANDES — CERRADAS vía Lovable + VERIFICADAS (medido) 6-sep
+
+Canal: Lovable aplicó el handoff y redeployó las 3 Edge Functions en Supabase
+(updated_at 2026-09-06T19:15:18Z). Versiones confirmadas por `list_edge_functions`:
+
+| función | antes → ahora | cambio | index.ts |
+|---|---|---|---|
+| scan-betslip | v438 → **v440** | solo `_shared/auth.ts` (timingSafeEqual, sin decode) | byte-idéntico |
+| analizar-partido | v496 → **v498** | solo `_shared/auth.ts` | byte-idéntico |
+| auto-calificar-picks | v424 → **v426** | import + gate `requireCaller(req,{requireApodo:false})` (AUTHENTICATED_ONLY) | resto sin cambios |
+
+### Matriz de seguridad MEDIDA (HTTP real vía net.http_post)
+| función | A sin-cred | B JWT forjado service | C service real | D usuario real |
+|---|---|---|---|---|
+| scan-betslip | 401 | **401** (antes pasaba) | 400 (pide image_url+apodo) | pasó como usuario A; falló en OCR (imagen dummy) |
+| analizar-partido | 401 | **401** | 400 (pide evento+liga) | 400 (pasó auth) |
+| auto-calificar-picks | 401 | **401** | 200 | **200** (los 3 botones del frontend siguen vivos) |
+
+- **B (JWT forjado `{"role":"service_role"}` sin firma) → 401 en las 3**: el bypass AUTH-0 quedó cerrado.
+- **IDOR scan-betslip**: A con JWT real + `body.apodo='el dos'` → identidad forzada a A (rodelcast);
+  medido: **0 parlays y 0 picks creados bajo 'el dos'**. body.apodo ya no manda.
+- **Sin regresión funcional**: usuarios autenticados pasan (D), service real pasa (C),
+  callers internos (service key) intactos.
+
+Limpieza: JWT acuñado server-side, sesión revocada (/logout 204), tablas temporales
+(lab_tok, _sec_probe*) eliminadas. Token nunca pasó por el chat.
+
+### VEREDICTO
+Las 3 funciones que faltaban están **CERRADAS y verificadas**. Se cumple la condición
+del auditor para `IDENTIDAD_ECONOMICA_SEGURA`. Residuales fuera de alcance de seguridad
+(no bloquean el PASS de identidad): #212 (veto RONGOL de sizing), y analizar-partido
+sigue disparable por cualquier usuario autenticado por diseño (`requireApodo:false`).
+
+## BLOQUEO DE CANAL (RESUELTO vía Lovable — histórico)
 
 El único canal de deploy disponible es `deploy_edge_function` (MCP, contenido **inline**).
 No hay Supabase CLI, ni Deno, ni `SUPABASE_ACCESS_TOKEN` en el entorno. Los archivos de
