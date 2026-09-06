@@ -3522,3 +3522,107 @@ Pendiente antes del GO:
 
 **Sin cambios en:** Beta, Wilson, sesgo, Kelly, caps, RONGOL, allocator, NFL,
 EXP_OFF=0.50.
+
+---
+
+## #262-D FASE 1b — `kelly_sombra`: 0 desvios en 3,840 casos. Separacion demostrada.
+
+**Produccion intacta. Cero consumidores.**
+
+### `public.kelly_sombra(prob, momio, stake_propuesto, mercado, techo_custom, apodo)`
+
+`jsonb`, `STABLE`, `SECURITY DEFINER`, `search_path = public`.
+
+- **NO recalcula** sesgo/Beta/Wilson/EV. Los **consume** de
+  `decision_economica_v1`. Si algun dia los duplica, volvemos a tener dos motores.
+- **Identidad:** la ruta user-facing sale de `auth.uid() -> usuarios.user_id`.
+  `p_apodo` existe **solo para sombra y pruebas** y **nunca** es autoridad
+  economica venida del cliente.
+- **Orden de guardas replicado**: bankroll, luego momio, luego probabilidad.
+  Ese orden importa: con usuario invalido `kelly_stake` responde
+  'Usuario sin bankroll configurado' aunque el momio tambien sea invalido.
+
+### Lo que kelly_stake NO hace (medido, no supuesto)
+
+| busqueda en el codigo | resultado |
+|---|---|
+| `rongol` | **0 menciones** |
+| `stake_techo(` | **0 llamadas** |
+
+RONGOL y `stake_techo` viven **aguas abajo**, en `tg_autoridad_stake`, no dentro
+de `kelly_stake`. Por eso quedan fuera de este candado: no participan en su salida.
+
+### CANDADO DE EQUIVALENCIA — **PASA. 3,840 casos, jsonb COMPLETO, 0 desvios.**
+
+Rejilla: 8 momios (NULL, 0, 1, 1.01, 1.50, 2.00, 3.00, 20.00) x 10
+probabilidades (NULL, 0, 0.5, 5, 45, 52, 60, 80, 95, 99.5) x 4 mercados
+(Moneyline, Over/Under, NULL, inexistente) x 3 stakes propuestos (NULL, 10,
+99999) x 2 techos (NULL, 2.0) x 2 usuarios (uno real, uno inexistente).
+
+| comparacion | desvios |
+|---|---|
+| **jsonb completo** (menos `identidad_origen`) | **0** |
+| `ev_pct` | **0** |
+| `kelly_pct` | **0** |
+| `stake_recomendado` | **0** |
+| `techo_duro` (cap) | **0** |
+| `bankroll` aplicado | **0** |
+| `veredicto` | **0** |
+| `error` | **0** |
+
+**Ramas cubiertas:** `OK` 264, `NO APOSTAR` 564, `BLOQUEADO` 132, errores 2,880,
+tramos medidos 180. Los casos frontera que pediste (momio NULL/0/1, prob NULL,
+bankroll NULL, Kelly por encima del cap, mercados medidos y no medidos) estan
+todos dentro.
+
+### El unico desvio que aparecio, y por que NO era de formula
+
+Primera corrida: **396 de 3,840**, y el conteo coincidia EXACTAMENTE con los
+casos de stake positivo (OK 264 + BLOQUEADO 132 = 396). Diferenciando un caso
+clave por clave resulto ser **una sola clave de texto**: `nota` dentro de
+`incertidumbre`, que `kelly_stake` agrega **solo en el RETURN final** (aparece
+1 vez en todo su codigo) y yo habia omitido.
+
+**Todos los numeros ya coincidian** — `factor_muestra` 0.926,
+`prob_que_decide_pct` 83.4, `recorte` 4.9, `prob_antes` 90.1. Agregada la `nota`
+verbatim: **0 de 3,840**.
+
+Es la segunda vez en esta fase que un desvio aparente resulta ser presentacion y
+no matematica (antes el doble redondeo). Confirma la regla del auditor: **la
+equivalencia se compara antes de presentar, y aun asi hay que mirar cada clave.**
+
+### PRUEBA #6 — MISMO PICK, DISTINTA IDENTIDAD ECONOMICA
+
+Pick fijo: prob 95, momio 1.50, mercado no medido. Tres usuarios reales:
+
+| apodo | bankroll | **EV** | **P_decide** | **Kelly puro %** | **Kelly frac %** | cap $ | stake Kelly $ | **STAKE FINAL** |
+|---|---|---|---|---|---|---|---|---|
+| el dos | 3,764.44 | **25.17** | **83.4** | **50.34** | **12.59** | 188.22 | 473.78 | **188.22** |
+| joaquinbadillo | 1,500.00 | **25.17** | **83.4** | **50.34** | **12.59** | 75.00 | 188.78 | **75.00** |
+| rodelcast | 6,143.42 | **25.17** | **83.4** | **50.34** | **12.59** | 307.17 | 773.18 | **307.17** |
+
+**Lo universal no se mueve** (EV, P_decide, Kelly puro y Kelly fraccionado son
+identicos hasta el ultimo decimal). **Lo personal si** (cap y stake escalan con
+el bankroll: 75.00 / 188.22 / 307.17).
+
+Esa tabla es la demostracion arquitectonica de la separacion:
+**decision universal del pick, dimensionamiento personal del usuario.**
+
+### ESTADO
+
+Construido y validado, **sin consumidores productivos**:
+`ev_decision_v1`, `mejor_oportunidad_hoy_v2`, `decision_economica_v1`,
+`kelly_sombra`.
+
+### ORDEN QUE SIGUE (fijado por el auditor)
+
+1. identidad segura (`auth.uid()` de punta a punta);
+2. cinco superficies en sombra;
+3. inventario `calibrar_prob_motor_live` -> 0 accionables;
+4. C7 ampliado sobre las cinco;
+5. diff exacto;
+6. recien ahi, decision de produccion.
+
+**#263 (ODDS_DISPLAY != ODDS_DECISION) sigue sin mezclarse.**
+**Sin cambios en:** Beta, Wilson, sesgo, Kelly, caps, RONGOL, allocator, NFL,
+EXP_OFF=0.50.
