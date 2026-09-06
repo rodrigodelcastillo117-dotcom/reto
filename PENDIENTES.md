@@ -4236,3 +4236,94 @@ MATRIZ FINAL (solo estados; sin score numerico):
 P_FAIR no cambia (donde hay skill = P0). D.1 caza 2 falsos PASS (Tarjetas por clustering/inestabilidad;
 MLB por sensibilidad al baseline). LogLoss coincide con Brier en todos (sin sobreconfianza oculta).
 A_ECO sigue PENDIENTE_ODDS_DECISION. Detenido antes de Confidence. Nada tocado en produccion.
+
+
+## 6-sep-2026 — FASE E (Confidence) + FASE F (Eligibility) + AUDITORIA E.1/F.1
+
+Todo SHADOW. No toca produccion, Kelly, RONGOL, caps, allocator, NFL ni EXP_OFF=0.50.
+A_ECO = PENDIENTE_ODDS_DECISION. Nada promovido. NINGUN paso de dinero conectado.
+
+### Objetos SHADOW creados
+- `public.lab_confidence_categoria_v1(...)` — funcion PURA e IMMUTABLE. La firma NO admite
+  EV, momio, ROI, profit, hit-rate ni preferencia manual (candado estructural). Sin now()/random().
+- `public.lab_confidence_audit_v1` — tabla de auditoria con todos los factores medidos por mercado.
+- `public.lab_elegibilidad_shadow_v1(skill, confidence, ev_fair, odds)` — Eligibility con reason_codes[].
+- Fila candado en `lab_skill_confianza_v1`: baseball Over/Under = SKILL_INSUFFICIENT.
+
+### FASE E.1 — REGLA DETERMINISTA DE CONFIDENCE (observable, reproducible)
+Precondicion (si falla -> INSUFFICIENT): skill=SKILL_PASS Y ventanas_pos=3/3 Y dlogloss<0 Y
+n_oos>=1000 Y margin_ic>=2.0. Sobre eso, DEMERITOS observables:
+- D_CAL (calibracion, asimetrico): slope<0.85 OVERCONFIDENT=+2 (peligroso); slope>1.15
+  UNDERCONFIDENT=+1 (conservador, seguro); 0.85<=slope<=1.15 WELL_CALIBRATED=+0.
+- D_MARGIN: margin_ic<3.0 -> +1 (skill cerca del piso de significancia).
+- D_DRIFT: la ventana mas reciente (win3) pierde skill (win3>=0 o |win3|<IC_iid) -> +1.
+- D_N: n_oos<1500 -> +1 (muestra chica aunque valida).
+Categoria por suma: 0 -> HIGH; 1 -> MEDIUM; >=2 -> LOW.
+
+Por que asimetrico: sobre-confianza (slope<1) exagera edges reales y arriesga dinero;
+sub-confianza (slope>1) los subestima y es conservadora. Cuesta 1 notch, no 2.
+
+MATRIZ E.1 (los 4 mercados SKILL_PASS soccer; factores autoritativos D.1/D + intercept/bias
+del snapshot reproducible modelo_backtest_v2):
+  mercado          n_oos  dbrier   IC_clu  margin  ventanas(dBrier)      dLogLoss  slopeD1  slopeSnap  banda            cat     demerits
+  Over/Under       6775  -.03841  .00453   8.5x   -.039/-.040/-.035     -.08147   1.061    0.958      WELL_CALIBRATED  HIGH    0
+  Total Equipo     4065  -.02568  .00360   7.1x   -.029/-.027/-.020     -.05584   1.016    1.002      WELL_CALIBRATED  HIGH    0
+  Moneyline        4065  -.01333  .00332   4.0x   -.008/-.012/-.018     -.02959   1.295    1.460      UNDERCONFIDENT   MEDIUM  1
+  Doble Oport.     2710  -.01335  .00389   3.4x   -.008/-.012/-.019     -.02911   1.359    1.948      UNDERCONFIDENT   MEDIUM  1
+
+Respuesta reproducible a "por que O/U es HIGH y Moneyline MEDIUM":
+  O/U slope 1.061 (en banda 0.85-1.15) -> 0 demeritos -> HIGH.
+  Moneyline slope 1.295 (>1.15 = underconfident) -> 1 demerito -> MEDIUM.
+  Es la UNICA diferencia; margen/ventanas/drift no penalizan a ninguno de los 4.
+
+ROBUSTEZ: la BANDA de calibracion (well-cal vs underconfident) COINCIDE en los dos snapshots
+independientes (D.1 y modelo_backtest_v2 actual) para los 4 mercados. La categoria no depende
+del snapshot exacto.
+
+freshness / coverage / missing_critico = NO_MEDIDO en los 4. NO existe tabla que mida edad de
+inputs ni cobertura de features esenciales por mercado (modelo_backtest_v2 tiene pj_local/pj_visita
+como proxy parcial de muestra, pero NO es cobertura de features y no se relabela como tal).
+CONSECUENCIA (degradacion honesta): la certeza ABSOLUTA de Confidence esta CAPADA; Confidence
+NO puede tocar stake mientras freshness/coverage sigan NO_MEDIDO. El ORDEN relativo
+(O/U HIGH vs ML MEDIUM) si es observable y se conserva.
+
+CANDADO DE DETERMINISMO (probado): lab_confidence_categoria_v1 ejecutada dos veces sobre el mismo
+input = jsonb identico (run1=run2 en los 4). Al ser IMMUTABLE y sin EV/momio/ROI en la firma,
+dos corridas sobre los mismos datos dan siempre la misma categoria.
+
+### FASE F.1 — ELIGIBILITY con reason_codes[]
+STATUS principal por orden estricto de gates: (1) skill!=PASS -> NO_MODEL_SKILL;
+(2) confidence=INSUFFICIENT -> DATA_INSUFFICIENT; (3) sin odds -> NO_ODDS_DECISION;
+(4) ev_fair<=0 -> NO_EV; (5) confidence=LOW -> SHADOW_LOW_CONFIDENCE; (6) resto -> BET_CANDIDATE.
+reason_codes[] registra TODAS las condiciones ciertas, no solo la que dispara el gate.
+Ejemplo probado: skill insuficiente Y sin odds -> status=NO_MODEL_SKILL,
+reason_codes=[SKILL_INSUFFICIENT, NO_ODDS_DECISION, CONFIDENCE_INSUFFICIENT]. No se pierde
+diagnostico porque el skill corre primero.
+
+### CANDADO MLB Over/Under
+NO existe backtest OOS de skill para MLB Over/Under: lab_bloque_b_mlb cubre solo Moneyline
+(sin dimension de mercado, columnas p0/y unicas) y modelo_backtest_v2 es solo soccer.
+Se inserto fila explicita: baseball Over/Under = SKILL_INSUFFICIENT,
+warning NO_OOS_SKILL_EVIDENCE_FOR_MARKET. NO se reutiliza el analisis de MLB Moneyline.
+
+### REGRESIONES OBLIGATORIAS (6/6 PASS)
+1. EV +30%, SKILL_INSUFFICIENT -> NO_MODEL_SKILL .......... PASS
+2. EV +20%, SKILL_PASS, CONFIDENCE_LOW -> SHADOW_LOW_CONFIDENCE  PASS
+3. EV negativo, SKILL_PASS/HIGH -> NO_EV ................. PASS
+4. sin odds, SKILL_PASS/HIGH -> NO_ODDS_DECISION ......... PASS
+5. SKILL_PASS/HIGH + EV positivo -> BET_CANDIDATE ........ PASS
+6. mismo input dos veces -> mismo status/confidence/reasons  PASS (confidence y eligibility)
+
+### VEREDICTO
+CONFIDENCE_AUDIT = PASS en lo que exige E.1: determinismo (candado idempotente probado),
+reglas observables sin EV/momio/ROI/manual (candado estructural en la firma), factores por
+mercado explicitos y reproducibles, y razon exacta por categoria.
+RESIDUAL EXPLICITO (no bloquea el PASS del arbitro, pero SI bloquea el dinero):
+FRESHNESS_COVERAGE = NO_MEDIDO -> requisito antes de que Confidence module stake.
+
+### PENDIENTE (esperando GO del usuario; NADA arrancado)
+- Disenar como Confidence afecta stake (risk_multiplier) SIN volver a tocar P_FAIR.
+- Cadena de dinero: BET_CANDIDATE -> Kelly puro -> risk_multiplier(Confidence) -> portfolio
+  -> caps -> allocator -> stake shadow.
+- Instrumentar freshness/coverage reales (cerrar FRESHNESS_COVERAGE=NO_MEDIDO) o aceptar el cap.
+- A_ECO: forward-shadow de economia via radar_odds_snapshots.
