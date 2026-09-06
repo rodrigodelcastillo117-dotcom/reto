@@ -158,6 +158,52 @@ del auditor para `IDENTIDAD_ECONOMICA_SEGURA`. Residuales fuera de alcance de se
 (no bloquean el PASS de identidad): #212 (veto RONGOL de sizing), y analizar-partido
 sigue disparable por cualquier usuario autenticado por diseño (`requireApodo:false`).
 
+## BLOQUE DB — RPC económicas (pre-check + Fase 1 REVOKE) 6-sep
+
+### Estado de banderas
+- `EDGE_FUNCTION_IDENTITY_SECURITY = PASS` ✅
+- `IDENTIDAD_ECONOMICA_SEGURA_GLOBAL = NO PASS` ❌ (falta Fase 2: authenticated→authenticated)
+
+### Pre-check medido (antes de tocar nada)
+- **anon**: 9/10 RPC económicas devolvían datos reales a anónimo (bankroll 4893.42,
+  techo 5%, tilt "alto", exposición viva, CLV, `apuestas_por_revisar` con id de boleto).
+- **authenticated→authenticated**: con JWT real de A se leyó el bankroll de B
+  (`get_bankroll_actual('el dos')`=3408.20) y su `reto_13m_estado`. Las SECURITY
+  DEFINER confían en `p_apodo`.
+- **kelly_stake**: conserva guard de identidad (md5 a005dc09…), pero seguía anon-exec.
+
+### Fase 1 — REVOKE (aplicada y verificada)
+`REVOKE EXECUTE ... FROM anon, public` sobre **52 funciones financieras** (bankroll,
+exposición, sizing/veto: kelly_stake/stake_techo/tamano_apuesta/revisar_apuesta/
+revisar_tamano_apuesta/verificar_limites/rongol_veto/ev_decision_v1/decision_canonica_v2/
+devils_advocate(_parlay), tilt/cuanto_me_dura/mi_clv/clv_veredicto_usuario/analisis_varianza,
+reto_13m_* y reto_* financieros, rendimiento/informe/marcador/comparativa/diario_patrones/
+mis_patrones/simular/veredicto_lote/revisar_canasta/picks_del_mismo_partido/auditar_momios/
+detectar_value_en_vivo/mejor_oportunidad_hoy_v2/construir_parlay_*/auditoria_e2e/
+evidencia_scan_valida/ultimo_scan_utilizable/apuestas_por_revisar).
+NO se tocó ninguna matemática (solo GRANTs). `authenticated` conserva EXECUTE en las 52.
+
+Verificación MEDIDA:
+- anon → `get_bankroll_actual/exposicion_viva/stake_techo/estado_tilt/reto_13m_estado/
+  bankroll_disponible/mi_clv/apuestas_por_revisar` = **401 permission denied** (42501).
+- authenticated (JWT real de A) → `get_bankroll_actual('rodelcast')` = **200, 4893.42**
+  (sin regresión; el front llama autenticado).
+
+### Excluidas del REVOKE a propósito (no financieras / anón legítimo de signup)
+Siguen anon-exec 19 apodo-funciones NO económicas: `apodo_disponible`, `registrar_perfil`,
+`uid_de_apodo`, `generar_codigo_amigo` (signup/onboarding, requieren anón); social/batallas
+(`aceptar_batalla`, `cancelar_batalla`, `mis_batallas`); favoritos/equipos (`agregar_favorito`,
+`quitar_favorito`, `mis_favoritos`, `paises_para_favoritos`, `partidos_de_mis_favoritos`,
+`equipos_de_pais`, `calificaciones_mis_equipos`, `calificaciones_mis_grupos`, `dano_mis_equipos`,
+`reto_registrar_favoritos`); `fantasy_start_sit`; `registrar_apuesta_mundial` (quiniela Mundial,
+write). No son el bloque económico identificado; se dejan para revisión aparte.
+
+### Fase 2 PENDIENTE (para GLOBAL = PASS)
+Cerrar authenticated→authenticated: cada SECURITY DEFINER económica debe derivar el apodo de
+`auth.uid()` (no confiar en `p_apodo`) para usuarios normales; service/interno puede pasar apodo.
+Pasada aparte, por función, con prueba de equivalencia (sin tocar matemática). Hasta cerrarla,
+un usuario logueado aún puede leer datos de otro pasando su apodo.
+
 ## BLOQUEO DE CANAL (RESUELTO vía Lovable — histórico)
 
 El único canal de deploy disponible es `deploy_edge_function` (MCP, contenido **inline**).
