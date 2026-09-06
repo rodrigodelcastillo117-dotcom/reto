@@ -23,21 +23,42 @@ NO requieren cambios adicionales en su index.ts.
 
 ## SNIPPET A — guard "solo interno" (para crons expuestos sin auth)
 
-Insertar como PRIMERA linea dentro de `Deno.serve(async (req) => {` (despues del
+MISMO PRINCIPIO que el `auth.ts` corregido: se prueba la service key REAL por
+igualdad en **tiempo constante**. NUNCA se decodifica el `role` de un JWT.
+
+1) Agregar una vez por archivo (arriba, junto a los helpers):
+
+```ts
+function timingSafeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let out = 0;
+  for (let i = 0; i < a.length; i++) out |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return out === 0;
+}
+```
+
+2) Insertar como PRIMERA linea dentro de `Deno.serve(async (req) => {` (despues del
 manejo de OPTIONS si existe). Usa el nombre de headers CORS que ya tenga el archivo
 (`CH`, `corsHeaders`, etc.):
 
 ```ts
-  // SEGURIDAD: solo contexto interno (service_role real, comparacion directa).
+  // SEGURIDAD: solo contexto interno (service_role real, comparacion en tiempo constante).
   {
     const _svc = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
     const _tok = (req.headers.get("Authorization") || "").replace(/^Bearer\s+/i, "").trim();
-    if (!_svc || _tok !== _svc) {
+    if (!_svc || !timingSafeEqual(_tok, _svc)) {
       return new Response(JSON.stringify({ error: "solo interno" }),
         { status: 401, headers: { ...CH, "Content-Type": "application/json" } });
     }
   }
 ```
+
+Nota: si el llamador interno manda un **JWT** de service_role (no la llave cruda),
+la igualdad byte-a-byte no basta. En este proyecto los crons/edges internos llaman
+con `Bearer ${SUPABASE_SERVICE_ROLE_KEY}` (la llave), por lo que la comparacion
+directa es correcta y suficiente. Si algun llamador legitimo usara un JWT firmado,
+validar con `auth.getUser` y exigir `role==='service_role'` del token YA VALIDADO
+(nunca del payload decodificado sin verificar). No mezclar ambos caminos.
 
 Aplicar SNIPPET A tal cual a:
 - **detect-user-patterns**  (cron; hoy devuelve pnl/insights de cualquier apodo sin auth)
@@ -124,12 +145,29 @@ Hoy toma `apodo` del body y hace `apodo.toLowerCase()`. Reemplazar la fuente:
 
 ---
 
-## procesar-venganza — NO tocar (DEAD)
+## Funciones PIT — DEAD_DISABLED / REQUIERE_OWNERSHIP_ANTES_DE_REACTIVAR
 
-Medido: `pit_jugadores` y `pit_picks` NO existen en la base. La funcion siempre
-responde 404; el IDOR no es explotable. Si el juego PIT se reactiva, aplicar
-ownership por `apodo` antes de reactivarla. Igual para `generar-picks-pit` /
-`auto-calificar-pit-picks` (mismas tablas inexistentes): verificar antes de usar.
+Medido: `pit_jugadores` y `pit_picks` NO existen en la base. Hoy `procesar-venganza`,
+`generar-picks-pit` y `auto-calificar-pit-picks` responden 404 y el IDOR no es
+explotable. **Riesgo latente:** si algun dia se recrean las tablas PIT, la
+vulnerabilidad revive. No las dejes como olvido. Accion requerida por pipeline
+(cualquiera de las dos, no ambas):
+
+- **Opcion recomendada — deshabilitar exposicion:** desplegar cada una con el
+  SNIPPET A (solo interno) para que NO sean superficie user-facing hasta reactivar.
+- **Opcion minima — marcar y candar:** dejar al inicio del handler un cortocircuito
+  explicito y un marcador de estado, de modo que reactivar exija una accion
+  deliberada:
+
+```ts
+  // DEAD_DISABLED (6-sep-2026): tablas pit_* no existen. REQUIERE_OWNERSHIP_ANTES_DE_REACTIVAR.
+  // Antes de quitar este candado: (1) recrear pit_*, (2) validar propiedad por apodo
+  //   (jugador/pick.apodo == apodo del JWT) ANTES de cualquier UPDATE.
+  return new Response(JSON.stringify({ error: "PIT deshabilitado" }),
+    { status: 410, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+```
+
+Registrar en el backlog su estado como `DEAD_DISABLED`, no como "safe".
 
 ---
 
