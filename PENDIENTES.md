@@ -4829,3 +4829,61 @@ cron job 415 (lab_dq_drain). (previos: v_lab_closing_canonico_ml, lab_dq_* de E.
 - Ingesta: agregar provider_kickoff a radar para recuperar parte de los 967 UNMATCHED.
 - Corregir ingesta contaminada de odds_cierre (defecto de infraestructura).
 - Confirmar REAL_EVENT_E2E cuando aparezca la primera decision real.
+
+
+## 6-sep-2026 — M16 cierre operativo + FEATURE AUDIT SOCCER S1 (inventario) + S2 (arranque)
+
+FLAGS: MARKET_DATA_ARCHITECTURE=PASS ; MARKET_DATA_REAL_EVENT_E2E=PENDING ; CLV_FORWARD_EVIDENCE=PENDING ;
+A_ECO=PENDIENTE_FORWARD_EVIDENCE. Todo SHADOW. Sin dinero/risk_multiplier. P_FAIR productivo intacto.
+
+### M16.1 REAL EVENT E2E
+cron 415 (lab_dq_drain, cada 10 min) activo. 0 inserts reales del motor en la ventana -> REAL_EVENT_E2E=PENDING.
+No se bloquea Feature Audit. Path queue->drain->DQ probado con pick real (turno anterior).
+
+### M16.2 MARKET DATA por mercado SKILL_PASS (lab_market_data_status)
+  Over/Under -> CLOSING_CANONICO_OK (v_lab_closing_canonico_ou, 168 lineas). Moneyline -> OK (v_lab_closing_canonico_ml, 137).
+  Total Equipo -> NO_MARKET_DATA_SOURCE (radar no ingiere team totals).
+  Doble Oportunidad -> NO_MARKET_DATA_SOURCE (radar no ingiere DC; derivar de ML = inferir momios, prohibido M3).
+  BTTS -> tiene fuente pero SKILL_INSUFFICIENT + ODDS_AVAILABLE_BUT_NOT_WIRED (no priorizar).
+Market key exacto por instrumento (M9 lab_market_key): ML H/D/A; OU selection+linea; no mezclar instrumentos.
+
+### M16.3 PROVIDER_KICKOFF
+Agregada columna radar_odds_snapshots.provider_kickoff (aditiva, nullable; forward). La ingesta edge debe poblarla (handoff).
+Historicos sin kickoff: 967 marcados UNMATCHED_LEGACY_NO_PROVIDER_KICKOFF. No se fabrica kickoff historico.
+
+### M16.4 COBERTURA POR DECISION (no fixture)
+v_lab_market_data_cobertura por sport+market: N decisiones, con_decision_snapshot, exact_decision_price,
+exact_same_market_close, raw_clv, no_vig_clv, no_exact_decision_price. Hoy: solo decisiones DQ de prueba, 0 exactas reales.
+
+### FEATURE AUDIT SOCCER — S1 INVENTARIO (verdad de terreno: calcular_lambdas_futbol)
+El modelo (lambda = ataque x defensa x base_liga por sede; ventaja local implicita) usa SOLO:
+  v_goles_equipo_futbol (4 tasas: anotados/recibidos local/visita) + v_liga_promedios_futbol (media local/visita).
+Tabla lab_feature_inventory_soccer (14 features):
+  MODEL_ACTIVE (7): ataque_local, defensa_local, ataque_visita, defensa_visita, media_liga, dixon_coles_rho,
+    ajuste_h2h_over25 (post-modelo solo O/U 2.5).
+  AVAILABLE_NOT_USED (1): xG (lambda NO lo usa; solo futbol_backtest_combinacion lo prueba).
+  CONTEXT_ONLY (6): btts_pct/clean_sheets (stat display), clima, arbitro, descanso/fatiga (medido -0.51 pero no cableado),
+    contexto_narrativo, rotacion (ruido).
+LEAKAGE: las 4 tasas de goles son agregado VIVO no congelado as-of -> MEDIO_BACKTEST (walk-forward obligatorio en backtest;
+  OK forward). arbitro = ALTO si se usara (llega ~1h antes). ajuste_h2h_over25 = verificar H2H as_of<kickoff.
+No TEMPORALLY_UNSAFE en produccion-forward; no UNKNOWN.
+
+### S2 — ABLACION OOS (arranque, walk-forward)
+Metodo: futbol_backtest_combinacion / futbol_backtest_ataque_defensa (p_min_partidos_previos = walk-forward temporal).
+Primer resultado (xG, n=1461, min_prev=6):
+  Market Brier 0.19537 (referencia) | Modelo goles 0.21723 | Modelo xG 0.21381.
+  xG mejora Brier del modelo -0.0034; ambas variantes pierden vs mercado.
+  VEREDICTO: INCONCLUSO_INCLINA_APORTA (magnitud en borde de IC; falta IC pareado + LogLoss + calibracion para promover a APORTA_OOS).
+  NO se cablea xG por intuicion. (lab_ablation_soccer)
+
+### PENDIENTE S2 (siguiente, sin dinero)
+  - Ablacion completa por feature/grupo x 4 mercados SKILL_PASS (O/U, ML, Total Equipo, Doble Oportunidad),
+    con IC pareado + LogLoss + calibracion; veredicto APORTA/NO_APORTA/DAÑINA/INCONCLUSO.
+    (Nota: Total Equipo y Doble Oportunidad sin market data -> economia no medible; solo Brier/LogLoss del modelo.)
+  - Grupos de contexto (clima/arbitro/descanso) como candidatos AVAILABLE_NOT_USED: probar si APORTAN antes de cablear.
+  - Corners/BTTS/Tarjetas despues.
+  - No feature selection por ROI; no optimizar thresholds; codigo existente != feature valida.
+
+### OBJETOS SHADOW nuevos
+lab_market_data_status ; v_lab_closing_canonico_ou ; v_lab_market_data_cobertura ; radar.provider_kickoff (col) ;
+lab_feature_inventory_soccer ; lab_ablation_soccer ; cron 415 (drain).
