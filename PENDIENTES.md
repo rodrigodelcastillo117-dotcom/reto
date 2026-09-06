@@ -4163,3 +4163,39 @@ FASE C — P_FAIR_V1_SHADOW (preliminar, SHADOW, NO produccion):
 
 SIGUIENTE: FASE D Skill Gate (OOS: Brier vs baseline, LogLoss, calibracion, estabilidad WF, N),
 categorico SKILL_PASS/FAIL/INSUFFICIENT, sin score 0-100, sin EV como prueba de skill. Todo SHADOW.
+
+
+## 6-sep-2026 — FASE C por mercado (soccer) + FASE D Skill Gate (matriz)
+TODO SHADOW. Metrica primaria Brier; IC95 pareado. Baseline skill = climatologia (base rate constante).
+Sin EV/ROI en skill. Sin score numerico. Sin pooling entre mercados. Sin tocar produccion.
+
+C1 — P_FAIR SOCCER POR MERCADO (lab_bloque_a_wf; DBrier=sesgo-P0, negativo=ayuda):
+  mercado           N     base  BrierP0  Brsesgo  DBrier    IC95/2   -> P_FAIR / status
+  Over/Under       6775  .544  .20993  .21043  +.00050  .00058  -> P0  SIN_CALIBRACION_OOS_JUSTIFICADA
+  Moneyline        4065  .333  .20936  .20911  -.00025  .00053  -> P0  SIN_CALIBRACION_OOS_JUSTIFICADA
+  Total Equipo     4065  .624  .20945  .20981  +.00036  .00062  -> P0  SIN_CALIBRACION_OOS_JUSTIFICADA
+  Corners          3272  .500  .26896  .25315  -.01581  .00446  -> P0+sesgo  CALIBRACION_SOPORTADA_OOS
+  Doble Oport.     2710  .621  .22265  .22234  -.00031  .00074  -> P0  SIN_CALIBRACION_OOS_JUSTIFICADA
+  Tarjetas         2376  .500  .23317  .23429  +.00112  .00156  -> P0  SIN_CALIBRACION_OOS_JUSTIFICADA
+  BTTS             1355  .511  .25304  .25207  -.00098  .00369  -> P0  EVIDENCIA_INSUFICIENTE
+  => el sesgo agregado era CASI TODO Corners; en los otros 6 el IC del Delta cruza 0.
+
+D — SKILL GATE por sport/market (Brier P_FAIR vs baseline; IC95 pareado; + estabilidad 3 ventanas):
+  soccer Over/Under      DBrier -.03809 IC .00379  ventanas -.039/-.040/-.035  SKILL_PASS
+  soccer Total Equipo    -.02521 IC .00439        -.029/-.027/-.020           SKILL_PASS
+  soccer Moneyline       -.01287 IC .00262        -.008/-.012/-.018           SKILL_PASS
+  soccer Doble Oport.    -.01280 IC .00302        -.008/-.012/-.019           SKILL_PASS
+  soccer Tarjetas        -.01683 IC .00833        +.004/-.018/-.036           SKILL_PASS (ventana1 debil)
+  soccer Corners         +.00315 IC .00566        +.017/-.007/.000            SKILL_INSUFFICIENT
+  soccer BTTS            +.00316 IC .00568        +.004/+.003/+.003           SKILL_INSUFFICIENT
+  MLB Moneyline          -.00233 IC .00272        -.0019/-.0018/-.0032        SKILL_INSUFFICIENT (edge chico, IC cruza 0)
+
+LECTURA CLAVE:
+  - Donde hay skill (5 mercados soccer), P_FAIR = P0 crudo (ninguna calibracion se justifica; sesgo no aporta).
+  - Corners: el sesgo SI calibra (mejora Brier), pero el mercado NO tiene skill vs moneda -> no elegible igual.
+  - BTTS y MLB ML: sin skill demostrado OOS. MLB tiene edge consistente pero no significativo (n=1056).
+  - Cruce importante: 'mejor que nuestras calibraciones' != 'mejor que baseline'. Corners lo separa.
+
+A_ECO sigue PENDIENTE_ODDS_DECISION (shadow forward con radar_odds_snapshots; no closing para EV/ROI).
+DETENIDO antes de Confidence, por orden del auditor: primero saber que cerebros tienen skill.
+No tocado: produccion, Kelly, RONGOL, caps, allocator, NFL, EXP_OFF=0.50.
