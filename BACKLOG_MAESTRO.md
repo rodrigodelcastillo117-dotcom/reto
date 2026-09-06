@@ -3403,3 +3403,122 @@ las dos funciones nuevas, ambas sin lectores, mas `lab_bloque_a_wf` y
 **#263 ODDS_DISPLAY != ODDS_DECISION.** Medir cuantas apuestas registradas
 tienen `picks.momio` distinto del `momio_mercado` que vio el usuario, y cuanto
 cambia el EV real por ese slippage. No se mezcla con #209.
+
+---
+
+## #262-C FASE 1 — NUCLEO CANONICO EXTRAIDO. Equivalencia 784/784, cero desvios
+
+**Produccion intacta. Sin consumidores.**
+
+### El diagnostico arquitectonico del auditor se confirma en el codigo
+
+Se leyo `kelly_stake` verbatim (md5 **`d9ba6526a52b3c03ffa51351599c50ce`**,
+13,346 chars). **`p_apodo` aparece 3 veces y las 3 en el lado del dinero:**
+`config_staking` (fraccion_kelly, stake_max_pct, stake_min) y el bankroll vivo.
+
+**La cadena de probabilidad/EV no toca el apodo ni una vez.** Era universal
+desde siempre; estaba encerrada dentro de una funcion que pide identidad.
+
+### HALLAZGO COLATERAL: la cadena viva NO es la que yo tenia anotada
+
+Al leer el codigo aparecieron dos bloques posteriores a mis notas:
+
+- **#208 (5-sep):** reemplazo un tope plano `least(v_p_usada, tasa_base)` por
+  `P_usada = P_motor * min(1, sqrt(N/300))`.
+- **#214 (5-sep):** **retiro ese `sqrt(N/300)`** porque saturaba en 1.0 con
+  N>=300 (o sea, cero recorte para los dos tramos vivos de Moneyline, n=853 y
+  n=1963) y lo sustituyo por el **limite inferior de Wilson**, que no satura
+  nunca (0.9067 con n=187, 0.9562 con n=853, 0.9711 con n=1963).
+
+**Conclusion:** la cadena viva HOY es `sesgo -> Beta -> Wilson`, que es
+exactamente lo que modele como `H` en las Fases A y B. **Mis mediciones siguen
+siendo validas.** El `sqrt(N/300)` es comentario historico, no codigo activo.
+Lo registro porque mi md5 anotado antes era otro y **no puedo afirmar** que la
+funcion no haya cambiado entre sesiones: lo que si afirmo es que la cadena que
+corre ahora es la que reproduje.
+
+### `public.decision_economica_v1(prob_pct, momio, mercado)`
+
+`jsonb`, `STABLE`, `SECURITY DEFINER`, `search_path = public`. **Sin apodo.**
+
+Transcripcion **verbatim**: guardas de momio y probabilidad, `zona_realidad`,
+lectura de `zonas_confiables`, `v_sesgo`, recorte Beta con aproximacion normal
+(`N_SIN_MEDIR = 30`, `Z10 = 1.2816`), factor Wilson y el EV final. **Ni una
+formula nueva.**
+
+Devuelve: `prob_entrada_pct`, `sesgo_pp`, `recorte_beta_pp`, `factor_wilson`,
+`prob_antes_wilson_pct`, `prob_decide_pct`, `momio`, `breakeven_pct`, `ev_pct`,
+`ev_pct_declarado`, `medido`, `n_tramo`, `mercado_medido`, `tramo`, `motivo`,
+`origen`.
+
+### CANDADO DE EQUIVALENCIA — **PASA. 784 combinaciones, 0 desvios.**
+
+Rejilla: 16 probabilidades (5-95) x 7 momios (1.20-5.00) x 7 mercados
+(Moneyline, Over/Under, BTTS, Doble Oportunidad, Corners, NULL y uno
+inexistente). **371 combos medidos y 413 no medidos.**
+
+| comparacion | desvios |
+|---|---|
+| `ok` | **0** |
+| `prob_decide_pct` | **0** |
+| `prob_antes_wilson_pct` (antes del recorte) | **0** |
+| `sesgo_pp` | **0** |
+| `factor_wilson` (`factor_muestra`) | **0** |
+| **`ev_pct`** | **0** |
+| `ev_pct_declarado` | **0** |
+
+### El unico desvio que aparecio, y por que NO era una diferencia real
+
+La primera corrida dio **77 de 784 desvios en `prob_decide_pct`** con **EV
+identico en las 784**. Contradiccion aparente que resulto ser **doble
+redondeo**: yo emitia `round(x, 2)` y el comparador volvia a redondear a 1
+decimal, mientras `kelly_stake` redondea `round(x, 1)` una sola vez.
+`44.549 -> 44.55 -> 44.6` contra `44.549 -> 44.5`.
+
+**Corregido en el nucleo: las probabilidades salen SIN redondear.** Se redondea
+una sola vez, al pintar. Queda documentado dentro de la funcion para que nadie
+lo reintroduzca. Tras el arreglo, **0 de 784**.
+
+Vale la pena decirlo claro: el EV coincidia exactamente porque se calcula sobre
+el valor sin redondear. Si hubiera aceptado el primer resultado como "casi
+igual" habria enterrado un artefacto de presentacion como si fuera un error de
+formula, o al reves.
+
+### FASE 2C RESUELTA POR ADELANTADO: `destacados_cache` es GLOBAL y ya esta limpio
+
+| pregunta | respuesta medida |
+|---|---|
+| ¿tiene columna de usuario/apodo? | **0 columnas** -> es **GLOBAL** |
+| ¿guarda kelly/stake/monto/bankroll? | **0 columnas** |
+| filas | 79 |
+
+Columnas: `deporte, liga, pais, fecha, partido, espn_event_id, mercado, linea,
+cuota, casa, prob_cruda, prob_calibrada, necesitas_pct, ev_pct, muestra,
+respaldo, calculado_at, margen_casa_pct, mercado_sin_vig_pct, vs_mercado_pts,
+ev_corta_pct, ev_larga_pct, estable`.
+
+**La prohibicion del auditor ya se cumple estructuralmente:** el cache global no
+guarda stake de nadie. Lo que falta es que `prob_calibrada` y `ev_pct` salgan del
+nucleo canonico y no de `calibrar_prob_motor_live`. **El stake se calculara al
+consumir, con identidad del usuario** — que es justo lo que el diseno pide.
+
+### ESTADO Y LO QUE FALTA
+
+Construido y validado, **sin consumidores productivos**:
+`ev_decision_v1`, `mejor_oportunidad_hoy_v2`, `decision_economica_v1`.
+
+Pendiente antes del GO:
+1. **`kelly_sombra`**: `decision_economica_v1` + bankroll -> stake, y candado
+   Kelly/stake sombra = Kelly/stake produccion, desvio 0.
+2. Adaptar en sombra las **cinco superficies** (oportunidades, destacados,
+   favoritos, vale_la_pena_cerrar, veredicto_vivo).
+3. **Identidad**: `auth.uid() -> usuarios.user_id` para la ruta user-facing.
+   **NO** aceptar `p_apodo` del cliente como prueba de identidad economica.
+4. Inventario final de `calibrar_prob_motor_live` y clasificacion
+   DIAGNOSTICO / ACCIONABLE. GO exige **0 accionables**.
+5. C7 ampliado sobre las cinco superficies.
+
+**#263 (ODDS_DISPLAY != ODDS_DECISION) sigue sin mezclarse.**
+
+**Sin cambios en:** Beta, Wilson, sesgo, Kelly, caps, RONGOL, allocator, NFL,
+EXP_OFF=0.50.
