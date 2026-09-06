@@ -38,10 +38,24 @@ NUNCA se decodifica el `role` de un JWT. Medido: `public.sk()` == vault
 Ningún smoke mutó datos: reconectar con `dry_run:true`, oraculo con id inexistente,
 push con apodo inexistente.
 
+## User-facing IDOR — cerradas y verificadas (SNIPPET B: identidad del JWT + propiedad)
+
+| función | ver | sin sesión | service (no user) | A→recurso de B | dueño→propio | callers |
+|---|---|---|---|---|---|---|
+| confirmar-fecha-pick | 14→15 | 401 | 401 | **404 y pick de B intacto** | 200 ok | solo frontend (0 cron, 0 db_fn) |
+
+Verificación de confirmar-fecha-pick con JWT de usuario REAL acuñado server-side
+(admin generate_link → verify; sesión revocada con /logout al terminar; token nunca
+pasó por el chat). El único cambio de datos fue en el pick propio del test (etiqueta
+`partido`, comportamiento legítimo de la función) y se restauró. Ownership por
+`.eq('apodo', apodo)` en cada UPDATE; uuid ajeno → 404, no toca la fila de otro.
+**Dependencia de frontend:** el date picker debe mandar el access_token del usuario
+(por defecto `supabase.functions.invoke` ya lo hace). Feature dormido hoy (0 picks/
+parlays con needs_date_confirmation), así que cero impacto en vivo.
+
 ## Pendientes (mismo protocolo, por severidad)
 
-1. **User-facing IDOR (P0-WRITE / P0-READ)** — protocolo grande + SNIPPET B (identidad del JWT + propiedad):
-   - confirmar-fecha-pick (P0-WRITE IDOR)
+1. **User-facing IDOR restantes** — protocolo grande + SNIPPET B:
    - get-parlay-with-scores (P0-READ)
    - crear-parlay-screenshot (P1-AUTHZ write)
 2. **AUTH-0 consumers** (swap `_shared/auth.ts` corregido + redeploy): construir-parlay-ai,
