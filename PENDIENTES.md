@@ -4944,3 +4944,69 @@ ROI/EV/seleccion economica: ECONOMIC_EFFECT = PENDING_FORWARD_EVIDENCE (0 decisi
 lab_wf_1x2_preds, lab_wf_ou_preds (harness walk-forward per-obs con toggles) ; lab_ablation_soccer (matriz).
 
 ### CANDADO: no se toco produccion, ni P_FAIR, ni dinero. Nada cableado. Detente antes de S3.
+
+
+## 6-sep-2026 — S2 COMPLETO (4 mercados) + candado xG + S3-lite champions. NO promover.
+
+Todo SHADOW. Sin dinero/risk_multiplier. P_FAIR productivo intacto. EXP_OFF=0.50 sin tocar.
+
+### 1) MATRIZ S2 COMPLETA (walk-forward pareado, IC95, LogLoss; n=1159 ML/OU/DC, 2318 TeamTotal)
+  feature        Moneyline        Over/Under2.5     Total Equipo1.5    Doble Oport.(=1X2)
+  xG             APORTA*          APORTA*            (esperado APORTA*)  APORTA*      (*TEMPORALLY_UNPROVEN)
+  venue_split    DAÑINA(-.0121)   DAÑINA(-.0060)     DAÑINA(-.0113)      DAÑINA(-.0121)
+  team_strength  INCONCLUSO(+.0033) DAÑINA(-.0091)   INCONCLUSO(-.0034) INCONCLUSO(+.0033)
+  dixon_coles    INCONCLUSO(~0)   INCONCLUSO(0)      n/a                n/a
+  h2h_over25     —                NO_APORTA(depth<=1) —                  —
+  contexto(desc/clima/arb)  TEMPORALLY_UNAUDITABLE en todos
+  Hallazgo transversal: VENUE_SPLIT es DAÑINA en los 4 mercados.
+
+### 2) VEREDICTO TEMPORAL xG (S2.1) = xG_TEMPORAL_INTEGRITY = TEMPORALLY_UNPROVEN
+  Fuente: futbol_5ligas_2526.xg_est_*_ft (xG ESTIMADO, #104). Representa xG estimado del partido (post-partido).
+  El harness usa solo partidos PREVIOS (game-date OK; el partido objetivo nunca entra).
+  PERO: la tabla NO tiene cargado_at/as_of/ingested_at -> NO se puede probar que esos xG existieran en BD antes de t;
+  y al ser estimacion, el timing de computo es aun mas incierto que los goles. Por el candado -> UNPROVEN.
+  CONSECUENCIA: xG NO entra a S3 aunque mejore Brier. Para habilitarlo: fuente forward con as_of instrumentado.
+  (Nota: el dataset entero carece de timestamp -> el WF es game-date-valido pero DB-availability-unproven para todo; xG es el mas sospechoso.)
+
+### 3) VEREDICTO H2H (S2.4) = H2H_PRODUCTION_EVIDENCE = UNPROVEN (opcion B)
+  Intra-temporada: profundidad <=1 enfrentamiento previo (0 con >=2) -> ruido.
+  Produccion usa historico multi-temporada con cargado_at de backfill reciente (E.2C.1) -> as-of no probable.
+  -> H2H EXCLUIDO de S3.
+
+### 4) CHALLENGERS S3 (xG y H2H excluidos por candado)
+  C0 = actual (team + venue split). C1 = team, SIN venue split (agrupado). C2 = base liga pura (sin team, sin venue).
+  (C2..C4 con xG del plan original quedan BLOQUEADOS hasta xG_TEMPORAL_INTEGRITY=PASS.)
+
+### 5) TEST FINAL INTACTO
+  Holdout temporal = ultimo 30% por fecha (n=526), NO participo en elegir la estructura de challengers.
+  Sin hyperparameters continuos que tunear (enc=4.0 fijo; xG excluido) -> sin fuga de seleccion.
+  CAVEAT: si xG (peso tunable) re-entra en el futuro, exige nested walk-forward (train->valid temporal->test intacto) real.
+
+### 6) CHAMPION POR MERCADO (holdout intacto n=526; Brier / LogLoss)
+  Moneyline:      C1 (team ON, venue OFF)  Brier 0.20430 LL 1.02315  vs C0 0.21438/1.06983  vs C2 0.21679/1.07480 -> CHAMPION C1 (mejora clara)
+  Doble Oport.:   C1 (=1X2 transformacion) 0.20430 (hereda) -> CHAMPION C1
+  Over/Under 2.5: C2 base pura 0.24461/0.68224 ~ C0 0.24530 ~ C1 0.24601 -> empate; CHAMPION C2 marginal (team/venue no aportan)
+  Total Equipo:   familia venue-OFF (venue DAÑINA -.011; team INCONCLUSO) -> quitar venue split; holdout no corrido aparte
+  Market baseline (aparte, NO para elegir modelo): 1X2 ~0.195 -> ningun champion bate al mercado todavia.
+
+### 7) SKILL_PASS: ningun mercado lo pierde por S2/S3
+  S2/S3 son incrementales de feature + seleccion de champion, NO skill-vs-baseline. El champion conserva la
+  estructura (base liga + team agrupado) que genero el skill. RECOMENDADO: re-verificar el D.1 skill-gate sobre
+  el champion antes de promover (no hecho aqui).
+
+### HALLAZGO CENTRAL
+  El cerebro de futbol mejora QUITANDO complejidad, no agregando: el mejor 1X2 es tasas de equipo AGRUPADAS +
+  base de liga, SIN split por sede (el split diluia la senal). O/U vive casi de la base de liga. xG mejoraria
+  pero no es temporalmente demostrable aun. Es exactamente el "cerebro mas simple, mas calibrado" buscado.
+
+### OBJETOS SHADOW nuevos
+  lab_wf_1x2_preds, lab_wf_ou_preds, lab_wf_teamtotal_preds (harness WF con toggles) ; lab_ablation_soccer (matriz);
+  lab_champion_soccer (champions). NADA promovido; produccion/P_FAIR intactos.
+
+### PENDIENTE (antes de S3 real / cadena monetaria)
+  - Instrumentar fuente xG forward con as_of (para que xG pueda competir) -> luego nested WF.
+  - Re-verificar skill-gate del champion C1 (ML/DC) y C2 (OU).
+  - Auditar H2H productivo con as-of real si se instrumenta.
+  - Total Equipo: champion en holdout propio.
+  - Economia/CLV: sigue PENDING_FORWARD_EVIDENCE (0 EXACT_DECISION_PRICE).
+  - REAL_EVENT_E2E: PENDING (cron 415 activo).
