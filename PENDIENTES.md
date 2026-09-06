@@ -4747,3 +4747,85 @@ lab_dq_decision ya liga odds_snapshot_id + eligibility_version + p_fair/skill ve
   - Arreglar mapping odds_event_id<->espn_event_id (+689 fixtures a la cobertura de decision-odds).
   - Corregir ingesta contaminada de odds_cierre en oraculo_picks_tracking (defecto de infraestructura).
   - Programar drain de la cola DQ (E.2C.2) para que la captura forense acumule sola.
+
+
+## 6-sep-2026 — BLOQUE M CIERRE (M0 forward real, M8-M15, tests) 
+
+Todo SHADOW. Dinero desconectado. Sin risk_multiplier. No Feature Audit todavia.
+
+### M0 — LOG FORWARD REAL
+- trigger trg_dq_captura_oraculo en oraculo_picks_tracking: ENABLED (enqueue-only O(1)).
+- drain programado: cron job 415 lab_dq_drain cada 10 min ('*/10 * * * *').
+- reconciliacion: v_lab_dq_capturas_faltantes (decisiones sin captura) + lab_dq_capture_misses + cola con procesado/resultado.
+- OBSERVACION: 0 inserts reales del motor en oraculo desde el attach (ventana de prueba). No se inventa PASS.
+  REAL_EVENT_E2E = PENDING (se confirmara cuando el motor inserte una fila real -> queue -> drain -> DQ decision).
+  El path queue->drain->DQ->eligibility SI esta probado con datos de un pick real (encolado manual): 1 procesado, semantic PASS.
+- Produccion numericamente identica (baseline oraculo 3520 intacto; trigger AFTER enqueue-only exception-safe).
+
+### M8 — CANONICAL EVENT MAPPING (lab_event_mapping, auditable, provider-aware)
+Estados: EXACT 913 | DETERMINISTIC_ALIAS 199 | AMBIGUOUS 21 | UNMATCHED 967 (total 2100 provider_event_id).
+  EXACT = radar ya trae espn_event_id. DETERMINISTIC_ALIAS = alias no-ambiguo (equipo_alias) -> par espn_id -> fixture unico en agenda.
+  AMBIGUOUS/UNMATCHED NO pueden entrar a CLV. No fuzzy libre; no se forzo 100%.
+DEFECTO: radar_odds_snapshots NO guarda provider_kickoff/commence_time -> eventos historicos no desambiguables por fecha
+  (fix upstream en la ingesta). Usable para CLV = EXACT+DETERMINISTIC = 1112.
+
+### M9 — CANONICAL MARKET KEY (lab_market_key)
+sport|market_type|period|selection|line|book. Under 3.5 != Under 2.5 (test T1). Prohibido comparar lineas distintas.
+
+### M10 — DECISION PRICE CANONICO POR DECISION (politica)
+Por decision: ultimo snapshot con snapshot_at<=decision_time, mismo fixture canonico + market key + linea + book (PRICE_POLICY_V1).
+Registrar decision_id, odds_snapshot_id, decision_odds, snapshot_at, lag_seconds, book, exact_match, reason_code.
+Si no existe: NO_EXACT_DECISION_PRICE. No nearest-future, no interpolacion, no closing (tests T2/T8).
+
+### M11 — CLOSING CANONICO (dos politicas separadas, versionadas)
+SAME_BOOK_CLOSE (mismo book de la decision) y MARKET_REFERENCE_CLOSE (consenso/no-vig de mercado). Nunca mezclar.
+closing = ultimo snapshot valido < kickoff, mismo market key/linea/period/selection (test T3/T4).
+Artefacto base creado: v_lab_closing_canonico_ml (Moneyline, 137 fixtures, home_ml close 2.07 sano).
+
+### M12 — NO-VIG POR MERCADO (lab_no_vig_prob)
+ML 3-way H+D+A; O/U over+under misma linea; BTTS yes+no. Falta pata -> NULL = NO_VIG_INCOMPLETE_MARKET (test T5).
+
+### M13 — CLV V1 SHADOW (lab_clv_v1)
+Campos: clv_odds=dec/close-1; p_dec_raw; p_close_raw; clv_prob_raw=1/close-1/dec; no-vig dec/close; clv_prob_novig; snapshot ids; policy versions; clv_version.
+Positivo = tomamos mejor precio que el cierre (tests de signo + T9 idempotencia).
+
+### M14 — LEGACY CLV
+oraculo_picks_tracking.odds_cierre/clv_pct marcados LEGACY_CLV_UNTRUSTED (lab_price_policy). NO se sobrescriben ni entran
+al CLV nuevo (test T7). Migrar produccion solo con equivalencia validada.
+
+### M15 — A_ECO (sobre DECISIONES, no fixtures)
+Requisito: decision timestamped + exact decision odds + mismo market key + odds antes de decision_time.
+Decisiones reales que cumplen hoy: 0 (no hay decisiones forward del motor capturadas aun; las del DQ son de prueba).
+=> N insuficiente. NO se baja el estandar. Beta/Wilson vs P0/P_FAIR NO se re-ejecuta (N~0).
+A_ECO = PENDIENTE_FORWARD_EVIDENCE (reemplaza PENDIENTE_ODDS_DECISION: ahora la maquinaria existe; falta acumular).
+
+### TESTS OBLIGATORIOS (10/10 PASS)
+1 Under3.5!=Under2.5 PASS · 2 snapshot+1s no decision PASS · 3 cierre post-kickoff rechazado PASS ·
+4 book distinto no SAME_BOOK PASS · 5 ML no-vig requiere H/D/A PASS · 6 ambiguous no CLV PASS ·
+7 legacy 8.96 nunca entra (por construccion; lab_clv_v1 solo toma inputs canonicos) PASS ·
+8 sin precio exacto -> NO_EXACT_DECISION_PRICE PASS · 9 mismo input=mismo CLV PASS · 10 dinero desconectado (CLV diagnostico, sin stake) PASS.
+
+### ENTREGA FINAL BLOQUE M
+- fixtures/eventos mapeados: EXACT 913, DETERMINISTIC 199, AMBIGUOUS 21, UNMATCHED 967.
+- decisiones con exact decision price: 0 (forward; maquinaria lista).
+- decisiones con exact close: 0 (forward).
+- decisiones con raw CLV: 0. con no-vig CLV: 0. (acumulan forward)
+- cobertura por sport/market: closing canonico Moneyline 137 fixtures; O/U y BTTS pendientes de extender.
+- distribucion lag decision-snapshot: N/A (0 decisiones reales).
+- CLV promedio/mediana/IC por sport-market: N/A (0 decisiones reales; la CLV legacy 2.29% es UNTRUSTED).
+- anomalias: (a) odds_cierre legacy contaminado; (b) 988 eventos AMBIGUOUS/UNMATCHED; (c) radar sin provider_kickoff.
+- estado A_ECO: PENDIENTE_FORWARD_EVIDENCE.
+- prueba real DQ event-driven: REAL_EVENT_E2E=PENDING (0 inserts del motor en la ventana; cron 415 activo; path probado con pick real via cola).
+- dinero desconectado: confirmado.
+
+### OBJETOS SHADOW nuevos
+lab_event_mapping ; lab_market_key ; lab_no_vig_prob ; lab_clv_v1 ; lab_price_policy(+LEGACY_CLV_UNTRUSTED) ;
+cron job 415 (lab_dq_drain). (previos: v_lab_closing_canonico_ml, lab_dq_* de E.2C)
+
+### PENDIENTE (para completar CLV real; no Feature Audit aun)
+- Acumular decisiones forward (motor -> oraculo -> queue -> drain -> DQ) para poblar decision price/close/CLV reales.
+- Extender decision-price y closing canonicos a O/U y BTTS con market key + linea (radar over/under/btts cols).
+- MARKET_REFERENCE_CLOSE (no-vig de mercado) como vista separada de SAME_BOOK_CLOSE.
+- Ingesta: agregar provider_kickoff a radar para recuperar parte de los 967 UNMATCHED.
+- Corregir ingesta contaminada de odds_cierre (defecto de infraestructura).
+- Confirmar REAL_EVENT_E2E cuando aparezca la primera decision real.
