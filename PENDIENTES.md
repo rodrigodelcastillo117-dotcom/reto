@@ -4887,3 +4887,60 @@ Primer resultado (xG, n=1461, min_prev=6):
 ### OBJETOS SHADOW nuevos
 lab_market_data_status ; v_lab_closing_canonico_ou ; v_lab_market_data_cobertura ; radar.provider_kickoff (col) ;
 lab_feature_inventory_soccer ; lab_ablation_soccer ; cron 415 (drain).
+
+
+## 6-sep-2026 — S2 ABLACION OOS SOCCER (walk-forward estricto, pareado). Detente antes de S3.
+
+Candado temporal: harness lab_wf_1x2_preds / lab_wf_ou_preds sobre futbol_5ligas_2526, rates de partidos
+PREVIOS (rows unbounded preceding..1 preceding), media liga as-of, cierre NO usado como predictor. Sin dinero.
+Metrica primaria Brier + LogLoss; ΔBrier pareado por fixture con IC95 iid (1 fila/fixture). No se optimizan thresholds.
+
+### MATRIZ feature x market (n=1159 walk-forward, min 6 previos, enc=4.0)
+  feature         Moneyline(1X2)              Over/Under 2.5             veredicto / accion
+  xG              -0.00426 IC.00183 APORTA    -0.00744 IC.00335 APORTA   APORTA_OOS / CHALLENGER (wire en S3)
+  venue_split     -0.01213 IC.00413 DAÑINA    -0.00596 IC.00533 DAÑINA   DAÑINA_OOS / REMOVE_CANDIDATE
+  team_strength   +0.00328 IC.00564 INCONCL   -0.00906 IC.00732 DAÑINA   INCONCLUSO(ML)/DAÑINA(OU) / MORE_EVIDENCE
+  dixon_coles     -0.00019 IC.00026 INCONCL    0.0 INCONCL               INCONCLUSO / MORE_EVIDENCE (inocuo)
+  h2h_over25      —                           NO_APORTA (depth<=1)       NO_APORTA / MORE_EVIDENCE
+  descanso/clima/arbitro  TEMPORALLY_UNAUDITABLE (no en dataset)         TEMPORAL_FIX_REQUIRED
+(signo: para 'quitar', dbrier>0 = feature aporta; para 'agregar', dbrier<0 = aporta. LogLoss confirma xG en ambos.)
+
+### HALLAZGOS CLAVE
+1. xG es el UNICO ganador claro (APORTA_OOS en ML y O/U, IC no cruza 0, LogLoss mejora). Hoy AVAILABLE_NOT_USED
+   (el motor productivo NO lo usa). Es el mejor candidato a cablear (en S3, no ahora).
+2. venue_split (split local/visita) es DAÑINA en ambos mercados: agrupar sedes MEJORA el Brier. Mete ruido.
+3. team_strength al encogimiento actual (enc=4.0) NO paga su costo: INCONCLUSO en ML, DAÑINA en O/U.
+   El skill del modelo viene mas de la BASE DE LIGA (ventaja local + tasa base de goles) que del detalle por equipo.
+   CAVEAT: es dependiente del encogimiento; puede ser sub-encogimiento (overfit de rates con n>=6). MORE_EVIDENCE, no "el equipo no sirve".
+4. dixon_coles rho es inocuo (~0) en 1X2 y O/U. Mantener o quitar es indiferente en estos mercados.
+5. H2H O/U2.5: profundidad intra-temporada <=1 enfrentamiento previo (0 con >=2) -> 1 meeting = ruido -> NO_APORTA aqui.
+   El ajuste productivo usa historico multi-temporada -> TEMPORALLY_UNAUDITABLE por este harness (auditoria dedicada as-of pendiente).
+6. Contexto (descanso/clima/arbitro): no hay columnas as-of en el dataset walk-forward -> TEMPORALLY_UNAUDITABLE.
+   Confirma S1: no estan en el motor y no se pueden auditar sin reconstruccion temporal dedicada.
+
+### BASELINE vs MERCADO (pregunta distinta, NO mezclar con incremental de feature)
+El modelo total pierde vs Market Brier (~0.195 en 1X2) en la mayoria de variantes; la mejor variante simple
+(base liga + xG, sin venue split) reduce la brecha. "Supera al mercado" sigue sin demostrarse; es otra pregunta.
+
+### MERCADOS 3 y 4
+Total Equipo y Doble Oportunidad: SKILL_PASS pero NO_MARKET_DATA_SOURCE (economia/CLV imposible; no inferir).
+  Brier/LogLoss del modelo: PENDIENTE_HARNESS (Total Equipo requiere Poisson marginal por equipo; Doble Oportunidad
+  es transformacion del 1X2 y sus conclusiones deberian reflejar ML). No medidos este turno.
+Corners/BTTS/Tarjetas: despues (SKILL_INSUFFICIENT).
+
+### ECONOMIA
+ROI/EV/seleccion economica: ECONOMIC_EFFECT = PENDING_FORWARD_EVIDENCE (0 decisiones con EXACT_DECISION_PRICE; no closing).
+
+### SALIDA S2 — ACCIONES PROPUESTAS (no ejecutar; S3)
+  KEEP: base de liga (ventaja local + tasa base) — es el nucleo del skill.
+  CHALLENGER->wire: xG (peso a calibrar en S3 con el mismo walk-forward, sin tocar produccion aun).
+  REMOVE_CANDIDATE: venue_split (DAÑINA en ambos).
+  MORE_EVIDENCE: team_strength (revisar encogimiento; puede estar sub-shrunk), dixon_coles (inocuo), h2h (profundidad).
+  TEMPORAL_FIX_REQUIRED: descanso/clima/arbitro (instrumentar as-of antes de poder auditar), h2h productivo (audit historico dedicado).
+
+### REAL_EVENT_E2E: sigue PENDING (cron 415 activo; 0 inserts reales del motor aun). No bloquea.
+
+### OBJETOS SHADOW nuevos
+lab_wf_1x2_preds, lab_wf_ou_preds (harness walk-forward per-obs con toggles) ; lab_ablation_soccer (matriz).
+
+### CANDADO: no se toco produccion, ni P_FAIR, ni dinero. Nada cableado. Detente antes de S3.
