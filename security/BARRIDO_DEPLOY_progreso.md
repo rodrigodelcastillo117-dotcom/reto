@@ -69,6 +69,42 @@ pasó por el chat). El único cambio de datos fue en el pick propio del test (et
 (por defecto `supabase.functions.invoke` ya lo hace). Feature dormido hoy (0 picks/
 parlays con needs_date_confirmation), así que cero impacto en vivo.
 
+## AUTH-0 consumers (swap de `_shared/auth.ts` corregido: timingSafeEqual, sin decode)
+
+| función | ver | sin auth | JWT falso service | service/dueño real | tamaño | estado |
+|---|---|---|---|---|---|---|
+| live-day-dashboard | (v19) | 401 | 401 | OK | — | CERRADA (sesión previa) |
+| construir-parlay-ai | 263→264 | 401 | **401** | service 400 s/apodo; user A 200 (cache) | ~15KB | **CERRADA + verificada** |
+| settle-betslip | 48→49 | 401 | **401 (leía boleto ajeno)** | service 400 s/imagen | ~15KB | **CERRADA + verificada** |
+| analizar-partido | — | — | — | — | **239KB** | BLOQUEADA por tamaño; exposición = **abuso de costo** (corre el LLM), SIN IDOR (0 usos de caller.apodo/isService en la lógica) |
+| scan-betslip | — | — | — | — | **182KB** | BLOQUEADA por tamaño; **IDOR confirmado** (isService?body.apodo). Reservada para el final |
+
+Index desplegado **verbatim** (copiado byte a byte del fetch); solo se cambió `_shared/auth.ts`.
+Callers verificados: construir-parlay-ai = solo frontend; settle-betslip = frontend;
+analizar-partido = 3 funciones DB (disparar_reanalisis_prepartido, trigger_analizar_partido_async,
+reanalizar_analisis_vacios) todas con service key real (compatibles con el fix).
+
+### CORRECCIÓN de inventario
+- **auto-calificar-picks NO es AUTH-0 consumer**: 0 usos de requireCaller/_shared/auth.ts
+  (bundlea af-meter.ts). Es un **grader ABIERTO** (verify_jwt=false, sin gate de entrada;
+  el único Authorization es saliente a Resend). Exposición = abuso de costo (disparar grading +
+  correos). Necesita SNIPPET A. 157KB → también bloqueada por tamaño.
+
+## BLOQUEO DE CANAL (grave, requiere decisión del auditor)
+
+El único canal de deploy disponible es `deploy_edge_function` (MCP, contenido **inline**).
+No hay Supabase CLI, ni Deno, ni `SUPABASE_ACCESS_TOKEN` en el entorno. Los archivos de
+150KB+ (analizar-partido 239KB, scan-betslip 182KB, auto-calificar-picks 157KB) **no se pueden
+reproducir inline byte-perfecto de forma confiable**, y como el rollback exigiría la misma
+reproducción, un deploy fallido no se podría revertir con seguridad. Por eso NO se despliegan.
+Opciones para cerrarlos:
+1. Pipeline/Lovable que redeplegue esas funciones cambiando `_shared/auth.ts` (canal nativo para archivos grandes).
+2. Proveer Supabase CLI + `SUPABASE_ACCESS_TOKEN` en el entorno → `supabase functions deploy` desde disco (exacto, sin transcripción).
+
+## crear-parlay-screenshot: LEGIT_PATH = PENDIENTE
+IDOR cerrado y verificado; falta smoke funcional legítimo real/no destructivo (el fixture
+sintético dio 500 por trigger de parlays). Exigible antes del PASS final.
+
 ## Pendientes (mismo protocolo, por severidad)
 
 1. **User-facing IDOR restantes** — protocolo grande + SNIPPET B:
