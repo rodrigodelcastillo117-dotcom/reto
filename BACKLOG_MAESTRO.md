@@ -4035,3 +4035,102 @@ banca**, no habilidad. No se toco.
 ### ROLLBACK
 
 Version anterior = 17. `deploy_edge_function` con la v4 restaura en un paso.
+
+---
+
+## #262-I — AUTH-0 FALLA: `isServiceToken` DECODIFICA, NO VALIDA (bypass de service_role)
+
+**Fecha:** 6-sep-2026. **Severidad:** P0 sistemico (bypass de autenticacion).
+**Estado:** primitivo corregido y verificado en `live-day-dashboard` (v19).
+Resto de consumidores: PENDIENTE de decision de ejecucion.
+
+### EL DEFECTO
+
+`_shared/auth.ts` -> `isServiceToken`:
+
+```ts
+function isServiceToken(token: string): boolean {
+  const service = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  if (service && token === service) return true;
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));  // <-- DECODE, no VALIDATE
+    return payload?.role === "service_role";
+  } catch { return false; }
+}
+```
+
+La segunda rama **decodifica** el payload del JWT y confia en `role` **sin verificar
+la firma**. Cualquiera fabrica localmente `header.payload.firmafalsa` con
+`payload={"role":"service_role"}` y `requireCaller` lo clasifica como interno.
+
+### EXPLOTACION PROBADA (antes del fix)
+
+JWT falso `alg:none`, sin firma, `{"role":"service_role"}`:
+
+| endpoint | resultado |
+|---|---|
+| `live-day-dashboard` + `apodo=rodelcast` | **HTTP 200**, dia financiero completo de rodelcast (evadia el hotfix #262-H) |
+| `settle-betslip` + `id` cualquiera | **404 "Apuesta no encontrada"** (paso el auth como service; con un id real, saltaba el check de propiedad) |
+
+`_shared/auth.ts` NO es runtime compartido: cada `deploy` empaqueta su propia
+copia. El defecto vive en **toda** funcion que lo bundlea.
+
+### EL FIX (AUTH-0)
+
+service_role se prueba **solo** por igualdad en tiempo constante contra la llave
+real; se elimina la rama de decode. La rama de usuario ya validaba bien
+(`admin.auth.getUser`, server-side).
+
+```ts
+function timingSafeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let out = 0;
+  for (let i = 0; i < a.length; i++) out |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return out === 0;
+}
+function isServiceToken(token) {
+  const service = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  return service.length > 0 && timingSafeEqual(token, service);
+}
+```
+
+### VERIFICADO EN `live-day-dashboard` v19
+
+| caso | antes | despues |
+|---|---|---|
+| AUTH-0B JWT falso service | 200 (fuga) | **401** |
+| AUTH-0A token basura | 401 | **401** |
+| AUTH-0D service real (`public.sk()`) | 200 | **200** (`public.sk()` == env de la edge; internos siguen vivos) |
+| AUTH-0C usuario real + su apodo | 200 propio | **200 propio** |
+
+### CONSUMIDORES DE `requireCaller` IDENTIFICADOS (bundlean el defecto)
+
+| funcion | verify_jwt | uso de isService | explotable |
+|---|---|---|---|
+| `live-day-dashboard` | false | `isService?body.apodo:caller.apodo` | **CORREGIDA v19** |
+| `construir-parlay-ai` | false | `isService?body.apodo:caller.apodo` | SI (lee/escribe parlay de apodo ajeno) |
+| `settle-betslip` | false | `if(!isService) checa propiedad` | SI (lee boleto ajeno con su uuid) |
+| `scan-betslip` | false | `isService?body.apodo:caller.apodo` | SI (confirmado) |
+| `analizar-partido` | false | bundlea auth (por confirmar uso) | por confirmar |
+| `auto-calificar-picks` | false | bundlea auth (grader, por confirmar) | por confirmar |
+
+### OTROS HALLAZGOS DE AUTORIZACION EN EL MISMO LOTE (no requireCaller)
+
+- `crear-parlay-screenshot` — **verify_jwt=true** pero toma `body.apodo` sin
+  validar contra el JWT e **INSERTA un parlay** con ese apodo. Un usuario
+  autenticado A puede crear apuestas en la cuenta de B. **P1-AUTHZ (write).**
+- `get-parlay-with-scores` — verify_jwt=false, `apodo` del cuerpo sin auth;
+  consulta `.in("id",ids).eq("apodo",apodo)`. Requiere el uuid del parlay + el
+  apodo. Los uuids se filtraban por #262-H/otros endpoints -> cadena de lectura.
+  **P0-READ (gated por uuid).**
+- `analizar-partido-ligamx` — sin apodo, sin datos user-private (escribe analisis
+  publico). **SAFE.**
+
+### RESTRICCION DE EJECUCION (por que no redeployé todo de golpe)
+
+Los edge functions **no viven en el git repo** (`rodrigodelcastillo117/reto` tiene
+7 archivos; no incluye `supabase/functions/`) y Lovable no expone esa carpeta.
+El unico canal para corregirlos es `deploy_edge_function` (MCP), que exige el
+codigo **inline**. Varias funciones son enormes (scan-betslip 182 KB) y manejan
+dinero: reinyectar ese volumen a mano tiene riesgo material de corrupcion. Por eso
+la correccion del resto se decide con el auditor (ver reporte), no se hizo a ciegas.
