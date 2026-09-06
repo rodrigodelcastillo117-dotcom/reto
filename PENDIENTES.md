@@ -4327,3 +4327,84 @@ FRESHNESS_COVERAGE = NO_MEDIDO -> requisito antes de que Confidence module stake
   -> caps -> allocator -> stake shadow.
 - Instrumentar freshness/coverage reales (cerrar FRESHNESS_COVERAGE=NO_MEDIDO) o aceptar el cap.
 - A_ECO: forward-shadow de economia via radar_odds_snapshots.
+
+
+## 6-sep-2026 — CORRECCION DE GOBERNANZA + FASE E.2 (Data Quality) + FASE E.3 (separacion de conceptos)
+
+Todo SHADOW. Sin dinero. Sin risk_multiplier. A_ECO=PENDIENTE_ODDS_DECISION.
+
+### CORRECCION DE GOBERNANZA (retracto un PASS que declare de mas)
+`CONFIDENCE_AUDIT = PASS` global fue DEMASIADO fuerte y queda RETRACTADO. Las fronteras que use
+(slope 0.85/1.15, margin_ic 3.0, n_oos 1500, demeritos 0/1/>=2) son HEURISTICAS elegidas, NO
+validadas OOS: en la practica un mini-score por puntos, justo lo que prohibia el candado de
+"no inventar pesos/thresholds sin evidencia". Lo que queda medido y cierto:
+  CONFIDENCE_DETERMINISM      = PASS  (funcion IMMUTABLE; run1=run2 idempotente probado)
+  CONFIDENCE_EV_INDEPENDENCE  = PASS  (la firma NO admite EV/momio/ROI/profit/hit-rate)
+  ELIGIBILITY_REGRESSION      = PASS  (v1: 6/6 regresiones, intactas)
+  CONFIDENCE_POLICY_VALIDATION= PENDING (umbrales aun sin justificacion OOS)
+HIGH/MEDIUM/LOW pasan a ser `PROVISIONAL_STAT_CONFIDENCE`: NO pueden mover stake. No se llama
+"seguro" a slope>1.15; se describe solo el fenomeno de calibracion observado (UNDERCONFIDENT).
+Objeto: `lab_model_evidence_confidence_v1` (reemplaza y deprecia lab_confidence_categoria_v1;
+emite tipo=PROVISIONAL_STAT_CONFIDENCE, policy_validation=PENDING, puede_mover_stake=false).
+
+### FASE E.3 — DOS CONCEPTOS SEPARADOS (no un score opaco)
+  MODEL_EVIDENCE_CONFIDENCE  = que tan solida es la demostracion del skill
+                               (N OOS, estabilidad/ventanas, IC, calibracion, drift). PROVISIONAL.
+  DATA_READINESS             = que tan sanos estan los datos de ESTE pick ahora
+                               (freshness, coverage, missing critico, degradacion de fuentes).
+Eligibility final exige AMBOS. Objeto: `lab_elegibilidad_shadow_v2(skill, model_evidence,
+data_readiness, ev_fair, odds)` con orden de compuertas:
+  skill!=PASS -> NO_MODEL_SKILL; model_evidence=INSUFFICIENT -> MODEL_EVIDENCE_INSUFFICIENT;
+  data_readiness!=OK -> DATA_NOT_READY; sin odds -> NO_ODDS_DECISION; ev<=0 -> NO_EV;
+  model_evidence=LOW -> SHADOW_LOW_CONFIDENCE; resto -> BET_CANDIDATE. reason_codes[] registra todas.
+v1 se conserva intacta (prueba de las 6 regresiones). puede_mover_stake=false en todo v2.
+POSTURA REAL HOY (fail-closed): el pick O/U +18% (skill PASS, evidence HIGH provisional, EV+,
+odds frescos) -> DATA_NOT_READY porque data_readiness=NO_MEDIDO. HOY NADA es BET_CANDIDATE.
+Si algun dia data_readiness=OK -> BET_CANDIDATE (el gate es lo unico que lo detiene).
+
+### FASE E.2 — INSTRUMENTACION DE DATA QUALITY (medido, no inventado)
+Objetos: `lab_dq_feature_registro` (registro de features criticas) + `lab_dq_medicion_v1` (vista).
+Freshness es FEATURE-SPECIFIC (ventanas declaradas POR_VALIDAR, NO son thresholds de confidence;
+coverage_pct se mide descriptivo, SIN cutoff tipo 90%).
+
+FEATURES CRITICAS soccer y estado de medicion:
+  feature           requerida  fuente                       ts             clase       ventana(decl)  estado
+  odds_decision     si         radar_odds_snapshots         snapshot_at    VIVO        6h             MEDIBLE_FIABLE
+  agenda_kickoff    si         agenda_espn                  actualizado_at AGENDA      24h            MEDIBLE_FIABLE
+  hist_goles_home   si         v_equipo_partido_espn        fecha          ESTACIONAL  720h(30d)      REQUIERE_RESOLVER
+  hist_goles_away   si         v_equipo_partido_espn        fecha          ESTACIONAL  720h(30d)      REQUIERE_RESOLVER
+
+MEDICION REAL (picks vivos soccer de hoy):
+  mercado     picks  con_snapshot  odds_en_pick  odds_frescos_6h  odds_edad_prom  agenda_fresca_24h  agenda_edad
+  Moneyline     4        4             4              4              0.53h            4                 0.60h
+  Over/Under    4        4             4              4              0.78h            4                 0.60h
+  BTTS          2        2             0(!)           2              0.10h            2                 0.60h
+  -> odds y agenda de decision estan FRESCOS y presentes. HALLAZGO real: BTTS tiene snapshot pero
+     sus momios NO se cablean al momio_mercado del pick (odds_en_pick=0). Medible fiable.
+
+HALLAZGO METODOLOGICO (evita fabricar un hueco falso):
+  La cobertura/freshness de historia de goles NO se puede medir por join de nombre crudo.
+  Prueba: join naif da home 100% vs away ~50% -> "Club America" sale falso-miss, mientras
+  "Kifisia(37)" y "Shakhtar Donetsk(12)" si matchean. La asimetria es ARTEFACTO del nombre, no
+  hueco real; el motor resuelve via tabla de alias (equipo_alias/team_aliases) que el join ignora.
+  => hist_goles marcado NO_MEDIDO_FIABLE / REQUIERE_RESOLVER. NO se inventa cifra de cobertura.
+  Fix futuro: medir por espn_id (agenda_espn.home_espn_id/away_espn_id) o reusar el resolver del motor.
+
+### LOS 6 ENTREGABLES QUE PEDISTE (estado honesto)
+1. Tabla de cada feature critica ............ HECHO (lab_dq_feature_registro, 4 features).
+2. Cobertura real por mercado ............... PARCIAL: odds/agenda medibles; hist_goles REQUIERE_RESOLVER.
+3. Freshness por mercado .................... HECHO para odds (<1h) y agenda (<1h); hist_goles pendiente.
+4. Frecuencia missing/fallback ............. odds/agenda: 0 faltantes hoy; BTTS odds no-cableados 2/2. hist: pendiente.
+5. Impacto historico/OOS de data quality ... NO_MEDIBLE_AUN (no hay log historico de coverage/freshness; recien se instrumenta).
+6. Propuesta de reglas categoricas ......... DIFERIDA a proposito: sin evidencia OOS no se proponen umbrales (candado).
+
+### VEREDICTO E.2/E.3 (me detengo aqui, como acordamos)
+- Conceptos separados y cableados en v2: MODEL_EVIDENCE vs DATA_READINESS; eligibility exige ambos.
+- Data quality de odds/agenda: medible y sano hoy. Data quality de historia de goles: pendiente de
+  resolver-fiel (identificado el artefacto, evitada la cifra inventada).
+- CONFIDENCE_AUDIT sigue SIN declararse PASS. Requisitos que faltan para poder declararlo:
+  (a) hist_goles medido fiel (cerrar REQUIERE_RESOLVER);
+  (b) log historico de data quality para poder medir impacto OOS (entregable 5);
+  (c) reglas categoricas de MODEL_EVIDENCE y DATA_READINESS justificadas con esa evidencia
+      (cerrar CONFIDENCE_POLICY_VALIDATION=PENDING).
+- NO se diseno risk_multiplier(Confidence). Nada de dinero. Todo SHADOW.
