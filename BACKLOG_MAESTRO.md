@@ -4134,3 +4134,62 @@ El unico canal para corregirlos es `deploy_edge_function` (MCP), que exige el
 codigo **inline**. Varias funciones son enormes (scan-betslip 182 KB) y manejan
 dinero: reinyectar ese volumen a mano tiene riesgo material de corrupcion. Por eso
 la correccion del resto se decide con el auditor (ver reporte), no se hizo a ciegas.
+
+---
+
+## #262-J — BARRIDO EDGE (triage por firma). Modelo de auth = confiar en el cliente
+
+**Fecha:** 6-sep-2026. Metodo autorizado por el auditor: revisar 1x1 las que reciben
+identidad/id de usuario o escriben datos de usuario; clasificar en bloque los crons
+de sync deportivo por firma (service key, sin apodo/id de usuario, tablas no privadas).
+
+### PATRON RAIZ
+La app se construyo **confiando en el cliente para la identidad** en muchas edge
+functions: `verify_jwt=false` + `body.apodo`/`body.*_id` **sin validar propiedad**.
+No es un bug aislado; es el modelo de auth por defecto del proyecto.
+
+### VULNERABLES (remediar por pipeline; ninguna tocada salvo live-day v19)
+
+| funcion | clase | vector |
+|---|---|---|
+| live-day-dashboard | P0-READ **CERRADA v19** | body.apodo sin auth (internet abierto) |
+| detect-user-patterns | P0-READ+WRITE | sin auth; devuelve pnl/insights ($) de cualquier apodo; escribe user_patterns |
+| confirmar-fecha-pick | P0-WRITE IDOR | sin auth; reescribe a que partido apunta el pick/parlay de otro (uuid) |
+| get-parlay-with-scores | P0-READ | sin auth; lee parlay/pick por uuid+apodo |
+| construir-parlay-ai | AUTH-0 | isService forjable -> body.apodo |
+| settle-betslip | AUTH-0 | isService forjable -> salta propiedad |
+| scan-betslip | AUTH-0 | isService forjable -> body.apodo |
+| analizar-partido, auto-calificar-picks | AUTH-0 | bundlean auth vuln (uso por confirmar) |
+| crear-parlay-screenshot | P1-AUTHZ write | jwt=true pero inserta parlay con body.apodo |
+| procesar-venganza | P1-AUTHZ write IDOR | jwt=true, jugador_id sin propiedad |
+| enviar-notificacion-push | P1-ABUSE | Bearer no validado -> push/phishing a cualquier apodo |
+| recalibrate-model-weights | P1-WRITE | sin auth; escribe pesos del modelo |
+| reconectar-picks-huerfanos, oraculo-premium | P2-INTERNAL | crons sin auth: abuso de costo (API-Football/Anthropic) |
+| log-scan-result | P2-WRITE | sin auth; scan_logs con apodo/image_url arbitrario |
+
+### SEGURAS (patron correcto)
+| funcion | por que |
+|---|---|
+| manual-calificar-pick / manual-calificar-parlay | getUser + propiedad por usuarios.email |
+| mi-track-record / mis-leaks | apodo SOLO del JWT |
+| settle-betslip/scan-betslip/construir (rama usuario) | requireCaller rama getUser OK (falla solo en isService, ya parchado en el fix) |
+| scan-fantasy-lineup / cashout-contexto | validan token via /auth/v1/user; service por token-as-apikey REAL (no decode) |
+| track-record / leaderboard-roi(*) / compartir-analisis / analizar-partido-ligamx | agregado/contenido publico (leaderboard: ver ticket de minimizacion) |
+| recalcular-bankroll | getUser + rol admin |
+
+### CLASE EN BLOQUE — INTERNAL_SYNC (crons de datos deportivos, por firma)
+~90 funciones de sync: service key, reciben parametros deportivos (fecha/liga/evento),
+escriben tablas deportivas (live_scores, *_partidos, *_stats, *_momios, standings),
+**no reciben apodo ni id de usuario, no leen tablas privadas**. Ejemplos: badrino-sync,
+sync-scores-global, sync-tenis-scores, espn-*, nfl-*-sync, mlb-*-enrich, soccer-stats-enrich,
+snapshot-odds, odds-pro, rongol-momios, cerrar-partidos-espn, enriquecer-fixtures, etc.
+Riesgo uniforme: `verify_jwt=false` permite disparo no autenticado = **abuso de costo**
+(APIs externas / LLM) y recomputo, NO fuga ni IDOR. Recomendacion uniforme: exigir
+service token (o `verify_jwt=true`) en todas; no es P0.
+
+### RECOMENDACION DE FRONTERA (una sola politica)
+1. Toda funcion user-facing deriva identidad del JWT (auth.getUser), NUNCA de body.apodo/id.
+2. Toda operacion por id valida propiedad server-side (apodo del recurso == apodo del JWT).
+3. Los crons/rutas internas exigen service token real (comparacion contra la llave, no decode).
+4. `verify_jwt` no es la defensa (muchas quedan false a proposito); la defensa es la
+   verificacion DENTRO de la funcion.
