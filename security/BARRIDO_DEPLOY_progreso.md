@@ -50,6 +50,16 @@ el parlay de rongo; ahora 401. Con JWT de A pidiendo el parlay de rongo → 0 pa
 Verificado con JWT real acuñado server-side; solo lectura (cero mutación); sesión
 revocada al terminar. Dependencia de frontend: mismo patrón (invoke manda el token).
 
+| crear-parlay-screenshot | 32→33 | 401 (gateway, verify_jwt=true) | 401 (no user) | **0 parlays creados bajo la víctima** | insert intacto (byte a byte) | solo frontend (0 cron, 0 db_fn) |
+
+crear-parlay-screenshot (P1-AUTHZ write): antes insertaba parlay con body.apodo →
+A creaba apuestas en cuenta de B. Ahora apodo del JWT. Verificado con JWT real:
+A con body.apodo='el dos' NO creó ningún parlay bajo 'el dos' (identidad forzada a A).
+El insert es byte-idéntico a v32 (diff local pre-deploy = solo los 2 bloques de auth);
+el smoke con payload sintético dio 500 por un trigger BEFORE INSERT de parlays
+(zzzz_limite_exposicion / zzz_autoridad_stake / trg_apodo_dueno_parlays) que rechaza
+un pick de prueba — comportamiento preexistente de v32, no de mi cambio. 0 filas basura.
+
 Verificación de confirmar-fecha-pick con JWT de usuario REAL acuñado server-side
 (admin generate_link → verify; sesión revocada con /logout al terminar; token nunca
 pasó por el chat). El único cambio de datos fue en el pick propio del test (etiqueta
