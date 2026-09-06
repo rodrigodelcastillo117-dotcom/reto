@@ -5170,3 +5170,83 @@ Todo SHADOW. Produccion intacta. Sin Kelly/risk_multiplier. EXP_OFF=0.50 intacto
 ### OBJETOS SHADOW (S3.5)
   lab_s3_moneyline_final_truth() (funcion, unica verdad ML) ; lab_champion_soccer (reescrito: skill PASS/FAIL/
   INSUFFICIENT + eligible_next_stage + vs_prod/vs_baseline + IC cluster + calibration). Sin tocar produccion.
+
+
+## 6-sep-2026 — S4 (P_FAIR+Eligibility) + S5 (Stake Shadow) SOLO Soccer Moneyline. NO promover.
+
+Base congelada: Moneyline champion = C1 (team ON, venue OFF), SKILL_PASS, FINAL TEST SELLADO.
+Todo SHADOW. Produccion intacta. Dinero desconectado. EXP_OFF=0.50 intacto. Soccer NO 100%.
+
+### S4.1 — P_FAIR MONEYLINE (sin recalibracion post-test)
+  v_lab_pfair_ml_c1: P_RAW = champion C1 ; P_FAIR = P_RAW ; status = NO_POST_TEST_RECALIBRATION.
+  El slope 0.842 del FINAL TEST NO se usa para retunar. No existia calibracion candidate definida antes de
+  abrir el final test -> no se crea ninguna ahora. Cualquier calibracion futura exige forward data o periodo no visto.
+  n=1461 ; avg P_home 0.4406 / draw 0.2465 / away 0.3129 (ventaja local coherente).
+
+### S4.3 — MODEL EVIDENCE champion C1 (descriptivo/auditable; slope NO es multiplicador)
+  Estabilidad por slice (dBrier champ vs base liga, IC iid):
+    DISCOVERY n=577 -0.04035 +/-0.02175 ; VALIDATION n=428 -0.05503 +/-0.02723 ; FINAL n=456 -0.03682 +/-0.02542.
+    -> signo consistente en las 3 ventanas (skill estable, sin drift; Brier champ 0.611/0.595/0.612).
+  Full-sample OOS n=1461: dBrier -0.04355 ; IC iid +/-0.01415 ; IC cluster/semana +/-0.01504 ; margen ~2.9x IC.
+  calibration full-sample slope 0.877 (IN_BAND 0.85-1.15) / intercept ~0.05. LogLoss champ<base en todo.
+  lab_model_evidence_confidence_v1 -> categoria = LOW ; tipo = PROVISIONAL_STAT_CONFIDENCE ;
+    demerits=2 (MARGEN_CERCA_DEL_PISO 2.9x + N_OOS_CHICO 1461<1500) ; drift ESTABLE ; policy_validation=PENDING ;
+    puede_mover_stake=FALSE. Evidencia de skill VALIDA pero confianza provisional -> NO mueve dinero.
+
+### S4.2 — ELIGIBILITY FINAL SHADOW (lab_elegibilidad_shadow_v3; orden de puertas)
+  skill -> model_evidence -> semantic -> empirical(fail-closed si != OK) -> odds(exact) -> EV>0 -> (LOW=SHADOW_LOW).
+  ESTADO REAL de Moneyline hoy: EMPIRICAL_SUFFICIENCY = PENDING -> fail-closed -> status EMPIRICAL_SUFFICIENCY_PENDING.
+  Aunque empirical fuera OK: model_evidence=LOW -> SHADOW_LOW_CONFIDENCE (NO BET_CANDIDATE). Y no hay exact decision
+  price (0 decisiones ML forenses) -> NO_EXACT_DECISION_PRICE. Picks Moneyline que llegan a BET_CANDIDATE hoy: 0.
+
+### S4.4 — DATA READINESS (separado de MODEL_EVIDENCE)
+  MODEL_EVIDENCE (skill del modelo) != DATA_READINESS (madurez de datos forward). No se inventan thresholds
+  empiricos. EMPIRICAL_SUFFICIENCY sigue PENDING -> fail-closed para produccion. Exact decision price forward: 0.
+
+### S5 — RIESGO / STAKE SHADOW (lab_stake_shadow_ml)
+  Cadena: BET_CANDIDATE -> Kelly puro -> risk layer -> caps(5%) -> allocator -> stake_shadow.
+  risk_multiplier = 1.0 (control experimental shadow; NO risk_multiplier(Confidence) porque Confidence no esta
+  validado empiricamente). Ejemplo (p_fair 0.55, odds 2.10, bank 10000): EV +0.155, Kelly puro 0.1409,
+  capped 0.05, stake_shadow 500. puede_mover_stake=false.
+  STAKES REALES hoy: 0 (no hay BET_CANDIDATE ni exact odds). No hay stakes que comparar contra V1 en dinero.
+
+### COMPARACION V1 (produccion C0) vs CHAMPION (C1) — nivel modelo, FINAL TEST n=456
+  Brier: champ 0.61165 vs V1 0.63675 (dBrier -0.02510, IC cluster/sem +/-0.00955, excluye 0). LogLoss 1.021 vs 1.061.
+  Diferencia de PICKS (argmax 1X2): difieren en 82/456 (18.0%). En esos 82: champion acierta 42.7% vs V1 29.3%
+  (+13.4 pp). La ventaja del champion es real y localizada en las llamadas afectadas por venue_split.
+  Diferencia de STAKES: N/A (0 exact decision prices; cadena lista pero sin insumo de precio forward).
+
+### REGRESIONES OBLIGATORIAS (8/8 PASS)
+  R1 ML PASS+EV+exact odds -> BET_CANDIDATE (logica del gate verificada con inputs ideales) PASS
+     (estado REAL ML: EMPIRICAL_SUFFICIENCY_PENDING; y con empirical OK -> SHADOW_LOW_CONFIDENCE por evidence LOW)
+  R2 ML PASS + sin exact odds -> NO_ODDS_DECISION (=NO_EXACT_DECISION_PRICE) PASS
+  R3 O/U EV +30% -> NO_MODEL_SKILL PASS
+  R4 Total Equipo EV +30% -> NO_MODEL_SKILL PASS
+  R5 Doble Oport. 1X/X2 skill PASS pero sin market data -> NO_ODDS_DECISION (=NO_EXACT_DECISION_PRICE) PASS
+  R6 venue_split nunca en champion C1: viewdef = lab_wf_1x2_preds(true, false, 0, ...) venue=FALSE PASS
+  R7 xG/H2H nunca en champion: pesoxg=0 y el harness 1x2 no tiene arg H2H PASS
+  R8 final test no se reusa para tuning: lab_s3_moneyline_final_truth() STABLE solo-lectura PASS
+
+### SALIDA (7 items)
+  1. P_FAIR definitivo Moneyline: v_lab_pfair_ml_c1 (P_FAIR=P_RAW=champion C1; NO_POST_TEST_RECALIBRATION).
+  2. Eligibility de picks Moneyline vivos: 0 BET_CANDIDATE (EMPIRICAL PENDING fail-closed; evidence LOW; sin exact odds).
+  3. V1 vs champion: champion mejor (Brier -0.0251 IC excl 0, LogLoss -0.040); picks difieren 18%, champion +13.4pp en esos.
+  4. Stake shadow: cadena construida y probada (Kelly->risk1.0->cap5%->allocator); 0 stakes reales (sin exact odds).
+  5. Diferencias picks/stakes: picks 82/456 distintos (champion mas acertado); stakes N/A (0 exact decision prices).
+  6. Blockers reales para promocion (todos DATA_READINESS, no de modelo):
+     (a) EMPIRICAL_SUFFICIENCY=PENDING (fail-closed) — el mayor.
+     (b) MODEL_EVIDENCE=LOW/PROVISIONAL (margen ~2.9x IC, N<1500) -> SHADOW_LOW, no mueve dinero.
+     (c) NO_EXACT_DECISION_PRICE: 0 decisiones ML forenses con precio exacto forward; CLV legacy contaminado.
+     (d) A_ECO=PENDIENTE_FORWARD_EVIDENCE ; REAL_EVENT_E2E=PENDING (cron 415 activo).
+  7. Soccer puede avanzar a cierre final? La CADENA metodologica esta COMPLETA y limpia end-to-end
+     (P_FAIR -> eligibility -> stake, 8/8 regresiones verde, produccion intacta). Pero la PROMOCION esta
+     bloqueada por evidencia forward (empirical sufficiency, exact decision prices, real event E2E). => Soccer
+     Moneyline esta METODOLOGICAMENTE LISTO, NO PROMOVIBLE aun. Marcador honesto Soccer ~91%.
+
+### CANDADOS
+  Produccion intacta. Dinero desconectado. Sin risk_multiplier(Confidence) (=1.0 control). EXP_OFF=0.50 intacto.
+  Soccer NO 100%. FINAL TEST sellado. Ningun champion promovido. Solo Moneyline elegible a siguiente etapa.
+
+### OBJETOS SHADOW (S4/S5)
+  v_lab_pfair_ml_c1 (P_FAIR ML) ; lab_stake_shadow_ml (cadena stake) ; reutilizados: lab_model_evidence_confidence_v1,
+  lab_elegibilidad_shadow_v3, lab_s3_moneyline_final_truth. Nada tocado en produccion.
