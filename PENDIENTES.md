@@ -5250,3 +5250,56 @@ Todo SHADOW. Produccion intacta. Dinero desconectado. EXP_OFF=0.50 intacto. Socc
 ### OBJETOS SHADOW (S4/S5)
   v_lab_pfair_ml_c1 (P_FAIR ML) ; lab_stake_shadow_ml (cadena stake) ; reutilizados: lab_model_evidence_confidence_v1,
   lab_elegibilidad_shadow_v3, lab_s3_moneyline_final_truth. Nada tocado en produccion.
+
+
+## 6-sep-2026 — S4.6 CORRECCION DE GOBERNANZA: MODEL_EVIDENCE es DIAGNOSTICO, NO gate. NO promover.
+
+HALLAZGO: en S4/S5 deje que MODEL_EVIDENCE=LOW volviera a ser gate real de Eligibility
+(status SHADOW_LOW_CONFIDENCE) usando thresholds heuristicos no validados OOS:
+  margin_ic < 3.0 -> demerito ; n_oos < 1500 -> demerito ; deméritos 0/1/>=2 -> HIGH/MEDIUM/LOW.
+Eso viola el acuerdo vigente: CONFIDENCE_POLICY_VALIDATION=PENDING ; PROVISIONAL_STAT_CONFIDENCE es
+DIAGNOSTICO ; NO puede decidir dinero. Era meter una regla arbitraria por la puerta de atras. CORREGIDO.
+
+### S4.6 — REPARAR ELIGIBILITY (lab_elegibilidad_shadow_v4 ; v3 DEPRECATED)
+  Separacion:
+   - MODEL_EVIDENCE_RAW = medidas descriptivas del champion C1: N=1461, dBrier vs base -0.04355 (full),
+     IC cluster +/-0.01504, LogLoss champ<base, calibration slope 0.877 IN_BAND, drift ESTABLE, 3/3 ventanas.
+     Categoria provisional = LOW.
+   - MODEL_EVIDENCE_POLICY = PROVISIONAL_ONLY_NO_GATE mientras CONFIDENCE_POLICY_VALIDATION=PENDING.
+  El gate v4 NO usa HIGH/MEDIUM/LOW. Gate valido HOY:
+     SKILL_PASS + SEMANTIC_VALIDITY=PASS + EMPIRICAL_SUFFICIENCY=OK(fail-closed) + EXACT_DECISION_PRICE + EV_FAIR>0
+     -> BET_CANDIDATE_SHADOW.
+  v3 quedo DEPRECATED (usaba LOW como gate). No usar.
+
+### REGRESIONES (v4, 6/6 PASS)
+  RN (nueva) SKILL_PASS + PROVISIONAL LOW + EMPIRICAL_OK + EXACT_ODDS + EV>0 -> BET_CANDIDATE_SHADOW  PASS
+  R1 SKILL_PASS + EMPIRICAL_PENDING -> EMPIRICAL_SUFFICIENCY_PENDING (fail-closed)                    PASS
+  R2 SKILL_PASS + sin exact odds -> NO_EXACT_DECISION_PRICE                                           PASS
+  R3 O/U EV +30% (skill insuf) -> NO_MODEL_SKILL                                                      PASS
+  R4 Total Equipo EV +30% (skill insuf) -> NO_MODEL_SKILL                                             PASS
+  R5 Doble Oport. 1X/X2 PASS sin market data -> NO_EXACT_DECISION_PRICE                               PASS
+  (siguen vigentes candados S4/S5 R6/R7/R8: venue OFF, xG/H2H OFF, final test sellado.)
+
+### BLOCKERS AUTORITATIVOS DE MONEYLINE (post-correccion; NINGUNO es del modelo)
+  1. EMPIRICAL_SUFFICIENCY = PENDING (fail-closed).
+  2. NO_EXACT_DECISION_PRICE forward (0 decisiones ML forenses con precio exacto; CLV legacy contaminado).
+  3. REAL_EVENT_E2E = PENDING (cron 415 activo; 0 inserts reales del motor aun).
+  4. A_ECO = PENDIENTE_FORWARD_EVIDENCE.
+  MODEL_EVIDENCE_LOW ya NO es blocker (es diagnostico hasta validar su politica OOS).
+
+### ESTADO CORREGIDO
+  Champion Moneyline C1 SIN CAMBIOS (team ON, venue OFF, xG OFF, H2H OFF). P_FAIR=P_RAW sin recalibracion.
+  EXP_OFF=0.50 intacto. Produccion intacta. Dinero desconectado. La cadena P_FAIR->Eligibility(v4)->Stake
+  esta limpia y las 4 blockers restantes son SOLO evidencia forward (tiempo real), no codigo.
+
+### MARCADOR
+  Soccer ~96% CONSTRUIDO. El 4% restante NO es codigo: es validacion forward real
+  (primer evento real -> exact decision odds -> DQ real -> eligibility real -> closing -> CLV -> outcomes).
+
+### PLAN
+  SOCCER: dejar acumulando forward automaticamente (cron 415, captura DQ). NO tocar mas el champion.
+  Mover foco a MLB (siguiente deporte), respetando el orden fijado sin quedarnos esperando partidos.
+
+### OBJETOS SHADOW (S4.6)
+  lab_elegibilidad_shadow_v4 (gate corregido, MODEL_EVIDENCE diagnostico) ; v3 DEPRECATED ;
+  lab_champion_soccer.Moneyline nota/calibration actualizadas. Produccion intacta.
