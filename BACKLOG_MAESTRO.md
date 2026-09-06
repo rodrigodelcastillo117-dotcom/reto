@@ -3797,3 +3797,129 @@ medir con que rol llega cada superficie del front antes de tocarla.
 
 `lab_test_roles()` creada para correr R1-R8 y **borrada** al terminar.
 Verificado: no queda ninguna funcion `lab_test_*` en la base.
+
+---
+
+## #262-G — `UNKNOWN != INTERNAL` + FUGA ECONOMICA CROSS-USER MEDIDA
+
+**Fecha:** 6-sep-2026. **Estado:** puntos 1-9 del auditor cerrados. **Punto 10 abierto.**
+
+### 1. MEDICION DEL CONTEXTO (antes de decidir nada)
+
+El auditor prohibio `JWT NULL = INTERNAL`. Se midio cada ruta real:
+
+| origen | session_user | current_user | claims JWT | role | application_name |
+|---|---|---|---|---|---|
+| PostgREST anon (apikey legacy, sin Authorization) | `authenticator` | `anon` | **SI** | anon | postgrest |
+| PostgREST anon (apikey legacy + Authorization) | `authenticator` | `anon` | SI | anon | postgrest |
+| PostgREST anon (llave publicable nueva `sb_publishable_...`) | `authenticator` | `anon` | SI | anon | postgrest |
+| PostgREST service_role | `authenticator` | `service_role` | SI | service_role | postgrest |
+| pg_cron (244 trabajos, todos `username=postgres`) | `postgres` | `postgres` | NO | — | pg_cron |
+| conexion de gestion / psql | `postgres` | `postgres` | NO | — | mgmt-api |
+| sin apikey | **nunca llega a la base**: PostgREST responde 401 | | | | |
+
+Dos consecuencias:
+1. **Toda ruta user-facing SIEMPRE trae claims.** La ausencia de claims no ocurre
+   en el mundo del usuario.
+2. `application_name` **no** se usa como evidencia: el cliente lo fija a voluntad.
+
+### 2. ALLOWLIST EXPLICITA
+
+`public.clasificar_contexto_economico(p_claims, p_session_user)` — funcion **PURA**,
+para poder probarla en rejilla completa (incluido el caso que no se puede montar en
+vivo: `postgres` en Supabase no es superusuario y no puede `SET SESSION AUTHORIZATION`).
+
+```
+INTERNAL  <=  role = 'service_role'
+          OR  (sin claims AND session_user IN ('postgres','supabase_admin'))
+USER      <=  role = 'authenticated'
+DENY      <=  todo lo demas
+```
+
+`resolver_identidad_economica()` ya no clasifica: le entrega el contexto real
+(`current_setting('request.jwt.claims')`, `session_user`) y actua.
+
+**Rejilla 8 JWT x 7 session_user = 56 celdas.** INTERNAL solo en 11; las 45
+restantes DENY o USER. En particular **sin JWT + `authenticator` / `anon` /
+`authenticated` / `service_role` / un rol inventado -> DENY**. Eso es SEC-H.
+
+### 3. LA FUGA REAL, MEDIDA COMO `anon`
+
+Se llamaron 23 RPC economicas **de solo lectura** con rol `anon` y un apodo:
+
+**19 de 23 devolvieron datos economicos completos.** Ejemplos textuales:
+bankroll `4893.42`; techo `5.0% = 244.67`; Kelly y su veredicto; exposicion viva
+con `capital_libre` y `limite_monto`; proyeccion de ruina (`aguanta 0.6 semanas`);
+estado de tilt con racha y tamano habitual; ROI y ganancia; CLV; los picks del
+RETO del dia; y `apuestas_por_revisar` con **el id del boleto**.
+
+Las 4 que fallaron **no fallaron por diseno**: fallaron por accidente
+(`SECURITY INVOKER` + falta de GRANT en una tabla: `usuarios`, `picks`,
+`clv_tracking`). No es una defensa: es un descuido con efecto secundario.
+
+### 4. INVENTARIO: 98 FUNCIONES RECIBEN APODO
+
+Correccion a mi propio inventario previo: buscar `p_apodo` **dejaba fuera 10
+funciones** que usan `user_apodo` (`get_bankroll_real`, `get_bankroll_disponible`,
+`get_tilt_alert`, `get_performance_breakdown`, evoluciones...). Total real: **98**.
+
+### 5. QUE LLAMA DE VERDAD EL FRONTEND (medido en el bundle publicado)
+
+47 archivos JS de `reto13.lovable.app` (todos 200). **40 RPC con apodo aparecen en
+el bundle.** Entre ellas `kelly_stake`, `revisar_apuesta`, `devils_advocate`,
+`stake_techo`, `tamano_apuesta`, `revisar_tamano_apuesta`, `verificar_limites`,
+`mejor_oportunidad_hoy`, `reto_13m_estado`, `cuanto_me_dura`.
+
+**`autodiagnostico`: 0 referencias en el bundle y 0 crons.** Clasificacion:
+**herramienta interna**. El hardcode `'rodelcast'` no debe sustituirse por un
+parametro libre; lo correcto es dejarla en INTERNAL_PATH (revocar anon/authenticated).
+
+**De donde sale el apodo en el front** (`src/contexts/AuthContext.tsx`): de
+`usuarios.apodo WHERE user_id = auth.uid()`. El cliente **nunca** inventa el apodo.
+Mientras restaura sesion vale `""` (cadena vacia), y los hooks economicos
+(`use-bankroll-real.ts`, `use-tamano-apuesta.ts`) ya se protegen con `!!apodo`.
+Por eso la guarda trata `''` como ausencia.
+
+### 6. BASELINE + HOTFIX EN `kelly_stake`
+
+Baseline previo: 45 respuestas (3 usuarios x OK/NO APOSTAR/BLOQUEADO/momio
+invalido/probabilidad invalida). Guarda aplicada por transformacion **programatica**
+del `pg_get_functiondef` (cero transcripcion a mano), con asertos de conteo y
+respaldo en `lab_respaldo_defs`.
+
+**Equivalencia post-hotfix: 90 comparaciones de JSON completo, 0 diferencias.**
+
+| comparacion | iguales | distintos |
+|---|---|---|
+| ruta interna, 45 casos | 45 | **0** |
+| JWT rodelcast + su propio apodo | 15 | **0** |
+| JWT rodelcast sin apodo (null) | 15 | **0** |
+| JWT rodelcast con apodo `""` | 15 | **0** |
+
+### 7. SEC-A..SEC-H sobre `kelly_stake` EN PRODUCCION
+
+| caso | resultado |
+|---|---|
+| SEC-A anon + apodo | `SIN_IDENTIDAD_ECONOMICA` |
+| SEC-B JWT A + A | OK, bankroll y stake propios |
+| SEC-C JWT A + B | `IDENTIDAD_AJENA_RECHAZADA` |
+| SEC-D JWT B + A | `IDENTIDAD_AJENA_RECHAZADA` |
+| SEC-D2 JWT B sin apodo | OK, su propio bankroll |
+| SEC-E authenticated sin mapeo | `SIN_MAPEO_DE_USUARIO` |
+| SEC-F service_role + apodo | OK |
+| SEC-G sin JWT, sesion allowlisted | OK |
+| SEC-H rol no reconocido | `CONTEXTO_NO_RECONOCIDO` |
+
+**Sin tocar** sesgo, Beta, Wilson, EV, Kelly, bankroll math, caps ni pisos.
+
+### 8. LO QUE SIGUE ABIERTO (punto 10 del auditor)
+
+`kelly_stake` esta cerrada. **Las otras ~19 fronteras siguen filtrando.** Sin eso
+no se puede declarar `IDENTIDAD_ECONOMICA_SEGURA = PASS`.
+
+### RESIDUOS
+
+Borrados: `lab_ctx_capturar()`, `lab_ctx_probe`, `lab_chunks`, `lab_diag`,
+cron `lab-ctx-probe-once` (jobid 414). Se conservan a proposito:
+`lab_baseline_kelly` (evidencia del punto 7) y `lab_respaldo_defs`
+(definicion exacta previa de `kelly_stake` para revertir en una linea).
