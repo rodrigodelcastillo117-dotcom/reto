@@ -4199,3 +4199,40 @@ LECTURA CLAVE:
 A_ECO sigue PENDIENTE_ODDS_DECISION (shadow forward con radar_odds_snapshots; no closing para EV/ROI).
 DETENIDO antes de Confidence, por orden del auditor: primero saber que cerebros tienen skill.
 No tocado: produccion, Kelly, RONGOL, caps, allocator, NFL, EXP_OFF=0.50.
+
+
+## 6-sep-2026 — FASE D.1 ROBUSTEZ del Skill Gate (matriz final)
+Cambios de metodo vs D: (1) baseline ESTRICTAMENTE TEMPORAL por sport/market =
+tasa historica secuencial usando SOLO obs anteriores a t (prior add-1/2, sin look-ahead),
+en vez del base rate de la muestra completa. (2) IC95 CLUSTER-ROBUSTO por fixture
+(CR0) ademas del iid, porque hay ~3-8 filas correlacionadas por partido. (3) Se agregan
+LogLoss, DLogLoss, bias, calibration slope/intercept por mercado.
+
+RESULTADO (soccer, baseline temporal; DBrier negativo = skill vs baseline):
+  mercado          n     clust  DBrier   IC_iid  IC_cluster  DLogLoss  slope  -> SKILL
+  Over/Under      6775  1355   -.03841  .00379  .00453      -.08147   1.061  PASS (robusto)
+  Total Equipo    4065  1355   -.02568  .00438  .00360      -.05584   1.016  PASS (robusto)
+  Moneyline       4065  1355   -.01333  .00262  .00332      -.02959   1.295  PASS (robusto, sub-confiado)
+  Doble Oport.    2710  1355   -.01335  .00316  .00389      -.02911   1.359  PASS (robusto, sub-confiado)
+  Tarjetas        2376   396   -.01768  .00832  .01557      -.01479   0.668  INSUFFICIENT* (borde: IC_cluster deja limite -.0021; ventana1 +.004; slope .67)
+  Corners         3272   409   +.00251  .00567  .01328      +.02183   0.448  INSUFFICIENT (DBrier y DLogLoss positivos)
+  BTTS            1355  1355   +.00184  .00591  .00591      +.00430   0.371  INSUFFICIENT
+
+MLB Moneyline (n=1056, 1 fila/evento -> cluster moot):
+  baseline temporal: DBrier -.00390 IC .00367 (limite -.00023), DLogLoss -.00820, slope 1.066.
+  baseline muestra-completa (D previo): DBrier -.00233 IC .00272 (cruza 0).
+  => BASELINE-SENSITIVE + magnitud minima -> SKILL_INSUFFICIENT (no se fuerza PASS por un pelo).
+
+MATRIZ FINAL (solo estados; sin score numerico):
+  soccer Over/Under ....... SKILL_PASS
+  soccer Total Equipo ..... SKILL_PASS
+  soccer Moneyline ........ SKILL_PASS
+  soccer Doble Oportunidad  SKILL_PASS
+  soccer Tarjetas ......... SKILL_INSUFFICIENT (era PASS en D; degradado por robustez)
+  soccer Corners .......... SKILL_INSUFFICIENT
+  soccer BTTS ............. SKILL_INSUFFICIENT
+  MLB Moneyline ........... SKILL_INSUFFICIENT
+
+P_FAIR no cambia (donde hay skill = P0). D.1 caza 2 falsos PASS (Tarjetas por clustering/inestabilidad;
+MLB por sensibilidad al baseline). LogLoss coincide con Brier en todos (sin sobreconfianza oculta).
+A_ECO sigue PENDIENTE_ODDS_DECISION. Detenido antes de Confidence. Nada tocado en produccion.
