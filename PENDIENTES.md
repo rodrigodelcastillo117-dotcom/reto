@@ -4083,3 +4083,25 @@ Aplicar T-5 como FILTRO dejaria el CLV en n=10 para toda la historia.
 
 T-5 queda como la META de captura, no como un filtro que tira el 99.9% del dato.
 El bloqueo real para un CLV honesto es la CADENCIA de captura, no la mezcla live/prematch.
+
+
+## 6-sep-2026 — #209 OPORTUNIDADES: autoridad unica V1 (decision_economica_v1)
+mejor_oportunidad_hoy_v2__base ahora deriva EV / P_DECIDE / admision (ev>piso) / ranking
+de public.decision_economica_v1(pcruda, momio, mercado) — autoridad APODO-INDEPENDIENTE,
+transcripcion verbatim del nucleo prob/EV de kelly_stake (md5 d9ba6526). kelly/stake queda
+como paso DOWNSTREAM dependiente del bankroll (kelly_stake, solo survivors).
+calibrar_prob_motor_live queda SOLO como diagnostico ('fuera de rango').
+
+Arquitectura: decision_economica_v1 -> P_DECIDE/EV -> OPORTUNIDADES ; y aparte
+usuario+bankroll -> kelly_stake -> stake. Ya NO se rutea el EV por kelly_stake(apodo).
+
+Verificado (medido, cartelera de hoy):
+- decision_economica_v1.ev_pct == kelly_stake.ev_pct en 14/14 candidatas (delta 0.00).
+- EV_UI = EV_CANONICO = EV_DINERO; contradicciones de signo = 0.
+- antes vs despues: mismos picks admitidos, mismo orden, mismo prob_pct y ev_pct.
+  Unico cambio numerico: edge_pct +0.1pp en 1 fila (2.2->2.3) por redondeo UNICO
+  (decision_economica_v1 no redondea la prob; kelly_stake la redondeaba). Sin cambios a
+  sesgo, Beta, Wilson, Kelly, pisos ni modelo.
+- Nota: reto_picks_hoy (#209 RETO 13M) ya estaba cerrado desde antes.
+Siguiente (post #209): construir P_FAIR -> Skill -> Confidence -> Eligibility (un EV+ puede
+terminar en NO BET). Autoridad unica V1 != EV es el jefe de seleccion.
