@@ -60,6 +60,41 @@ el smoke con payload sintético dio 500 por un trigger BEFORE INSERT de parlays
 (zzzz_limite_exposicion / zzz_autoridad_stake / trg_apodo_dueno_parlays) que rechaza
 un pick de prueba — comportamiento preexistente de v32, no de mi cambio. 0 filas basura.
 
+### LEGIT_PATH = PASS (causa raíz medida, no argumentada)
+El 500 se capturó con una subtransacción que reproduce el insert EXACTO del edge
+(mismas 8 columnas: apodo, fecha, picks_ids, picks_data, apuesta, momio_total,
+resultado, ganancia_neta), con ROLLBACK — no se persistió nada. El error es del
+guard de negocio RONGOL `zzzz_limite_exposicion` / `tg_limite_exposicion`:
+  "PARLAY SIN MODELO CONJUNTO VALIDADO: no se autoriza exposicion nueva de $X ...
+   Motivo de la ruta de ledger: no declara ninguna ruta de ledger"
+`ruta_ledger(NEW)` exige `origen='ticket_escaneado'` (+ scan válido) u
+`origen='registro_externo_manual'` (+ stake_sobre_techo_razon >=15 chars). El edge
+NO envía `origen`/`scan_id` (destructura solo picks_extracted/apuesta/momio_total/
+apodo/ganancia_neta) y rechaza `apuesta=0` antes del insert (línea 257 `!apuesta`),
+así que TODO parlay con dinero por esta función topa con el guard — en v32 y en v33
+por igual (columnas del insert idénticas). NO es regresión del cambio de auth.
+
+Evidencia del estado real de producción: 6 parlays creados desde que el guard vive
+(5-sep) llevan `origen='ticket_escaneado'`, `autoridad_economica='LEDGER_EXTERNO'`,
+scan_id presente — la única ruta de creación viva pasa por ledger (NO por
+crear-parlay-screenshot). Los 53 previos (jul24–sep4) tienen origen=null (anteceden
+al guard).
+
+Prueba POSITIVA de que el insert de v33 es sano y respeta la identidad (subtransacción
+con ROLLBACK): el MISMO insert + una ruta de ledger declarada
+(`origen='registro_externo_manual'`, razón >=15) → `DIAG2_OK rows=1 apodo=rodelcast`.
+Es decir: cuando el guard de negocio se satisface, el insert de v33 crea la fila bajo
+la identidad del JWT (rodelcast), no bajo body.apodo. Confirmado: la única puerta que
+gatea el caso sin-ruta es el guard RONGOL (intacto, zona no-tocar), no mi cambio.
+
+Limpieza post-prueba: 0 filas basura (SEC_DIAG/SEC_LEGIT/razón de smoke = 0), sesión
+de JWT acuñado revocada (/auth/v1/logout → 204), tabla temporal `public.lab_tok`
+y funciones `_diag_cps_insert*` eliminadas. Token nunca pasó por el chat.
+
+VEREDICTO: identidad/IDOR CERRADO y sin regresión funcional. El "no puede crear
+parlay con dinero" NO es efecto de la seguridad; es el guard RONGOL preexistente que
+exige ruta de ledger (relacionado con #212, zona intocable).
+
 Verificación de confirmar-fecha-pick con JWT de usuario REAL acuñado server-side
 (admin generate_link → verify; sesión revocada con /logout al terminar; token nunca
 pasó por el chat). El único cambio de datos fue en el pick propio del test (etiqueta
@@ -101,9 +136,12 @@ Opciones para cerrarlos:
 1. Pipeline/Lovable que redeplegue esas funciones cambiando `_shared/auth.ts` (canal nativo para archivos grandes).
 2. Proveer Supabase CLI + `SUPABASE_ACCESS_TOKEN` en el entorno → `supabase functions deploy` desde disco (exacto, sin transcripción).
 
-## crear-parlay-screenshot: LEGIT_PATH = PENDIENTE
-IDOR cerrado y verificado; falta smoke funcional legítimo real/no destructivo (el fixture
-sintético dio 500 por trigger de parlays). Exigible antes del PASS final.
+## crear-parlay-screenshot: LEGIT_PATH = PASS
+IDOR cerrado y verificado. El 500 del fixture se midió a causa raíz: es el guard de
+negocio RONGOL `zzzz_limite_exposicion` (exige ruta de ledger), preexistente e idéntico
+en v32/v33 — NO es regresión del cambio de auth. Prueba positiva (rollback): con ruta de
+ledger declarada, el insert de v33 crea la fila bajo la identidad del JWT (rodelcast).
+Detalle completo en la sección de arriba. (Requisito del auditor cumplido.)
 
 ## Pendientes (mismo protocolo, por severidad)
 
