@@ -5081,3 +5081,92 @@ Todo SHADOW. Produccion intacta. Dinero desconectado. EXP_OFF=0.50 intacto. Socc
   - Cadena monetaria Kelly/risk/allocator: bloqueada (EXACT_DECISION_PRICE ~0 forward; A_ECO=PENDIENTE_FORWARD_EVIDENCE).
   - O/U: no continua hasta demostrar skill sobre naive en slice virgen (o instrumentar mejor fuente).
   - REAL_EVENT_E2E: PENDING (cron 415 activo).
+
+
+## 6-sep-2026 — S3.5 RECONCILIACION Y CIERRE METODOLOGICO. FINAL TEST SELLADO. NO dinero.
+
+Todo SHADOW. Produccion intacta. Sin Kelly/risk_multiplier. EXP_OFF=0.50 intacto. Soccer NO 100%.
+
+### 1) RECONCILIACION DEL UNIVERSO (N reconcilia; una sola predicate temporal por timestamp)
+  CAUSA de la confusion previa: mi query de conteo del split uso cast ::date; el harness corta por timestamp crudo.
+  Reconciliado con el MISMO predicate (fecha_hora_inicio timestamp) en todo:
+
+  Unidad estadistica       Total   DISCOVERY(<=2026-01-10)  VALIDATION(-2026-03-14]  FINAL(>2026-03-14)
+  Partidos (con FT)        1750    866                      428                      456
+  Predicciones 1x2 min6    1461    577                      428                      456
+  (min_prev=6 descarta 289 partidos tempranos, todos en DISCOVERY; VAL y FINAL quedan completos.)
+
+  De donde salia cada N:
+   - 1750 = partidos con resultado FT en futbol_5ligas_2526 (rango 2025-08-15..2026-05-24).
+   - 1461 = predicciones walk-forward con min_prev=6, universo VENUE-OFF (agrupado). ESTE es el universo S3.
+   - 1159 = universo VENUE-SPLIT-ON (exige >=6 previos en CASA Y >=6 en VISITA por equipo). Verificado:
+       lab_wf_1x2_preds(team,venue OFF)=1461 ; (team,venue ON)=1159. La ablacion S2 se reporto sobre 1159
+       (interseccion pareada venue-on/off), mas estricta y sesgada a fixtures de temporada avanzada.
+   - 878 vs 866 / 436 vs 428/456: la diferencia era EXACTAMENTE el borde ::date vs timestamp (partidos del
+       2026-03-14 y 2026-01-10 con hora). Con timestamp consistente: 866/428/456.
+
+  CAMBIO DE UNIVERSO documentado y justificado: S2 midio en 1159 (venue-on). S3 usa 1461 (venue-off), correcto
+  porque el champion QUITA venue split y xG esta excluido -> no hay razon para restringir a fixtures venue-completos.
+  El universo S3 (1461) es MAYOR y MENOS sesgado. Exclusiones: min_prev=6 (historial insuficiente). Duplicados: 0
+  (1 fila por fixture en 1x2/ou; 2 por fixture en TeamTotal por lado). Mercados: 1x2/ML, O/U 2.5, TeamTotal 1.5, DC.
+
+### 2) MONEYLINE — UNA SOLA VERDAD (funcion autoritativa lab_s3_moneyline_final_truth())
+  Por que habia "dos resultados": -0.03682 (+/-0.02542) y -0.0123 (+/-0.0085) son LA MISMA medicion en
+  distinta convencion de Brier: multiclase-suma-3-clases vs por-componente (suma/3). -0.03682/3=-0.01227;
+  0.02542/3=0.00847. No difieren en fondo; solo en normalizacion. Se adopta Brier multiclase (suma) como unica.
+
+  FINAL TEST congelado (fecha>2026-03-14), set comun donde champion/prod/baseline estan definidos, N=456:
+    Brier champion (C1 team,venue off) 0.61165
+    Brier produccion (C0 team,venue on) 0.63675
+    Brier baseline temporal (C2 base liga) 0.64847
+    delta champion-produccion  -0.02510 ; IC95 iid +/-0.01927 ; IC95 cluster/semana +/-0.00955  (excluye 0)
+    delta champion-baseline    -0.03682 ; IC95 iid +/-0.02542 ; IC95 cluster/semana +/-0.03211  (excluye 0, limite -0.0047)
+    LogLoss champion 1.02110 ; produccion 1.06112 ; baseline 1.07237
+    bias pooled 0.00000 (trivial: probs suman 1 sobre 3 clases)
+    calibration slope 0.842 / intercept 0.053 (observacion-level, pooled one-vs-rest) -> leve sobreconfianza
+      en extremos, adecuada (banda WELL_CALIBRATED 0.85-1.15; queda al borde).
+  VEREDICTO Moneyline = SKILL_PASS. Esta salida es la UNICA VERDAD S3 (reproducible por la funcion).
+
+### 3) DOBLE OPORTUNIDAD — evaluado por separado (NO heredado), IC cluster/semana, N=456
+    1X  P(h)+P(d):  dBrier -0.01479  IC +/-0.01347  excluye 0  -> PASS
+    12  P(h)+P(a):  dBrier -0.00016  IC +/-0.00500  CRUZA 0    -> INSUFFICIENT (team no discrimina empate)
+    X2  P(d)+P(a):  dBrier -0.02187  IC +/-0.01950  excluye 0  -> PASS
+  DC es 3 sub-mercados heterogeneos; 1X y X2 tienen skill propio, 12 no. Ninguno elegible: NO_MARKET_DATA_SOURCE.
+
+### 4) TOTAL EQUIPO 1.5 — taxonomia oficial (reemplaza "MARGINAL"), N=912 obs
+    vs produccion: dBrier -0.00952 IC +/-0.00690 (excluye 0) -> MEJORA REAL (quitar venue split ayuda).
+    vs baseline:   dBrier -0.00358 IC iid +/-0.00896 / cluster +/-0.00943 (CRUZA 0) -> SKILL_INSUFFICIENT.
+  Mejora-vs-produccion NO es skill-vs-baseline. Sin market data. NO elegible.
+
+### 5) OVER/UNDER 2.5 — mantenido SKILL_INSUFFICIENT (no re-tuneado), N=456
+    C2 (base pura) vs tasa-over naive as-of: dBrier -0.00516 IC iid +/-0.00528 / cluster +/-0.00526 (CRUZA 0).
+  Champion=base liga pura; team/venue no aportan. Skill no demostrado en slice virgen.
+
+### 6) FINAL TEST SELLADO
+  Ya fue abierto. Desde ahora: NO se usa para cambiar arquitectura/parametros/features. Solo auditoria/reporting
+  del champion ya seleccionado. Cualquier challenger futuro (xG, nuevo shrinkage, H2H) exige evidencia FORWARD o
+  un periodo temporal aun no visto. lab_s3_moneyline_final_truth() queda como registro congelado.
+
+### 7) MATRIZ FINAL S3.5
+  market            champion                  N_final  vs_prod    vs_baseline  IC95(cluster/wk)          LogLoss  calibration          SKILL         market_data           eligible_next_stage
+  Moneyline         C1 team ON, venue OFF     456      -0.02510   -0.03682     prod+/-0.00955 base+/-0.03211  1.02110  slope0.84/int0.05   PASS          CLOSING_CANONICO_OK   YES
+  Doble Oport. 1X   C1 =P(h)+P(d)             456      n/a        -0.01479     +/-0.01347                n/a      n/a                  PASS          NO_MARKET_DATA_SOURCE NO
+  Doble Oport. 12   C1 =P(h)+P(a)             456      n/a        -0.00016     +/-0.00500                n/a      n/a                  INSUFFICIENT  NO_MARKET_DATA_SOURCE NO
+  Doble Oport. X2   C1 =P(d)+P(a)             456      n/a        -0.02187     +/-0.01950                n/a      n/a                  PASS          NO_MARKET_DATA_SOURCE NO
+  Over/Under 2.5    C2 base liga pura         456      ~+0.0007   -0.00516     +/-0.00526                0.68012  n/a                  INSUFFICIENT  CLOSING_CANONICO_OK   NO
+  Total Equipo 1.5  C1 team ON, venue OFF     912      -0.00952   -0.00358     +/-0.00943                n/a      n/a                  INSUFFICIENT  NO_MARKET_DATA_SOURCE NO
+  Estados SKILL solo: PASS / FAIL / INSUFFICIENT. UNICO elegible a siguiente etapa: MONEYLINE.
+
+### LECTURA
+  Tras limpiar todo, solo Moneyline merece PASS con market data. No es fracaso: un mercado con senal medida
+  y calibracion adecuada vale mas que cuatro "verdes" por herencia o borde. DC 1X/X2 tienen skill propio pero
+  sin momios. O/U y Total Equipo no demuestran skill sobre baseline en slice virgen. venue_split confirmado
+  DAÑINO. xG bloqueado (forward). Marcador honesto Soccer ~91%.
+
+### 8) CANDADOS
+  Produccion intacta. Dinero desconectado. Sin risk_multiplier. EXP_OFF=0.50 intacto. Soccer NO 100%.
+  Ningun champion promovido. FINAL TEST sellado. DETENTE (no Kelly, no P_FAIR final aun).
+
+### OBJETOS SHADOW (S3.5)
+  lab_s3_moneyline_final_truth() (funcion, unica verdad ML) ; lab_champion_soccer (reescrito: skill PASS/FAIL/
+  INSUFFICIENT + eligible_next_stage + vs_prod/vs_baseline + IC cluster + calibration). Sin tocar produccion.
