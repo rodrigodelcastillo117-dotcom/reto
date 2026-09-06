@@ -4408,3 +4408,99 @@ HALLAZGO METODOLOGICO (evita fabricar un hueco falso):
   (c) reglas categoricas de MODEL_EVIDENCE y DATA_READINESS justificadas con esa evidencia
       (cerrar CONFIDENCE_POLICY_VALIDATION=PENDING).
 - NO se diseno risk_multiplier(Confidence). Nada de dinero. Todo SHADOW.
+
+
+## 6-sep-2026 — E.2A (resolver canonico de historia de goles) + E.2B (Data Quality event log)
+
+Todo SHADOW. Sin Kelly/risk_multiplier/caps/allocator/promocion. A_ECO=PENDIENTE_ODDS_DECISION.
+Arquitectura de capas conservada: MODEL_SKILL / MODEL_EVIDENCE / DATA_READINESS / PRICE_QUALITY / ELIGIBILITY / RISK.
+
+### E.2A — RESOLVER CANONICO (reusa la identidad del motor, NO un segundo matching)
+Objeto: `public.lab_resolver_hist_goles_v1(espn_id, nombre, decision_time)`.
+Preferencia de identidad: (1) espn_id (el que ya trae agenda_espn.home/away_espn_id) -> (2) alias canonico
+no ambiguo (equipo_alias.alias_norm) -> (3) catalogo (catalogo_equipos_espn). Historia contada directo de
+la base `historico_partidos_espn` (keyed por home_espn_id/away_espn_id). PROHIBIDO nombre crudo para coverage.
+Estados: RESOLVED / TRUE_MISSING / IDENTITY_UNRESOLVED. IDENTITY_UNRESOLVED NUNCA se convierte en data-missing.
+
+CANDADO TEMPORAL: solo partidos con fecha < decision_time. "Fresh" != timestamp reciente; es
+"la historia contiene solo lo disponible antes de decision_time y esta completa hasta el ultimo elegible".
+
+PRUEBAS (6 casos + anti-lookahead + TRUE_MISSING):
+  Club America  -> RESOLVED 174 (llave ALIAS 'america')   [el falso-miss del join naif queda desmentido]
+  Kifisia       -> RESOLVED 51  (llave ESPN_ID)
+  Shakhtar Don. -> RESOLVED 30  (llave ALIAS; catalogo sin nombre pero identidad+historia si)
+  Las Aguilas   -> RESOLVED 174 (alias no-canonico -> 227)
+  Panathinaikos -> RESOLVED 108
+  nombre fantasma -> IDENTITY_UNRESOLVED (no data-missing)
+  227 con corte 2001 -> TRUE_MISSING (equipo real, 0 historia elegible)
+  Anti-lookahead: corte 2026-09-03 -> 173 (ult 08-30); corte 2026-09-04 -> 174 (ult 09-03).
+    El partido del 09-03 se EXCLUYE cuando decision_time=09-03 y se INCLUYE en 09-04. Ningun partido >= decision_time entra.
+
+COVERAGE REAL de hoy con resolver canonico (10 picks soccer): home 10/10 RESOLVED (prom 130 partidos),
+away 10/10 RESOLVED (prom 147). 0 TRUE_MISSING, 0 IDENTITY_UNRESOLVED. La asimetria home/away del turno
+anterior era 100% artefacto de nombre.
+
+### E.2B — DATA QUALITY EVENT LOG (append-only, capturado en decision_time)
+Objetos: tabla `public.lab_dq_event_log` (+ trigger `trg_dq_append_only` que bloquea UPDATE/DELETE),
+funcion de captura `public.lab_dq_capturar_v1()` (forward; as_of=now()).
+Campos: batch_id, captured_at, fixture_id, pick_id, sport, market, decision_time, kickoff, model_version,
+capa, feature_name, required_for_model, source, source_timestamp, as_of, canonical_entity_id, present,
+identity_resolved, fallback_used, degraded_source, value_hash, n_detalle, quality_status, reason_code.
+Permite reconstruir QUE datos tenia el motor al decidir.
+
+NO BACKFILL FALSO: la captura es forward, con source_timestamp <= as_of. No se reconstruye historia de DQ
+leyendo el estado ACTUAL de vistas mutables. Historia previa a la instrumentacion = DQ_HISTORY_UNAVAILABLE.
+
+READINESS FEATURE-SPECIFIC (semantica propia, sin SLA universal):
+  odds_decision (capa PRICE_QUALITY): existe snapshot con snapshot_at <= decision_time (precio existia al decidir;
+    sin closing retrospectivo). quality_status PRICE_AT_DECISION / PRICE_SNAPSHOT_NOT_WIRED / NO_PRICE.
+  agenda_kickoff (DATA_READINESS): evento identificado (home/away espn_id) + kickoff vigente + actualizado_at.
+  hist_goles_home/away (DATA_READINESS, required_for_model): identidad resuelta + solo partidos elegibles
+    (fecha<decision_time) + coverage historico real (n_hist_elegible). quality_status = estado del resolver.
+  Los <6h/<24h quedan SOLO como diagnostico descriptivo (n_detalle), NO como threshold de DATA_READINESS.
+
+CAPTURA REAL (batch 6eb4b39c, 10 picks x 4 features = 40 filas):
+  DATA_READINESS agenda_kickoff : 10 AGENDA_OK (edad prom 0.8h)
+  DATA_READINESS hist_goles_home: 10 RESOLVED (prom 130 partidos elegibles)
+  DATA_READINESS hist_goles_away: 10 RESOLVED (prom 147)
+  PRICE_QUALITY  odds_decision  : 8 ODDS_OK (PRICE_AT_DECISION) + 2 ODDS_AVAILABLE_BUT_NOT_WIRED (los BTTS)
+  0 degradadas, 0 IDENTITY_UNRESOLVED, 0 TRUE_MISSING.
+
+### BTTS
+El defecto "snapshot existe pero momios no cableados al pick" queda trazado como reason_code explicito
+`ODDS_AVAILABLE_BUT_NOT_WIRED` (capa PRICE_QUALITY). NO se arregla para promover BTTS: BTTS sigue
+SKILL_INSUFFICIENT. Solo queda el defecto trazado para coherencia de la infraestructura de odds.
+
+### E.3 — separacion mantenida
+MODEL_EVIDENCE_CONFIDENCE (PROVISIONAL_STAT_CONFIDENCE, puede_mover_stake=false) sigue separado de
+DATA_READINESS. Eligibility v2 exige ambos.
+
+### ELIGIBILITY SIGUE FAIL-CLOSED (confirmado con datos reales)
+Aunque hoy los HECHOS de data quality salen sanos (hist RESOLVED, agenda OK, precio en decision para 8/10),
+NO se afirma DATA_READINESS='OK' porque la politica de suficiencia (cuanta historia basta, validacion de
+ventanas de freshness) sigue CONFIDENCE_POLICY_VALIDATION=PENDING. Resultado real:
+  O/U +18% real -> DATA_NOT_READY (puede_mover_stake=false).
+  contrafactual con 'OK' (no lo afirmamos) -> BET_CANDIDATE (puede_mover_stake=false).
+NINGUN threshold heuristico nuevo decide dinero: puede_mover_stake=false en todos los caminos y no se
+afirma readiness OK.
+
+### LOS 8 ENTREGABLES
+1. coverage real historia de goles con resolver canonico ... HECHO (home/away 10/10 RESOLVED).
+2. TRUE_MISSING vs IDENTITY_UNRESOLVED ..................... HECHO (0 en vivo; probados en casos sinteticos).
+3. prueba temporal anti-lookahead ........................ HECHO (corte 09-03 vs 09-04).
+4. esquema/log forward creado ............................ HECHO (lab_dq_event_log append-only + trigger).
+5. captura real del log para picks de hoy ................ HECHO (batch 6eb4b39c, 40 filas).
+6. reason_codes por feature .............................. HECHO (AGENDA_OK, RESOLVED, ODDS_OK, ODDS_AVAILABLE_BUT_NOT_WIRED).
+7. Eligibility sigue fail-closed ......................... CONFIRMADO (DATA_NOT_READY hoy).
+8. ningun threshold heuristico decide dinero ............. CONFIRMADO (puede_mover_stake=false; readiness OK no afirmado).
+
+### FLAGS DE GOBERNANZA (sin cambios respecto al turno anterior)
+CONFIDENCE_DETERMINISM=PASS; CONFIDENCE_EV_INDEPENDENCE=PASS; ELIGIBILITY_REGRESSION=PASS;
+CONFIDENCE_POLICY_VALIDATION=PENDING; CONFIDENCE_AUDIT sigue SIN declararse PASS.
+
+### PENDIENTE (esperando GO; nada arrancado)
+- Acumular forward evidence del log (varios dias) para poder justificar reglas categoricas de
+  DATA_READINESS y de MODEL_EVIDENCE con datos, sin inventar thresholds.
+- Hardening: cron para lab_dq_capturar_v1 (captura periodica); extender features (lineups/clima/arbitro).
+- Corregir en produccion el cableado de odds BTTS (ODDS_AVAILABLE_BUT_NOT_WIRED) cuando se priorice.
+- Recien despues: decidir si se puede cerrar CONFIDENCE_AUDIT y, aparte, disenar risk_multiplier. NO ahora.
