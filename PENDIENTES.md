@@ -4105,3 +4105,29 @@ Verificado (medido, cartelera de hoy):
 - Nota: reto_picks_hoy (#209 RETO 13M) ya estaba cerrado desde antes.
 Siguiente (post #209): construir P_FAIR -> Skill -> Confidence -> Eligibility (un EV+ puede
 terminar en NO BET). Autoridad unica V1 != EV es el jefe de seleccion.
+
+
+## 6-sep-2026 — P_FAIR bloque / FASE A (soccer)
+DATASET: lab_bloque_a_wf = 24,618 obs OOS walk-forward, 7 mercados, 2026-03-10..08-26.
+Trae A-H precomputadas (pa..ph), y (resultado), sesgo, recorte(Beta), factor(Wilson).
+A=P0 cruda, B=P0+sesgo, ..., H=produccion (sesgo+Beta+Wilson). Join a modelo_backtest por id.
+
+PROBABILIDAD (medido, n=24,618, base_rate=0.5191):
+  Brier  A(P0)=0.22362   B(P0+sesgo)=0.22169   H(prod)=0.23067
+  LogLoss B=0.63796   H=0.66313
+  meanP   B=0.5228 (~base)   H=0.4384 (sub-confiada)
+  => sesgo MEJORA (Brier -0.00193). Beta+Wilson EMPEORAN (Brier +0.00898 vs B, LogLoss +0.025;
+     ademas descentran la media 8pp bajo la base). Confirma DANINA_OOS en PROBABILIDAD.
+  VEREDICTO: Beta/Wilson RECHAZADOS como calibracion de P_FAIR. Si demuestran utilidad
+  economica algun dia, se estudian aparte como risk_multiplier/abstencion, NUNCA mutilando P_FAIR.
+
+ECONOMIA OOS: A_ECO = PENDIENTE_ODDS_DECISION.
+  Causa: no hay momio por observacion a as_of<=decision_time. modelo_backtest no guarda momio;
+  toda fuente fixture-keyed cubre <=5% de los 1,550 fixtures (fut_odds_history 82, odds_pro_snapshots 36);
+  las ricas son espn_event_id-keyed (mismos juegos, no cubren). Regla del auditor: NO usar closing ni
+  precios sin timestamp fiable para EV/ROI historico (closing = CLV, no reconstruccion de apuesta);
+  NO inferir momios. => arrancar shadow forward con radar_odds_snapshots (precio de decision, as_of<=saque)
+  y medir economia OOS hacia adelante por deporte/mercado.
+
+SIGUIENTE: FASE B1/B2 MLB (probabilidad, medible sin odds) + andamiaje Skill/Eligibility en SHADOW.
+No promover produccion. No optimizar thresholds. No tocar Kelly/caps/allocator/RONGOL/EXP_OFF/NFL.
