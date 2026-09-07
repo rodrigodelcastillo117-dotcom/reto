@@ -5674,3 +5674,95 @@ NO existe FINAL TEST histórico -> NINGUN SKILL_PASS_FINAL. Máximo permitido: D
   resultado neto es que MLB Moneyline no tiene señal propia robusta sobre el baseline temporal -> lo correcto es
   $0 y esperar FINAL_TEST_FORWARD, no seguir inventando features. C3 (varianza) queda descartado en su forma
   parsimoniosa; un Z-por-equipo más complejo NO se justifica sin nueva evidencia (el simple ya falló).
+
+
+## 7-sep-2026 — MLB13 forward capture E2E + MLB CONGELADO + NFL Fantasy FF0 (inventario). NO construir modelo aún.
+Todo SHADOW. Producción intacta. Soccer congelado ~96%.
+
+### MLB13 — FORWARD CAPTURE E2E (lab_mlb_forward)
+  Estructura: decision_id (md5 event|decision_time|model_version, UNIQUE -> idempotente), foto de decisión inmutable
+  + capa postgame separada. Candados:
+   - trg_mlbfwd_freeze: UPDATE sólo puede tocar result/closing_odds/closing_timestamp/clv/notes; cualquier cambio a
+     la foto (decision_time, P_RAW, model_version, decision_odds, starter_ref, cache_ts, provenance, market_key,
+     eligibility) -> EXCEPTION. DELETE prohibido (append-only).
+   - trg_mlbfwd_no_backdate: decision_time > now()-2d (forward only, no backfill histórico).
+   - available_at_decision derivado: cache_timestamp<=decision_time -> AVAILABLE_AT_DECISION / NOT / UNKNOWN.
+   - REVOKE insert/update/delete/truncate a anon/authenticated/public.
+  Funciones: lab_mlb_fwd_capturar() (SECURITY DEFINER, O(1), on-conflict-do-nothing) ; lab_mlb_fwd_resultado()
+     (sólo campos mutables; CLV = decision/closing - 1).
+  TEST E2E SINTETICO (E2E_TEST_GAME_1, marcado como test): capturar -> fila congelada (AVAILABLE_AT_DECISION,
+     P_RAW 0.5450, odds 1.95) ; recaptura idéntica -> n=1 (idempotente) ; postgame result=1 closing=2.05 -> CLV -0.0488 ;
+     intento de modificar P_RAW -> RECHAZADO (P_RAW sigue 0.5450). Idempotencia + inmutabilidad DEMOSTRADAS.
+  ESTADO: MLB_FORWARD_CAPTURE_ARCHITECTURE = PASS ; MLB_FORWARD_REAL_EVENT_E2E = PENDING (0 decisiones reales aún).
+  PENDIENTE wiring: cablear enqueue-only al motor real MLB (handoff; no se toca producción). No esperar el evento para seguir.
+
+### MLB — CONGELADO
+  MLB_RESEARCH_DEVELOPMENT = CLOSED_FOR_NOW ; MLB_FINAL_VALIDATION = WAITING_FORWARD.
+  Moneyline: DEVELOPMENT_CHAMPION=C0 ; SKILL_FINAL=INSUFFICIENT ; PRODUCTION_READY=FALSE ; $0. No más feature hunting.
+  O/U: PARTIAL_INSUFFICIENT_EVIDENCE ; NB_R5=LEGACY_TUNED_IN_SAMPLE. Reabrir sólo por: evidencia forward suficiente,
+  fallo operativo, o nueva fuente legítima.
+
+### FF0 — INVENTARIO FORENSE NFL FANTASY (NO reutiliza Kelly/EV/CLV/RONGOL/stake/bankroll/betting-eligibility)
+  SI reutiliza (CORE): player identity (espn_player_id, nfl_jugador_alias), teams (nfl_equipo_abrev/division),
+  schedule (nfl_partidos, nfl_bye_weeks), temporal integrity, DQ, source provenance (cargado_at/fuente/verificado),
+  model registry, versioning.
+
+  FUENTE                     granularidad   temporal      clasificación (para Weekly Projection)
+  nfl_player_game_logs       POR JUEGO      game_date     MODEL_ACTIVE (target + historia; PPR computable de componentes;
+                              6271 filas, 938 jug, 2025-09..2026-08; 2025=5050/256 juegos = temporada completa). WALK-FORWARD OK.
+  nfl_snaps                  POR SEMANA     cargado_at    AVAILABLE_NOT_USED (snap% semanal; 7887, 640 jug). walk-forward OK.
+  nfl_uso_jugador            TEMPORADA AGG  cargado_at    AVAILABLE_NOT_USED pero TEMPORALLY_UNSAFE crudo (agregado de temporada,
+                              sin semana; target_share/rz/ppr_pg/percentiles). Reconstruir semanal desde game_logs.
+  nfl_uso_avanzado           TEMPORADA AGG  cargado_at    igual: TEMPORALLY_UNSAFE crudo (snap_pct/target_share/rz/separacion).
+  nfl_jugadores              SNAPSHOT VIVO  actualizado_at TEMPORALLY_UNSAFE (ppr_promedio/ult5/targets_promedio = agregados vivos).
+  nfl_lesiones_semana        POR SEMANA     cargado_at    MISSING histórico: cargado_at sólo 2026-08-31..09-06 (semana actual).
+                              Sin snapshots semanales 2025 -> no usable as-of en backtest. Forward: verificar pre-kickoff.
+  nfl_depth_chart            SNAPSHOT       cargado_at    MISSING histórico (sin semana; se sobrescribe). Rol proyectado no
+                              reconstruible en 2025. Forward: capturar semanal.
+  nfl_defense_vs_position /  ?              ?             CONTEXT/AVAILABLE (matchup def-vs-pos); verificar si es agregado de
+   v_nfl_defensa_vs_posicion_ppr                          temporada (UNSAFE crudo) o reconstruible semanal.
+  nfl_partidos + nfl_bye_weeks SCHEDULE     —             MODEL_ACTIVE contexto (oponente, local/visita, bye). Conocido pre-semana.
+  nfl_clima_hora             POR JUEGO      —             CONTEXT (temporal caveat como MLB: forecast vs observado sin ts claro).
+  nfl_adp / fantasy_adp      DRAFT          —             AVAILABLE (producto DRAFT, no Weekly). 
+  fantasy_liga_config        CONFIG         —             MODEL_ACTIVE (define scoring PPR/half/standard - necesario para el target).
+  fantasy_start_sit          PRODUCTO LLM   generado_at   LEGACY/CONTEXT (3 filas, reporte LLM por screenshot #41; NO es modelo).
+  fantasy_roster_semanal     PRODUCTO       —             VACIA (0 filas).
+  nfl_novatos, nfl_kicker_logs, nfl_pateadores, nfl_defensa_fantasy : AVAILABLE (K/DST/novatos; secundarios).
+  BETTING-ONLY (NO reutilizar en Fantasy): nfl_odds_snapshots, v_momios_nfl, rongol_nfl_condiciones, nfl_picks_premium,
+   v_favorito_nfl, nfl_predicciones(betting), radar_odds_snapshots.
+
+### FF1 — PRODUCTOS OBJETIVO (separados; prioridad 1 = WEEKLY_PROJECTION -> START/SIT)
+  START_SIT, WEEKLY_PROJECTION [P1], WAIVER, TRADE, DRAFT, LINEUP_OPTIMIZER. No construir todos a la vez.
+
+### FF2 — VERDAD TEMPORAL (pre-kickoff de la semana)
+  USABLE as-of (reconstruible walk-forward desde game_logs/snaps por semana): PPR previo, targets/target_share,
+   carries, rz usage, snap%, oponente, local/visita, bye. Nunca usar snap/targets/starter/lesión FINALES de esa semana.
+  NO usable histórico (candado): lesiones (sólo semana actual), depth_chart (sin historia), clima (provenance).
+
+### FF3 — BASELINE (a construir después, no ahora): por posición QB/RB/WR/TE (K/DST si hay datos).
+  Métricas: MAE y RMSE de puntos fantasy, rank correlation (Spearman) por posición-semana, top-N hit rate,
+  Start/Sit pair accuracy. Baseline temporal (rolling as-of), NUNCA agregados de temporada final.
+
+### QUE PODEMOS CONSTRUIR HOY (Weekly Projection -> Start/Sit)
+  SI: proyección semanal PPR por jugador con rolling walk-forward desde nfl_player_game_logs (temporada 2025 completa
+  como DEVELOPMENT) + snap% semanal + matchup def-vs-pos (si reconstruible) + schedule/bye. Target PPR computado de
+  los componentes. FINAL_TEST_FORWARD natural = temporada 2026 (arranca ~ahora, nunca vista).
+  NO todavía: features de lesión/depth-chart as-of (faltan snapshots históricos) -> instrumentar captura forward.
+
+### PRINCIPALES HUECOS TEMPORALES/DATOS
+  1. Lesiones: sin historia semanal 2025 (sólo semana actual) -> feature de disponibilidad no auditable en backtest.
+  2. Depth chart: sin historia semanal -> rol proyectado no reconstruible.
+  3. uso_jugador/avanzado/jugadores: agregados de temporada/vivos -> reconstruir semanal desde game_logs (no usar crudo).
+  4. game_logs sin columna 'semana' -> derivar semana de game_date/nfl_partidos.
+  5. Clima: provenance temporal por verificar (forecast vs observado).
+  6. Scoring: confirmar variante PPR en fantasy_liga_config antes de fijar el target.
+
+### CHECKPOINT (detenerse aquí, no construir modelo)
+  1. MLB forward cableada (arquitectura) PASS ; 2. E2E sintético PASS (idempotencia+inmutabilidad) ;
+  3. MLB congelado ; 4. inventario NFL Fantasy hecho ; 5. mapa de fuentes hecho ;
+  6. buildable hoy = Weekly Projection->Start/Sit sobre 2025 (walk-forward) ; 7. huecos temporales listados.
+  SIGUIENTE (con tu OK): FF2 reconstrucción walk-forward + FF3 baseline por posición. No antes de tu visto bueno.
+
+### OBJETOS SHADOW (este bloque)
+  lab_mlb_forward (+decision_id/immutability/idempotencia/available_at_decision/closing_timestamp) ;
+  lab_mlb_fwd_capturar() ; lab_mlb_fwd_resultado() ; triggers trg_mlbfwd_freeze/no_backdate. Producción intacta.
