@@ -6554,3 +6554,111 @@ Todo SHADOW. Sin transacciones Yahoo. 2026 outcomes NO usados. Modelos de produc
   screenshots) ; 7 WAIVERS_REAL_LEAGUE_E2E = WAITING_USER_INPUT ; 8 contrato Yahoo OAuth V2 (lab_ff_sync_contract).
   NO Trades / NO Draft / NO transacciones Yahoo / NO FAAB heuristico. Trades espera: ownership real completo +
   valor rest-of-season (no week1 points).
+
+
+## 7-sep-2026 — DRAFT ASSISTANT V1 (FF16-FF19.2). Draft = MARTES 8 en la noche. Waivers CONGELADO.
+Todo SHADOW. Sin dinero/Kelly/stake. 2026 outcomes NO usados para tuning. Sin ML avanzado. El LLM explica, NO
+modifica ADP/pool/proyecciones. Fail-closed sobre inventar. Modelos de produccion intactos. Soccer/MLB congelados.
+
+### GOBERNANZA
+  WAIVERS_V1_ARCHITECTURE = PASS (congelado) ; WAIVERS_REAL_LEAGUE_E2E = WAITING_POST_DRAFT.
+  DRAFT_ASSISTANT_V1 = BUILT + E2E_PASS (pool, board append-only, best-available, on-the-clock, handoff).
+  DRAFT_POSITION / DRAFT_TYPE = PENDING_USER_INPUT (no hay columnas de draft en fantasy_liga_config; el board
+    NO se bloquea: recibe mi_slot y num_teams como parametros).
+
+### FF16 — ADP DATA TRUTH  => nfl_adp = CURRENT_2026
+  273 filas temporada=2026, fuente fantasyfootballcalculator, ventana 2026-08-24..09-02, cargado 08-31..09-02.
+  234/273 con espn_player_id ; 0 duplicados de id ; 0 duplicados nombre+pos. fantasy_adp = VACIA (0). => usable.
+
+### FF16.2 — POOL CANONICO 2026 (v_lab_ff_draft_pool)  [+ FIX DE INTEGRIDAD IMPORTANTE]
+  HALLAZGO GRAVE: nfl_adp.equipo esta CORRUPTO/desactualizado para ~30 jugadores (A.J.Brown NE->PHI, Kenneth
+    Walker KC->SEA, Mike Evans SF->TB, Travis Etienne NO->JAX, Pittman PIT->IND, D.Montgomery HOU->DET, ...).
+    Como nfl_adp.semana_bye se derivaba de ese equipo equivocado, LOS BYES TAMBIEN estaban mal (habrian dado
+    consejo de bye equivocado en vivo). RAIZ: columna de equipo del proveedor de ADP, no de la liga.
+  FIX: equipo de record = nfl_jugadores.equipo (ESPN, RESOLVED_ID) ; bye de record = DERIVADO del calendario
+    2026 (nfl_partidos tipo_temporada=2, semana 1-18, la semana sin juego por equipo). 273/273 bye = SCHEDULE_2026.
+    team_source: 207 CANONICAL_AGREES, 27 CANONICAL_OVERRODE_ADP (corregidos), 39 ADP_TEAM_ONLY (27 DEF + 12 sin id).
+    Se CONSERVAN adp_team/adp_bye como columnas de auditoria.
+  Convenciones: nfl_partidos y nfl_jugadores usan ESPN (WSH,LAR,LV,JAX); nfl_adp usa WAS -> normalizado a WSH.
+  identity_status: RESOLVED_ID (234) / TEAM_DEF (27, defensas por equipo) / NAME_ONLY_UNRESOLVED (12 de ADP tardio,
+    en su mayoria rookies/pateadores sin id; se INCLUYEN con flag, no se borran). NO se borra ningun lesionado.
+  Lesion/disponibilidad (nfl_lesiones_semana 2026 wk1 por espn_player_id, SEPARADA del valor ADP):
+    availability_flag AVAILABLE(185) / QUESTIONABLE(45) / OUT_RISK(4: IR/PUP/NFI/RESERVE) / NO_INJURY_LINK(39).
+    Se muestra la NOTA CRUDA de lesion (injury_lesion), no solo el estado (ej. Nabers "Knee-ACL" se ve literal
+    aunque el estado diga QUESTIONABLE) -> el usuario/LLM juzga, fail-closed sobre una sola senal de confianza.
+  overall_rank / pos_rank por ADP.
+
+### FF17 — BASELINE = ADP (sin score magico). FF17.1: NO se usa projected_mean de Week1 como valor de draft/ROS.
+  El pool expone por SEPARADO: adp, pos_rank, roster fit, availability/injury, bye, rookie. REST_OF_SEASON_MODEL
+  = NOT_VALIDATED (no existe modelo ROS; el motor semanal es de 1 semana, no vale como valor de draft).
+
+### FF18 — LIVE DRAFT BOARD (lab_ff_draft_event, append-only; undo auditado por evento; nada se borra)
+  Tabla evento: draft_id, action(PICK/UNDO), pick_number, ronda, pick_en_ronda, fantasy_team, is_my_pick,
+    espn_player_id, jugador, posicion, equipo, identity_status, source, nota, captured_at(server now()).
+  Triggers: ff_draft_ro (bloquea UPDATE/DELETE) + ff_draft_stamp (captured_at server-authoritative).
+  Estado vivo v_lab_ff_draft_state: DISTINCT ON (draft_id,pick_number) el evento MAS RECIENTE; PICK=lleno, UNDO=vacio.
+    -> permite corregir: PICK erroneo -> UNDO -> PICK correcto (los 3 eventos quedan en el log; el ultimo gana).
+  lab_ff_draft_pick(pick_number, fantasy_team, player_ref[id o nombre], is_my_pick, num_teams, draft_id, nota):
+    resuelve del pool disponible (id-first, luego nombre unico), calcula ronda/pick snake, INSERTA PICK.
+    GUARDAS probadas: ALREADY_DRAFTED_OR_AMBIGUOUS, NOT_IN_POOL, PICK_TAKEN.
+  lab_ff_draft_undo(pick_number, draft_id): INSERTA UNDO (audita); NOTHING_TO_UNDO si el pick no esta lleno.
+  lab_ff_draft_available(draft_id): pool - jugadores ya tomados (por id, o nombre+pos si DEF/sin id); re-rankea.
+
+### FF18.1 best available / FF18.2 roster fit / FF18.3 next pick / FF18.4 reach-value / FF18.5 lesiones
+  lab_ff_draft_best_available(draft_id, pos?, limit): mejor disponible overall o por posicion, por ADP.
+  lab_ff_draft_roster(draft_id): mi roster actual (is_my_pick) + bye de cada jugador.
+  roster_fit (descriptivo, NUNCA prohibe): FILLS_STARTING_NEED (QB<1/RB<2/WR<2/TE<1/K<1/DEF<1 segun huecos de la
+    liga) / FLEX_ELIGIBLE_OR_DEPTH (RB/WR/TE con titulares llenos) / DEPTH_OR_FILLED.
+  value_vs_pick = current_pick - ADP (>0 = valor/cae; <0 = reach). Descriptivo.
+  picks_until_next_turn: matematica SNAKE con mi_slot + num_teams (si mi_slot NULL -> se omite, no bloquea).
+
+### FF19 — ON THE CLOCK (lab_ff_draft_on_the_clock(current_pick, mi_slot?, num_teams, draft_id, limit))
+  Top-N disponibles por ADP con: pos, equipo, adp, pos_rank, bye, rookie, availability + nota lesion, roster_fit,
+    value_vs_pick, is_best_available (rank1), picks_until_next_turn. Determinista (ADP). El LLM solo explica.
+  E2E (snake 10 equipos, mi_slot 5): rivales toman Gibbs/Bijan/Puka/Amon-Ra en 1-4 -> on_the_clock(5) recomienda
+    BEST_AVAILABLE = Ja'Marr Chase (ADP 3.9, QUESTIONABLE-Knee, FILLS_STARTING_NEED, value +1.1), gap a mi
+    siguiente pick (16) = 11. Correcto.
+
+### FF19.2 — HANDOFF POST-DRAFT (lab_ff_draft_finalizar(draft_id,temporada,semana,apodo,league_id))
+  Convierte el board -> (1) lab_ff_ownership (append-only, 1 snapshot uuid): cada pick vivo como MY_ROSTER
+    (is_my_pick) o ROSTERED_OTHER, source='DRAFT_BOARD_2026'. (2) fantasy_roster_semanal: mi roster como jsonb
+    array {tipo(SKILL/K/DST),ref,nombre,posicion}, reemplazando (apodo,temporada,semana). Esto DESBLOQUEA
+    WAIVERS_REAL_LEAGUE_E2E (ownership real de todos los rosterizados tras el draft).
+  E2E aislado (draft_id='E2E_DRAFT', apodo test): HANDOFF OK 5 ownership (4 ROSTERED_OTHER + 1 MY_ROSTER).
+
+### REGRESIONES DRAFT (10/10 PASS)
+  1 pool 273 con bye de calendario 2026 (273/273 SCHEDULE_2026). 2 equipos corruptos de ADP corregidos por
+  nfl_jugadores (27 override, A.J.Brown PHI bye10 etc). 3 lesionados NO borrados, con nota cruda + flag. 4 board
+  append-only (UPDATE/DELETE bloqueados, adversarial PASS). 5 doble-draft bloqueado (ALREADY_DRAFTED). 6 jugador
+  fuera de pool bloqueado (NOT_IN_POOL). 7 pick ya tomado bloqueado (PICK_TAKEN). 8 undo auditado: PICK->UNDO->PICK
+  los 3 en el log, estado=ultimo. 9 disponible = pool - tomados (Chase reaparece tras undo). 10 snake next-pick
+  correcto (slot5/10 -> pick16, gap 11). + captured_at server-authoritative (anti-backdate). + handoff
+  MY_ROSTER/ROSTERED_OTHER. + produccion intacta: principal_2026 vacio, Baby Back Gibbs sin roster, ownership
+  'principal' 0 (E2E aislado en 'E2E_DRAFT').
+
+### OBJETOS (este bloque)
+  v_lab_ff_draft_pool ; lab_ff_draft_event (+trg ff_draft_ro, ff_draft_stamp) ; v_lab_ff_draft_state ;
+  lab_ff_draft_available ; lab_ff_draft_pick ; lab_ff_draft_undo ; lab_ff_draft_roster ;
+  lab_ff_draft_best_available ; lab_ff_draft_on_the_clock ; lab_ff_draft_finalizar. Todos REVOKE anon/auth/public.
+  Datos: draft real 'principal_2026' = VACIO (listo para el martes). 'E2E_DRAFT' = sintetico aislado (flagged).
+
+### PLAYDOIT — FIX SINCRONO DESPLEGADO (residual operativo cerrado)
+  El agente Lovable REESCRIBIO src/components/ApostarButton.tsx al patron robusto: URL resuelta DE ANTEMANO en
+  useEffect (resolverUrlCasa(casa) fallback garantizado + deep link RPC opcional con timeout 2.5s), render
+  <a href target=_blank rel=noopener> SINCRONO (sin window.open, sin about:blank); sin URL valida -> boton
+  deshabilitado "Enlace no disponible". Confirmado: RETO 13M (Reto13M.tsx:2368) usa ApostarButton. SW -> reto13m-v7.
+  Type-check verde. DEPLOY lanzado a reto13.lovable.app (deployment 4d276116, async pending). casa_preferida
+  "playdoit" -> https://www.playdoit.mx/?modal=login.
+
+### QUE NECESITO DEL USUARIO PARA EL MARTES
+  1) Tu POSICION de draft (1-10) y si es SNAKE o AUCTION (fantasy_liga_config no lo tiene). Sin eso el board
+     funciona igual, pero picks_until_next_turn (math snake) queda en blanco.
+  2) Durante el draft: cada pick se registra con lab_ff_draft_pick(pick#, equipo, jugador, mine?, num_teams).
+     En tu turno: lab_ff_draft_on_the_clock(pick_actual, tu_slot, num_teams). Al final: lab_ff_draft_finalizar().
+
+### CHECKPOINT / BLOQUEANTES ANTES DE USAR EN VIVO
+  1 pool CURRENT_2026 con byes correctos = OK. 2 board append-only + undo + guardas = OK (E2E). 3 best-available +
+  on-the-clock + roster fit + reach/value = OK. 4 handoff a ownership/roster = OK. 5 draft slot/type = PENDING_USER.
+  6 UI de draft (Lovable) = NO CONSTRUIDA (hoy es SQL puro; para el martes puede operarse por SQL o construir
+  pantalla ligera si hay tiempo). 7 FF19.1 simulador = NO (secundario, saltado por deadline).
+  NO Trades. NO Waivers reales (WAITING_POST_DRAFT). NO transacciones Yahoo. Sin dinero.
