@@ -6408,3 +6408,78 @@ Todo SHADOW. 2026 outcomes NO usados para tuning. Modelos de produccion intactos
   equipos/FA/waivers) via Fantasy Helper/Yahoo; hoy el pool es sintetico. (b) FAAB_BIDDING_POLICY=NOT_VALIDATED.
   (c) K/DST predictive=PENDING. (d) FORWARD_PREDICTIVE_VALIDATION=PENDING (0 semanas 2026). 
   NO iniciado: Trades / Draft (siguiente, con tu GO).
+
+
+## 7-sep-2026 — FF13.9 add/drop exhaustivo + FF15 real league sync (BLOCKED) + import controlado. NO Trades/Draft.
+Todo SHADOW. 2026 outcomes NO usados. Sin transacciones a Yahoo. Modelos de produccion intactos. Soccer/MLB congelados.
+
+### GOBERNANZA
+  WAIVERS_V1_ARCHITECTURE = PASS ; WAIVERS_REAL_LEAGUE_E2E = PENDING (ownership actual es SINTETICO).
+  REAL_LEAGUE_SYNC = BLOCKED_EXTERNAL_INTEGRATION (no hay integracion Yahoo).
+
+### FF13.9 — ADD/DROP EXACTO REVALIDADO (exhaustivo vs "peor banca")
+  lab_ff_waivers_v2: por cada candidato X, prueba CADA drop Y del roster, ROSTER'=ROSTER-Y+X, corre
+  FULL_LINEUP_OPTIMIZER, toma argmax lineup_value valido; reporta lineup_before/after, starter_delta, drop, slot.
+  REGRESION EXHAUSTIVA (E2E_LEAGUE, 6 candidatos): el lineup_after exhaustivo == heuristico "peor banca" en 6/6
+  (all_match=true). PRUEBA: bajo esta config el "peor banca" es matematicamente equivalente (dropear cualquier
+  no-titular deja intactos los 9 optimos = lineup_total(my∪X); dropear titular baja el valor). Se conserva v1 para
+  el flujo y v2 como referencia autoritativa con before/after.
+
+### FF15 — AUDITORIA FANTASY HELPER / YAHOO
+  Busqueda: 0 funciones yahoo/fantasy_import, 0 tablas yahoo/helper/import, 0 secretos yahoo.
+  => YAHOO_API = MISSING. FANTASY_HELPER_CONNECTION = PARTIAL (asistente por screenshot, tarea #41: puede capturar
+     lo que el usuario suba —su roster y, si aporta capturas, FA/waivers— pero NO lee toda la liga por API).
+  Provenance por dato hoy: todo lo de liga = ausente salvo lo que el usuario capture manualmente por screenshot.
+
+### FF15.1 — SNAPSHOT DE LIGA (lab_ff_ownership + league_snapshot_id)
+  Reusa lab_ff_ownership (append-only) + nueva col league_snapshot_id (uuid por captura). Cubre league_id, team,
+  owner, provider/canonical id, identity_status, ownership_status, roster_slot, waiver_release_time, faab, priority,
+  temporada/semana, source, captured_at. La UI usa el snapshot mas reciente.
+
+### FF15.2 — IDENTIDAD PROVIDER -> CANONICA
+  lab_ff_import_ownership usa lab_ff_resolver_identidad: PRIORIDAD provider_player_id -> canonical; nombre solo
+  fallback. Estados RESOLVED/AMBIGUOUS/UNRESOLVED; AMBIGUOUS/UNRESOLVED nunca se recomiendan (el motor filtra
+  identity_status='RESOLVED'). El import reporta coverage (resolved/ambiguous/unresolved).
+
+### FF15.3 — RECONCILIACION (lab_ff_ownership_reconciliar)
+  En el snapshot real mas reciente, un jugador con >1 ownership_status => CONFLICT_FAIL_CLOSED_UNKNOWN (fail-closed;
+  no se trata como disponible). Sin info suficiente => UNKNOWN.
+
+### FF15.4 — YAHOO NO CONECTADO -> import controlado (no fabrica free agents)
+  lab_ff_import_ownership(league, source, season, week, rows jsonb): SOLO acepta source FANTASY_HELPER/YAHOO_SYNC;
+  RECHAZA SYNTHETIC_CONTROLLED como real (probado: raise). Guarda source/captured_at/league_id/provider ids +
+  identidad. El dataset sintetico 'E2E_LEAGUE' (source=SYNTHETIC_CONTROLLED) NO se convierte en real; queda aislado.
+  SMOKE: rechazo de sintetico OK; import FANTASY_HELPER de 2 filas -> 2 RESOLVED, snapshot_id asignado; smoke limpiado.
+
+### FF15.5 — WAIVERS REAL E2E = BLOCKED (no hay snapshot real)
+  El motor ya es READ-ONLY (no ejecuta transacciones). Cuando exista snapshot real: ownership real -> roster real
+  -> pool real -> official/latest projections -> add/drop exhaustivo -> recomendaciones. Las 10 verificaciones
+  (rival nunca recomendado, UNKNOWN nunca disponible, add/drop valido, lineup after optimo, snapshot identificado,
+  reproducible, cero dato sintetico) ya estan cubiertas por diseno/regresion sobre el pool controlado; faltan
+  correrlas sobre datos reales cuando lleguen.
+
+### FF15.6 — UI (lab_ff_waivers_ui sobre v2)
+  Por recomendacion: ADD, DROP, Movimiento (FREE AGENT / WAIVER CLAIM), lineup antes, lineup despues, impacto,
+  availability, snapshot_time. Fallback: "Mantendria tu roster esta semana" si nada mejora. Ejemplo (E2E):
+   1 ADD Puka Nacua / DROP Tyler Warren: 113.26 -> 122.16 (+8.90) WAIVER CLAIM
+   2 ADD C.McCaffrey / DROP Tyler Warren: 113.26 -> 121.26 (+8.00) FREE AGENT
+   3 ADD Josh Allen / DROP Tyler Warren: 113.26 -> 116.37 (+3.11) FREE AGENT
+
+### NO TRADES AUN (candado metodologico)
+  Trades exige valor MULTI-SEMANA/rest-of-season, no projected_points_week1. Waivers V1 es one-week a proposito;
+  usar week1 como "trade value" seria incorrecto. Trades espera: ownership real de todos los rivales + valor
+  rest-of-season (weekly proj + roster impact + positional replacement + schedule + bye + uncertainty), sin pesos magicos.
+
+### OBJETOS (este bloque)
+  lab_ff_waivers_v2 (exhaustivo, before/after) ; lab_ff_ownership (+league_snapshot_id) ; lab_ff_import_ownership
+  (controlado) ; lab_ff_ownership_reconciliar ; lab_ff_waivers_ui (v2, before/after + snapshot_time). Datos:
+  E2E_LEAGUE sintetico (flagged, aislado). Sin datos reales de liga.
+
+### CHECKPOINT / BLOCKERS ANTES DE TRADES
+  1 add/drop exacto revalidado (exhaustivo==peor-banca, probado). 2 capacidades Fantasy Helper/Yahoo: PARTIAL/MISSING.
+  3 league snapshot real = BLOCKED_EXTERNAL_INTEGRATION (import controlado listo, vacio de datos reales).
+  4 identity coverage: resolver provider->nombre con estados; import lo reporta. 5 todos los rosters: NO disponibles
+  (sin sync). 6 free agents/waivers reales: NO disponibles (sin sync). 7 Waivers real E2E: BLOCKED (read-only listo).
+  8 blockers antes de Trades: (a) conectar liga real (Yahoo o screenshots del usuario) -> poblar lab_ff_ownership;
+     (b) definir rest-of-season value sin pesos magicos; (c) K/DST predictive PENDING; (d) FORWARD_PREDICTIVE_VALIDATION
+     PENDING (0 semanas 2026). NO Trades/Draft. Sin transacciones.
