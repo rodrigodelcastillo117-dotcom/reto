@@ -427,3 +427,38 @@ PREDEPLOY_ISS003_009_GATE   = PASS_WITH_ENVIRONMENTAL_WAIVER (BACKEND)  ·  bloq
 CURRENT_AUTHORIZED_MODELS = NONE · MLB economic_authorized = FALSE · MLB stake = $0
 ```
 Los 3 checks de backend (parse/plan, resolución, hash) están **verdes**. El único item que impide el `PASS_WITH_ENVIRONMENTAL_WAIVER` global es `FRONTEND_FAIL_CLOSED`, que no vive en este repo y debe confirmarse en Lovable `reto13` contra el contrato especificado. **NO DEPLOY.**
+
+---
+
+## REV 2 — RUNBOOK EXECUTABLE + ROLLBACK REAL + BYPASS SWEEP (NO DEPLOY)
+
+Correcciones del auditor aplicadas (todas read-only contra prod `wpiztubmmmzclhlprgpd`):
+
+1. **Rollback ejecutable, orden correcto (código):** `shadow-patches/rollback/iss003_009_rollback.sql`
+   (69 940 bytes, SHA `32656fb3560261c6f2eae1bf5a25e5bd2eb4b34e93844d82531f978ff0aa3530`).
+   Orden analisis_completo → v_mejores_picks_mlb → v_pick_canonico(+CASCADE). Descubierto:
+   `CREATE OR REPLACE VIEW` NO puede quitar columnas ⇒ rollback usa `DROP … CASCADE` + recrear
+   subárbol (lab_dq_medicion_v1, v_lab_dq_capturas_faltantes, v_oraculo_canonico) + reponer
+   owner/reloptions/146 GRANTs (el DROP los borra).
+2. **Asserts de dinero reales (no "por construcción"):** superficies automáticas EN ALCANCE
+   (dependen de los objetos que cambian) = `mejor_oportunidad_hoy(500).kelly_pct` y
+   `reto_picks_hoy(apodo).monto_autorizado`/`puede_apostar`. Verificadas HOY bajo NONE: **todas 0**.
+   `v_super_pick.kelly_pct_sugerido` y `favoritos_bien_pagados.fraccion` = FUERA DE ALCANCE
+   (no dependen de v_pick_canonico/v_mejores_picks_mlb).
+3. **Paridad P/EV:** `REPEATABLE READ` + baseline `_pev_before` + `EXCEPT ALL` bidireccional
+   ⇒ `P_VALUE_DIFF=0`, `EV_VALUE_DIFF=0`. Athletics: 12 filas, ev_pct máx **+28.79** (ML ~+25.07),
+   debe quedar idéntico.
+4. **analisis_completo endurecido:** `overload_count=1` o ABORT (precondición + POST-VERIFY);
+   firma exacta `analisis_completo(text)::regprocedure`; eliminado `LIMIT 1`.
+5. **ROLLBACK_ARTIFACT_SHA** calculado y verificado (no vacío/truncado).
+6. **SAFE_SQL_TRANSPORT = BLOCKED** (probado inocuo): psql v16.13 instalado, pero sin credenciales
+   de DB ni red a Postgres (TCP a 3 hosts falla). El deploy lo ejecuta el usuario por psql/SQL-editor.
+
+**Auditoría estática de bypass = PASS (MLB):** 0 `BYPASS_OPEN`. Superficies de recomendación legacy
+(`picks_recomendados_hoy`/`_raw`, `picks_premium`, `futbol_que_falta_por_caer`) son de **fútbol**
+(joins ligamx/fixture_id), 0 MLB — brecha de gobernanza de fútbol ya rastreada (#201/#202/#204),
+NO bypass MLB, fuera de ISS-003/009.
+
+Freeze intacto: `REVIEWED_SHA=57b7a4077247e5e814aa9e4ce7e0ad369dc11975a8bff7ea28083c3ffedd4cad`.
+Runbook rev2 SHA `b0c9cc3ea827d9bbac406838267e7a13627db14db8f549c2e16f8538a07d90ad`.
+Estado: `DEPLOY_RUNBOOK_EXECUTABLE=READY`, `DEPLOY_AUTHORIZATION=PENDING_USER`, `READY_FOR_FINAL_GO=YES` (solo falta VISUAL_FRONTEND_SMOKE + ejecución del usuario). **NO DEPLOY.**
