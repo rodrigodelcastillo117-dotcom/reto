@@ -111,17 +111,23 @@ Dos entradas, **un solo núcleo**:
 
 ---
 
-## 7) FRONTEND_KELLY_JS_STATUS = **HAS_BYPASS**
+## 7) FRONTEND_KELLY_JS_STATUS = **HAS_BYPASS** (barrido global: **3** caminos vivos)
 
-Auditoría estática completa del proyecto Lovable `reto13` (`00f8f06b-…`), sólo lectura.
+Auditoría estática global del proyecto Lovable `reto13` (`00f8f06b-…`), sólo lectura. El barrido completo (fórmulas Kelly/EV + caps `0.08/0.05/0.03/0.02`) encontró **TRES** bypasses `MODEL_DERIVED_AUTOMATIC`, no dos.
 
-- **`src/lib/kelly-calculator.ts` — MODEL_DERIVED_AUTOMATIC.** Motor Kelly puro en JS: `edge=(p·momio)−1`, `kellyClasico=edge/b`, `kellyFraccion=kellyClasico*0.25`, `apuestaPct=min(kellyFraccion,maxCap)`, `monto=bankroll*apuestaPct`. Topes propios: `MAX_APUESTA_ELITE=0.08`, `SOLIDO=0.05`, `MARGINAL=0.03`, `MAX_PARLAY_PCT=0.05`, y `if momio<1.30 → cap 0.05`. Distintos del servidor (5%).
-- **`src/components/reto/KellyCriterion.tsx` — MODEL_DERIVED_AUTOMATIC.** Renderizado en `AddPickForm.tsx:973`. Alimenta `calculateKelly` con **una probabilidad del modelo** (`aiCalificacion.prob_estimada`, del grader `invoke-llm`) y muestra un **monto en pesos** + `% bankroll`. Se auto-rotula "Estimación visual… el monto autorizado lo da el motor al guardar", pero calcula y muestra dinero derivado de modelo en JS: patrón ISS-004/005.
-- **`src/components/reto/KellyReferenceTable.tsx`** — tabla `caps × bankroll` en cliente; sin probabilidad (informativa). Posiblemente **no importada** (dead); confirmar.
+**Bypass 1 — `src/lib/kelly-calculator.ts` + `src/components/reto/KellyCriterion.tsx`.** Motor Kelly puro en JS (`edge=(p·momio)−1`, `kellyFraccion=kellyClasico*0.25`, `monto=bankroll*apuestaPct`), topes propios `0.08/0.05/0.03`, `MAX_PARLAY_PCT=0.05`, `META_SEMANAL=0.15`. `KellyCriterion.tsx` (en `AddPickForm.tsx:972`) lo alimenta con la prob de modelo `aiCalificacion.prob_estimada` (grader `calificar-pick-previo`) y pinta un **monto en pesos** + `% bankroll`. Redundante: el mismo formulario ya tiene `CalculadoraMonto` (RPC `tamano_apuesta`) justo debajo.
 
-**Camino sancionado (contraste):** `CalculadoraMonto.tsx` → RPC `tamano_apuesta` (SERVER_CONSUMER; "Nunca se inventa un monto en frontend"). Es el patrón que `KellyCriterion` debe seguir.
+**Bypass 2 — `src/components/fut/AiCopilotBar.tsx` (NUEVO, vivo en `Fut.tsx`).** Helper propio `kellyFraction(prob,decOdds,0.25)` → `stakePct` desde `m.safe.confidence` (modelo **cliente**), pinta "Estimación de stake (¼ Kelly) — X% banca".
 
-**El resto de superficies de dinero/EV del frontend son SERVER_CONSUMER** (leen `v_pick_canonico`, RPC `mejor_oportunidad_hoy`, `parlay_ev_real`, etc.) — heredan automáticamente el arreglo SQL.
+**Bypass 3 — `src/components/fut/PortfolioOptimizerModal.tsx` (NUEVO, vivo — botón "⚖️ BANCA" en `Fut.tsx`).** Kelly por pick desde `safe.confidence/100` × bankroll (`semana_bankroll`), caps propios 5% pick / 40% liga / 25% portafolio, EV=`(p·odd−1)·100`, y muestra "Monto total sugerido a arriesgar hoy: X% ≈ $Y MXN" y monto por pick.
+
+**Agravante:** los bypasses 2 y 3 se alimentan del **modelo cliente** `safetyEngine.ts` (`calculateUltraSafePick().confidence`, un Poisson/Dixon-Coles en JS) — no del servidor. Son una autoridad de probabilidad Y de sizing completamente fuera de la cadena económica; ni siquiera pasan por `decision_economica_v1` ni por la elegibilidad.
+
+**Camino sancionado (contraste):** `CalculadoraMonto.tsx` → RPC `tamano_apuesta`; `StakeGateModal` ← `revisar_apuesta.r.kelly`; `DevilsAdvocateModal` ← RPC `devils_advocate`; `RiskSimulator` ← RPC `simular_bankroll`. Todos SERVER_CONSUMER.
+
+**DEAD_LEGACY:** `KellyReferenceTable.tsx` (caps×bankroll, sin prob de modelo; sin importador localizado → borrar con `kelly-calculator.ts`). `value.ts` `kelly()/ev()` quedan como helpers sin consumidor modelo→dinero (vigilar que no se recableen).
+
+**El resto de superficies de dinero/EV son SERVER_CONSUMER** (leen `v_pick_canonico`, RPC `mejor_oportunidad_hoy`, `parlay_ev_real`, etc.) — heredan el arreglo SQL.
 
 ---
 
@@ -160,16 +166,21 @@ Archivo: `shadow-patches/iss004_005_cadena_economica_unica.sql` (SHADOW, no apli
 
 ---
 
-## 10) FRONTEND_DIFF
+## 10) FRONTEND_DIFF (propuesta, no aplicada — requiere GO; edita Lovable = créditos)
 
-Cambios en Lovable `reto13` (propuesta, no aplicada):
+**A. `KellyCriterion.tsx` — BORRAR componente y uso.** Es importado sólo en `AddPickForm.tsx`; eliminar el import y el bloque `<KellyCriterion …/>` (~líneas 972–976). El `<CalculadoraMonto probCalibrada={aiCalificacion?.prob_estimada}/>` justo debajo ya da el monto autorizado por RPC `tamano_apuesta`. Conservar `checkOverbet` (guardia sobre monto tecleado).
 
-1. **`src/components/reto/KellyCriterion.tsx`** — dejar de llamar `calculateKelly` sobre una prob de modelo. Reemplazar por el patrón de `CalculadoraMonto.tsx`: RPC server (`tamano_apuesta`/`revisar_apuesta`) o consumir `decision_pick_v1`/`reto_picks_hoy`. Es el **único bypass renderizado**.
-2. **`src/lib/kelly-calculator.ts`** — retirar/neutralizar `calculateKelly` y `getKellyReferenceTable` (matemática modelo→stake en JS con topes 8/5/3%). Conservar sólo `checkOverbet` como guardia sobre el **monto tecleado por el usuario** (>10%).
-3. **`src/components/reto/KellyReferenceTable.tsx`** — sólo si se mantiene: la tabla `caps×bankroll` debe venir del servidor; si está muerta (no importada), borrarla.
-4. **`v_super_pick` en frontend** — dejar de rotular `ev_real_pct` (ROI de segmento) como "EV", o mostrar además `ev_decision`.
+**B. `AiCopilotBar.tsx` — quitar Kelly JS.** Borrar el helper `kellyFraction()` y el cálculo `suggestedStakePct`. O quitar la fila "Estimación de stake (¼ Kelly)", o rerutear a `supabase.rpc("tamano_apuesta",{p_apodo,p_prob_calibrada:conf,p_cuota:modelOdds})` y pintar `data.sugerido`. Mantener las mejores cuotas Pinnacle y el chat LLM.
 
-**Verificación de navegador (prueba de humo final):** pendiente — 403 desde este entorno. Debe hacerse tras el deploy: que la tarjeta muestre `EV_UI == EV_DECISION`, `P_RAW` etiquetada como info del modelo, y `stake=$0 + razón` cuando `eligible=false`.
+**C. `PortfolioOptimizerModal.tsx` — quitar Kelly/portafolio JS.** Borrar el `useMemo` de `allocations` (kelly, scaledKelly, stakePct, caps liga/portafolio) y la lectura `semana_bankroll`. Rerutear a un RPC server que dimensione por pick + total del día (p. ej. **nuevo** `optimizar_portafolio_diario(p_apodo, p_picks jsonb)` → `{total_pct,total_monto,allocations[]}`, cada uno sobre `decision_pick_v1` + bankroll server). **Si ese RPC no existe, el modal debe ocultarse/deshabilitarse** (o borrar el modal + botón "⚖️ BANCA" en `Fut.tsx`) — no puede dimensionar en cliente. **Este es el único camino por el que el bypass sobrevive si no se cierra.**
+
+**D. `kelly-calculator.ts` — reducir a la guardia o borrar.** Tras (A) `calculateKelly`/`getKellyReferenceTable` quedan sin consumidor: mover `checkOverbet` a un util y borrar el archivo. Borrar también `KellyReferenceTable.tsx` (confirmar no-importado).
+
+**E. `v_super_pick` en frontend** — dejar de rotular `ev_real_pct` (ROI de segmento) como "EV", o mostrar además `ev_decision`.
+
+**Veredicto residual:** tras A–D, **no queda matemática cliente modelo→dinero**. El único riesgo de que sobreviva es dejar `PortfolioOptimizerModal` con su Kelly JS en lugar de rerutearlo (C).
+
+**Verificación de navegador (humo final):** 403 desde este entorno. Tras aplicar: `EV_UI == EV_DECISION`, `P_RAW` etiquetada como info del modelo, `stake=$0 + razón` cuando `eligible=false`, y ningún "% banca"/monto pintado desde el modelo cliente.
 
 ---
 
@@ -220,10 +231,11 @@ Simulación inline (116 filas): `n_not_elig=116`, `n_kelly_zero=116`, `n_elig_tr
 - [x] Autoridad de sizing única: `kelly_stake__base` ($) + `decision_pick_v1` (fracción), misma fórmula sobre `prob_decide`.
 - [x] `EV_UI == EV_DECISION` garantizado por construcción; ranking y gate pasan a EV_DECISION.
 - [x] `eligible=false → stake=$0 + razón` en todas las superficies (I6: 116/116).
-- [x] Sin Kelly en frontend tras FRONTEND_DIFF; sin cap 2% vs 5% divergente; sin `kelly_fraccion_pct` como autoridad paralela; sin recomputar desde P_RAW; sin monto desde prob LLM.
+- [x] SQL: sin cap 2% vs 5% divergente; sin `kelly_fraccion_pct` como autoridad paralela; sin recomputar desde P_RAW; sin monto desde prob LLM.
+- [ ] **FRONTEND: ABIERTO.** El barrido global halló **3** bypasses vivos (KellyCriterion/kelly-calculator, AiCopilotBar, PortfolioOptimizerModal). FRONTEND_DIFF listo (§10) pero **no aplicado**. `SINGLE_AUTOMATIC_SIZING_AUTHORITY` NO puede ser PASS global hasta cerrarlos — y (C) exige un RPC server nuevo o deshabilitar el modal.
 - [x] Manual (`CalculadoraMonto`, `tamano_apuesta`) y RISK_REVIEW (`revisar_apuesta`) preservados.
 - [x] Etapas inexistentes reportadas como MISSING/PARCIAL (P_FAIR aproximada; portfolio RONGOL/CDaR fuera de bloque), no inventadas.
 - [x] `CURRENT_AUTHORIZED_MODELS=NONE` intacto; ISS-006.2 intacto.
 - [ ] **Pendiente (no bloquea el shadow):** prueba de humo en navegador (403) y re-derivación de fingerprints inmediatamente antes de un eventual deploy.
 
-**Veredicto:** el diseño está listo y verificado por simulación. **NO DEPLOY** — a la espera de GO explícito. Después de ISS-004/005: ISS-003 + ISS-009 (MLB).
+**Veredicto:** el diseño SQL está listo y verificado (dry-run compila + paridad positiva/negativa PASS). **`PREDEPLOY_ISS004_005_GATE` sigue REOPENED** hasta cerrar el bypass frontend (3 caminos vivos). **NO DEPLOY.** Después de cerrar frontend + GO: ISS-003 + ISS-009 (MLB).
