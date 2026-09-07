@@ -630,6 +630,13 @@ BEGIN
     'bankroll', COALESCE(p_bankroll,1500), 'mensaje', 'Perfil creado');
 END $function$;
 
+-- NOTA (fuera de Bloque 0, NO incluido aquí para no expandir scope): los lectores
+-- anón no-financieros (mis_favoritos, mis_batallas, calificaciones_mis_equipos,
+-- calificaciones_mis_grupos, dano_mis_equipos, paises_para_favoritos,
+-- partidos_de_mis_favoritos, equipos_de_pais, fantasy_start_sit) tienen grant anon
+-- sin consumidor pre-login (verificado). Revocarles anon es grant-only y seguro,
+-- pero se propone como Bloque 0.1 aparte. apodo_disponible SÍ es pre-login: no tocar.
+
 COMMIT;
 
 -- =====================================================================

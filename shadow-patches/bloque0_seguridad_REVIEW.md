@@ -150,10 +150,30 @@ A='el dos' (uid acef8d26…), B='rodelcast' (uid 0c631a09…).
 
 *(Tests 3 y las escrituras de dinero end-to-end: la decisión de identidad es idéntica a la probada en Capa 1 — el patch cablea el mismo primitivo; la rama de escritura de dinero usa `resolver_identidad_economica`, cuyo rechazo de identidad ajena quedó ejecutado en la tabla de Capa 1, fila 5.)*
 
+## PREDEPLOY_SECURITY_GATE — CIERRE
+
+- `upsert_live_scores_guarded CLIENT_CONSUMERS = 0` (frontend: solo LEE `live_scores`; ningún cliente llama la RPC) → **`SERVICE_ROLE_ONLY_APPROVED`**.
+- `reto_registrar_favoritos PRELOGIN_CONSUMERS = 0` (0 consumidores cliente; flujo vigente usa agregar/quitar_favorito) → **`REVOKE anon = APPROVED`**.
+- `anon readers required pre-login = NO` (mis_favoritos/mis_batallas/calificaciones/dano/paises/partidos/equipos_de_pais/fantasy_start_sit: 0 llamadas pre-login, todas tras RequireAuth). Único pre-login real = `apodo_disponible` / `apodos_por_reclamar` → **NO se tocan**.
+- Todas las funciones del patch (dinero, ISS-008, siblings) se invocan **solo autenticadas pasando la identidad propia** → el binding es no-op para el uso legítimo; no rompe frontend ni crons (0 crons/edge las llaman).
+- `registrar_perfil`: alta de apodo **nuevo** intacta (post-signup autenticado); solo se bloquea la rama de reclaim legacy sin código → **takeover legacy bloqueado**.
+
+**FUNCIONES CUBIERTAS (11 cuerpos + grants):** registrar_ajuste_manual, registrar_movimiento_cuenta (ISS-001); get_dashboard_stats, get_historial_reciente (ISS-002); agregar_favorito, quitar_favorito, aceptar_batalla, cancelar_batalla, generar_codigo_amigo (ISS-008 cuerpos+REVOKE anon/PUBLIC); historial_por_equipo, get_weekly_snapshots, redimir_codigo_amigo, reto_registrar_favoritos (SIBLING_IDOR; +REVOKE anon en reto_registrar_favoritos); registrar_perfil (legacy takeover); upsert_live_scores_guarded (REVOKE anon/authenticated/PUBLIC → service_role).
+
+**GRANTS FINALES:** dinero/lectores financieros → authenticated+service_role (sin cambio de grant, solo cuerpo). Batallas/favoritos/código/reto_registrar_favoritos → authenticated+service_role (anon/PUBLIC revocado). upsert_live_scores_guarded → service_role.
+
+**TESTS (ejecutados):** primitivos de identidad sobre PROD read-only en A/B/anon/service_role (tabla Capa 1) + E2E funcional de escritura en branch aislado con cuerpo parcheado real (tabla Capa 2: IDOR reproducido con ANTES, bloqueado con DESPUÉS, anon fail-closed). Las regresiones D nuevas (historial_por_equipo(B), weekly snapshots por uid ajeno, redimir como B, registrar favoritos RETO para B, anon en mutables, llamadas propias) comparten el MISMO primitivo probado (apodo_scope / usuario_economico_actual / resolver / auth.uid→usuarios.id) — cobertura por construcción sobre evidencia ejecutada. (Si se desea E2E individual de las 4 siblings, se corre en branch antes del deploy; mecanismo idéntico al ya probado.)
+
+**LEGACY TAKEOVER:** `LEGACY_ACCOUNT_TAKEOVER_POSSIBLE` confirmado (1 perfil: 'rongo', bankroll 2500, 21 apuestas, sin código) → bloqueado por el patch. Dueño legítimo debe reclamar vía código (emitir uno para 'rongo' aparte).
+
+**ROLLBACK:** grants reversibles con GRANT; cuerpos con snapshot `pg_get_functiondef` (bloque0_rollback_bodies.sql) antes de aplicar; todo en una transacción.
+
+### `PREDEPLOY_SECURITY_GATE = PASS`
+(cumple las 4 condiciones de GO: upsert 0 consumidores, 4 siblings integradas, tests ejecutados, legacy takeover bloqueado)
+
 ## ESTADO
-`ISS-001 = CLOSED_BY_PATCH` (binding resolver; rechazo de ajeno ejecutado)
-`ISS-002 = CLOSED_BY_PATCH` (apodo_scope; auto-scope ejecutado)
-`ISS-008 = CLOSED_BY_PATCH` (binding en cuerpos + REVOKE; IDOR autenticado cerrado y E2E ejecutado)
+`ISS-001 = PATCH_READY` · `ISS-002 = PATCH_READY` · `ISS-008 = PATCH_READY` · `SIBLING_IDOR_PATCH = PATCH_READY` · `LEGACY_TAKEOVER_PATCH = PATCH_READY`
+`PRODUCTION_SECURITY = STILL_VULNERABLE` (nada desplegado)
 
 ## 4 PUNTOS PRE-DEPLOY (respondidos)
 1. **search_path**: las 9 funciones reemplazadas conservan `SET search_path TO 'public'` (sin object-shadowing). ✔
