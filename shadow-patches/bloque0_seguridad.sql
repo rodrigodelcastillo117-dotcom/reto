@@ -324,31 +324,146 @@ END;
 $function$;
 
 -- ---------------------------------------------------------------------
--- ISS-008 — REVOCAR anon/PUBLIC de wrappers DEFINER mutables.
--- Solo cambio de GRANTS (reversible). NO se tocan los cuerpos en este bloque.
--- Batallas/favoritos/código: features de usuario -> quedan en authenticated.
--- upsert_live_scores_guarded: escritura de pipeline -> SOLO service_role.
--- (La RLS de las tablas ya es service_role/auth.uid(); esto la deja de honrar el bypass.)
+-- ISS-008 — DOS capas: (a) binding de identidad en los cuerpos (cierra el IDOR
+-- entre usuarios AUTENTICADOS), (b) REVOKE anon/PUBLIC (cierra el ataque anónimo).
+-- Identidad autoritativa = usuario_economico_actual() (deriva de auth.uid()); se
+-- IGNORA el apodo/uid enviado por cliente; fail-closed si no hay identidad.
+-- Sin ruta service_role para estas features de usuario (0 crons/edge las llaman).
 -- ---------------------------------------------------------------------
 
+CREATE OR REPLACE FUNCTION public.agregar_favorito(p_apodo text, p_deporte text, p_espn_team_id text)
+ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+declare v_yo text; v_uid uuid; v_c record;
+begin
+  v_yo := public.usuario_economico_actual();                                   -- [ISS-008]
+  if v_yo is null then return jsonb_build_object('ok',false,'error','IDENTIDAD_REQUERIDA'); end if;
+  p_apodo := v_yo;                                                             -- ignora apodo del cliente
+  v_uid := uid_de_apodo(p_apodo);
+  if v_uid is null then return jsonb_build_object('ok',false,'error','usuario no encontrado'); end if;
+  select * into v_c from mv_catalogo_equipos where deporte=p_deporte and espn_team_id=p_espn_team_id;
+  if not found then
+    return jsonb_build_object('ok',false,'error','ese equipo no esta en las ligas principales que seguimos');
+  end if;
+  insert into equipos_favoritos(user_id, deporte, espn_team_id, nombre, pais, liga_casa)
+  values (v_uid, p_deporte, p_espn_team_id, v_c.nombre, v_c.pais, v_c.liga_casa)
+  on conflict (user_id, deporte, espn_team_id) do nothing;
+  return jsonb_build_object('ok',true,'equipo',v_c.nombre,'pais',v_c.pais,'liga',v_c.liga_nombre);
+end $function$;
+
+CREATE OR REPLACE FUNCTION public.quitar_favorito(p_apodo text, p_deporte text, p_espn_team_id text)
+ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+declare v_yo text; v_uid uuid; v_n int;
+begin
+  v_yo := public.usuario_economico_actual();                                   -- [ISS-008]
+  if v_yo is null then return jsonb_build_object('ok',false,'error','IDENTIDAD_REQUERIDA'); end if;
+  p_apodo := v_yo;
+  v_uid := uid_de_apodo(p_apodo);
+  delete from equipos_favoritos
+   where user_id = v_uid and deporte = p_deporte and espn_team_id = p_espn_team_id;
+  get diagnostics v_n = row_count;
+  return jsonb_build_object('ok', v_n > 0);
+end $function$;
+
+CREATE OR REPLACE FUNCTION public.aceptar_batalla(p_batalla_id uuid, p_apodo text, p_pick_b_id uuid)
+ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+DECLARE v_yo text; v_bat record; v_pick_apodo text; v_pick_resultado text; v_ev_a record; v_ev_b record;
+BEGIN
+  v_yo := public.usuario_economico_actual();                                   -- [ISS-008]
+  IF v_yo IS NULL THEN RETURN jsonb_build_object('ok', false, 'error', 'IDENTIDAD_REQUERIDA'); END IF;
+  p_apodo := v_yo;                                                             -- identidad autoritativa
+  SELECT * INTO v_bat FROM batallas WHERE id = p_batalla_id;
+  IF v_bat.id IS NULL THEN RETURN jsonb_build_object('ok', false, 'error', 'Batalla no encontrada'); END IF;
+  IF v_bat.reto_contra <> p_apodo THEN RETURN jsonb_build_object('ok', false, 'error', 'Esta batalla no es para ti'); END IF;
+  IF v_bat.estado <> 'esperando' THEN RETURN jsonb_build_object('ok', false, 'error', 'Esta batalla ya no acepta picks'); END IF;
+  SELECT apodo, resultado INTO v_pick_apodo, v_pick_resultado FROM picks WHERE id = p_pick_b_id;
+  IF v_pick_apodo IS NULL OR v_pick_apodo <> p_apodo THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Ese pick no es tuyo');
+  END IF;
+  IF v_pick_resultado <> 'pendiente' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Ese pick ya se calificó, elige uno pendiente');
+  END IF;
+  IF p_pick_b_id = v_bat.pick_a_id THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'No puedes aceptar con el mismo pick del retador');
+  END IF;
+  SELECT * INTO v_ev_a FROM public.batalla_evento_de_pick(v_bat.pick_a_id);
+  SELECT * INTO v_ev_b FROM public.batalla_evento_de_pick(p_pick_b_id);
+  IF v_ev_b.evento_id IS NULL THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Ese pick no tiene partido identificado');
+  END IF;
+  IF v_ev_a.evento_id IS DISTINCT FROM v_ev_b.evento_id THEN
+    RETURN jsonb_build_object('ok', false,
+      'error', 'La batalla es del MISMO PARTIDO: necesitas un pick de ' || coalesce(v_ev_a.partido, 'ese partido'),
+      'partido_requerido', v_ev_a.partido, 'partido_de_tu_pick', v_ev_b.partido);
+  END IF;
+  UPDATE batallas SET pick_b_id = p_pick_b_id, estado = 'activa' WHERE id = p_batalla_id;
+  BEGIN
+    PERFORM public.enviar_alerta(
+      v_bat.reto_por, 'batalla_aceptada', p_batalla_id::text,
+      '⚔️ ' || p_apodo || ' aceptó tu batalla',
+      coalesce(v_ev_a.partido, 'El partido') || ' — se resuelve solo al calificar ambos picks.', '/batallas');
+  EXCEPTION WHEN OTHERS THEN
+    RAISE WARNING 'aceptar_batalla: push falló para % : %', v_bat.reto_por, SQLERRM;
+  END;
+  RETURN jsonb_build_object('ok', true, 'partido', v_ev_a.partido, 'evento_id', v_ev_a.evento_id);
+END; $function$;
+
+CREATE OR REPLACE FUNCTION public.cancelar_batalla(p_batalla_id uuid, p_apodo text)
+ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+DECLARE v_yo text; v_bat record;
+BEGIN
+  v_yo := public.usuario_economico_actual();                                   -- [ISS-008]
+  IF v_yo IS NULL THEN RETURN jsonb_build_object('ok', false, 'error', 'IDENTIDAD_REQUERIDA'); END IF;
+  p_apodo := v_yo;
+  SELECT * INTO v_bat FROM batallas WHERE id = p_batalla_id;
+  IF v_bat.id IS NULL THEN RETURN jsonb_build_object('ok', false, 'error', 'Batalla no encontrada'); END IF;
+  IF v_bat.reto_por <> p_apodo AND v_bat.reto_contra <> p_apodo THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'No puedes cancelar una batalla que no es tuya');
+  END IF;
+  IF v_bat.estado <> 'esperando' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Ya no se puede cancelar');
+  END IF;
+  UPDATE batallas SET estado = 'cancelada' WHERE id = p_batalla_id;
+  RETURN jsonb_build_object('ok', true);
+END; $function$;
+
+CREATE OR REPLACE FUNCTION public.generar_codigo_amigo(p_apodo text)
+ RETURNS text LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+DECLARE v_yo text; v_codigo text;
+BEGIN
+  v_yo := public.usuario_economico_actual();                                   -- [ISS-008]
+  IF v_yo IS NULL THEN RAISE EXCEPTION 'IDENTIDAD_REQUERIDA'; END IF;
+  p_apodo := v_yo;
+  SELECT codigo_amigo INTO v_codigo FROM usuarios WHERE apodo = p_apodo;
+  IF v_codigo IS NOT NULL THEN RETURN v_codigo; END IF;
+  LOOP
+    v_codigo := upper(regexp_replace(substr(p_apodo,1,5), '[^a-zA-Z0-9]', '', 'g')) || '-' || upper(substr(md5(random()::text || clock_timestamp()::text), 1, 4));
+    EXIT WHEN NOT EXISTS (SELECT 1 FROM usuarios WHERE codigo_amigo = v_codigo);
+  END LOOP;
+  UPDATE usuarios SET codigo_amigo = v_codigo WHERE apodo = p_apodo;
+  RETURN v_codigo;
+END; $function$;
+
+-- (b) REVOKE anon/PUBLIC (defensa en profundidad; el binding ya protege authenticated).
 REVOKE EXECUTE ON FUNCTION public.aceptar_batalla(uuid,text,uuid)   FROM anon, PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.cancelar_batalla(uuid,text)       FROM anon, PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.agregar_favorito(text,text,text)  FROM anon, PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.quitar_favorito(text,text,text)   FROM anon, PUBLIC;
 REVOKE EXECUTE ON FUNCTION public.generar_codigo_amigo(text)        FROM anon, PUBLIC;
 
--- Pipeline de marcadores: fuera del cliente por completo.
+-- Pipeline de marcadores: no tiene identidad de usuario -> fuera del cliente por completo.
 REVOKE EXECUTE ON FUNCTION public.upsert_live_scores_guarded(jsonb) FROM anon, authenticated, PUBLIC;
 
 COMMIT;
 
 -- =====================================================================
--- FASE 2 (NO en este bloque; requiere edición de cuerpos + su propio GO):
---   * Binding de identidad dentro de agregar_favorito/quitar_favorito/batallas
---     (es_accion_de_persona()/auth.uid) para cerrar el IDOR cross-user AUTENTICADO
---     residual (no-dinero) que el REVOKE de anon no cubre.
---   * IDOR de LECTURA anon no-financiero (mis_favoritos, calificaciones_mis_equipos,
---     mis_batallas, ...) — ISS separado P2, revisar caso por caso.
+-- FUERA DE BLOQUE 0 (ISS separados, su propio GO):
+--   * IDOR de LECTURA anon NO-financiero (mis_favoritos, calificaciones_mis_equipos,
+--     mis_batallas, ...) — P2, revisar caso por caso (dato no sensible vs cerrar).
 --   * Resto de familia p_apodo de lectura: get_top_nichos_usuario, historial_por_equipo,
---     get_weekly_snapshots -> aplicar apodo_scope igual que arriba (mismo patrón).
+--     get_weekly_snapshots -> aplicar apodo_scope igual que ISS-002 (mismo patrón).
 -- =====================================================================

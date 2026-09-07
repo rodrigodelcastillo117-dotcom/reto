@@ -125,11 +125,45 @@ rollback;
 
 ---
 
-## PENDIENTE ANTES DE DEPLOY (no ejecutar sin esto)
-1. GO explícito.
-2. Correr `bloque0_rollback_bodies.sql` (snapshot de los 4 cuerpos actuales) para el rollback.
-3. Verificar en Lovable que ningún cliente llama `upsert_live_scores_guarded`.
-4. Correr ADVERSARIAL_TESTS en lab/rollback y confirmar PASS.
-5. Aplicar en una sola transacción; re-correr los tests en prod (lecturas + escrituras rolled-back).
+## RESULTADOS EJECUTADOS (reales, 2026-09-07)
 
-**DETENIDO ANTES DE DEPLOY.** Espero tu GO para Bloque 0. Después preparo el GO separado de Bloque 1 (empezando por ISS-006, con la tabla de las 11 soccer ML: P mostrada / P C1 / fuente / EV mostrado / EV económico / eligibility / consumer).
+**Capa 1 — Primitivos de identidad, EJECUTADOS sobre PROD (read-only) en los 4 contextos reales.**
+A='el dos' (uid acef8d26…), B='rodelcast' (uid 0c631a09…).
+
+| # | Test | EXPECTED | ACTUAL | PASS |
+|---|---|---|---|---|
+| 1 | A lee (apodo_scope('rodelcast')) | 'el dos' | 'el dos' | ✅ |
+| 2 | A no lee dashboard/historial de B | scope a 'el dos' | apodo_scope→'el dos' | ✅ |
+| 4 | A registra movimiento propio | ok, 'el dos' | resolver('el dos')→ok,'el dos' | ✅ |
+| 5 | A NO modifica bankroll de B | rechazo | resolver('rodelcast')→ok:false, IDENTIDAD_AJENA_RECHAZADA | ✅ |
+| 9 | anon NO lee finanzas | denegado | usuario_economico_actual() como anon → 42501 permission denied | ✅ |
+| 10 | service_role autorizado sigue | ok con apodo explícito | resolver('rodelcast') service_role → ok:true; resolver(null)→INTERNAL_SIN_APODO | ✅ |
+| 11 | identidad inválida falla cerrado | fail-closed | anon→42501 / INTERNAL_SIN_APODO | ✅ |
+
+**Capa 2 — E2E funcional de escritura, EJECUTADO en branch aislado (throwaway, ya borrado)** con el cuerpo PARCHEADO real de `agregar_favorito`:
+
+| # | Test | EXPECTED | ACTUAL | PASS |
+|---|---|---|---|---|
+| 6/7 | A (cuerpo ANTES) agrega favorito a B | (demostrar vuln) | team 87 quedó bajo **rodelcast** — IDOR reproducido | ⚠️ vuln confirmada |
+| 6/7 | A (cuerpo DESPUÉS) intenta agregar a B | escribe bajo A, no B | resultado `escrito_para:'el dos'`; estado final: 87→'el dos', 86→'rodelcast' (B intacto) | ✅ |
+| 8 | anon (cuerpo DESPUÉS) muta | fail-closed | `{ok:false, IDENTIDAD_REQUERIDA}` | ✅ |
+
+*(Tests 3 y las escrituras de dinero end-to-end: la decisión de identidad es idéntica a la probada en Capa 1 — el patch cablea el mismo primitivo; la rama de escritura de dinero usa `resolver_identidad_economica`, cuyo rechazo de identidad ajena quedó ejecutado en la tabla de Capa 1, fila 5.)*
+
+## ESTADO
+`ISS-001 = CLOSED_BY_PATCH` (binding resolver; rechazo de ajeno ejecutado)
+`ISS-002 = CLOSED_BY_PATCH` (apodo_scope; auto-scope ejecutado)
+`ISS-008 = CLOSED_BY_PATCH` (binding en cuerpos + REVOKE; IDOR autenticado cerrado y E2E ejecutado)
+
+## 4 PUNTOS PRE-DEPLOY (respondidos)
+1. **search_path**: las 9 funciones reemplazadas conservan `SET search_path TO 'public'` (sin object-shadowing). ✔
+2. **NULL/identidad inexistente**: `p_apodo=NULL`→propio (resolver/apodo_scope); JWT sin mapping→fail-closed (usuario_economico_actual NULL→IDENTIDAD_REQUERIDA / resolver ok:false); JWT A + p_apodo=B→rechazado. Ejecutado. ✔
+3. **service_role**: la ruta INTERNAL exige apodo explícito (INTERNAL_SIN_APODO si null) y el contexto se deriva server-side de `clasificar_contexto_economico(jwt, session_user)`, no de un valor de cliente. ✔
+4. **upsert_live_scores_guarded**: 0 crons / 0 edge locales lo llaman; su tabla `live_scores` ya es RLS write=service_role. **Pendiente único antes de aplicar:** confirmar en Lovable que ningún componente cliente lo invoca. Si lo hiciera, migrar ese path a service_role antes de revocar (no romper en silencio).
+
+## CHECKLIST FINAL PRE-DEPLOY (al dar GO)
+1. Snapshot `pg_get_functiondef` de las 9 funciones → `bloque0_rollback_bodies.sql`.
+2. Confirmar consumidor de `upsert_live_scores_guarded` en Lovable.
+3. Aplicar en una sola transacción; re-correr el smoke (lecturas + intento de escritura ajena rechazado) en prod.
+
+**DETENIDO ANTES DE DEPLOY.** Esperando **GO BLOQUE 0 — DEPLOY**. Después, directo a **ISS-006** (bypass del champion C1 por el LLM) con la tabla de las 11 soccer ML: P mostrada / P C1 / fuente / EV mostrado / EV económico / eligibility / consumer.
