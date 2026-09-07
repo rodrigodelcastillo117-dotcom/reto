@@ -6002,3 +6002,96 @@ Todo SHADOW. Produccion intacta. Soccer/MLB congelados. 2025=DEVELOPMENT; result
   c) Decay cross-temporada (heritage 2025->2026) no validable hasta que 2026 avance = PENDING_FORWARD.
   d) DvP walk-forward reconstruido pero sin edge; si se persigue, exige IC block-bootstrap por semana.
   e) K/DST fuera del universo (QB/RB/WR/TE primero).
+
+
+## 7-sep-2026 — NFL Fantasy FF4.8 robustez final + CHAMPION V1 CONGELADO (FF5-FF7). NO ML avanzado.
+Todo SHADOW. Produccion intacta. Soccer/MLB congelados. Resultados 2026 SELLADOS.
+
+### FF4.8 — ROBUSTEZ FINAL DE FEATURES (rolling-origin semanal + IC95 cluster-por-semana)
+  Metodo: expanding-window semanal (beta OLS de (y-B1) sobre feat, ajustado SOLO en semanas < t; predecir semana t).
+  ΔMAE pareado vs B1 por semana; IC95 = media_semanal ± 1.96·SE (bloque temporal por semana).
+  Veredictos (si IC cruza 0 -> INCONCLUSO; nunca DANINA por media puntual):
+    pos  feature     dMAE      IC95               veredicto
+    QB   dvp        +0.0303  [-0.0052,+0.0658]   INCONCLUSO   <- el "susurro" QB muere (cruza 0)
+    QB   usage/snaps  <=0     cruzan 0            INCONCLUSO ; QB home -0.0548 [-0.107,-0.003] DANINA
+    RB   TODAS       ~0       cruzan 0            INCONCLUSO
+    TE   usage_tgt  -0.0111  [-0.018,-0.005]     DANINA ; usage_rec DANINA ; snaps DANINA ; home DANINA ; resto INCONCLUSO
+    WR   snaps      -0.0279  [-0.042,-0.014]     DANINA ; usage_tgt/usage_rec DANINA ; car/home/dvp INCONCLUSO
+  RESULTADO: CERO features son APORTA_OOS en ninguna posicion. Ninguna sobrevive con IC>0. Usage/snaps (recencia)
+    DANINAS en TE/WR; DvP INCONCLUSO en todas; home DANINA/INCONCLUSO. => B1 gana robustamente.
+
+### FF5 — FANTASY_DEVELOPMENT_CHAMPION_V1 = B1  (registrado en lab_ff_champion_registry)
+  model_version = FF_CHAMP_V1_B1. B1 = media acumulada del jugador sobre semanas ELEGIBLES (PLAYED+ACTIVE_ZERO).
+  Unica diferencia por posicion (baseline/handling, NO cerebros distintos): QB shrinkage k=1 hacia el prior de
+  posicion 2025 congelado ; RB/WR/TE k=0. Efecto QB medido (common set n=456): MAE 6.561 -> 6.507 (+0.054);
+  se documenta como handling in-sample (k elegido en 2025), NO como edge OOS validado.
+  NO red neuronal / XGBoost / LLM predictor / ensemble. La parsimonia gana (igual que Soccer/MLB).
+  Funcion: lab_ff_project_v1(pid,position,season,week) -> projected_mean, floor, ceiling, uncertainty, n_prev,
+    cold_start, method, unc_method, model_version.
+
+### FF5.1 — COLD START V1 (medido; 2026 NO usado)
+  n_prev>=1 -> B1 in-season (QB con k=1). n_prev=0:
+    VETERANO con historia previa -> B1_PRIORSEASON_HERITAGE (media temporada anterior como prior; SIN decay).
+      CROSS_SEASON_DECAY = UNVALIDATED (no medible con 1 sola temporada; V1 usa la opcion mas simple = sin decay).
+    ROOKIE / sin historia NFL -> ROOKIE_COLD_START = prior de POSICION (lab_ff_pos_prior 2025). cold_start=true.
+      NO se finge precision individual. Escalera: jugador -> prior-temporada -> prior-posicion (nunca NULL).
+    CAMBIO DE EQUIPO -> conserva historia individual; team/opponent de la semana t (schedule), no retroactivo.
+
+### FF5.2 — AVAILABILITY SEPARADA DE PROJECTION
+  lab_ff_availability(injury, depth) -> ACTIVE_EXPECTED / QUESTIONABLE / DOUBTFUL / OUT / UNKNOWN (sin
+  probabilidades arbitrarias). POINT_PROJECTION ("cuantos si juega") y AVAILABILITY_STATUS ("va a jugar") son
+  capas separadas -> START_SIT_DECISION las combina. Lesiones/depth 2026 SI entran a availability (as-of), NUNCA
+  retroactivamente al modelo de puntos 2025 (sin historia). Columnas nuevas en lab_ff_forward: cold_start, availability_status.
+
+### FF5.3 — UNCERTAINTY V1 (no-parametrica, honesta)
+  n>=4 -> EMPIRICAL_PLAYER: floor=p20, ceiling=p80, uncertainty=sd (del propio jugador).
+  n<4 -> POS_FALLBACK_WIDE: uncertainty=sd de posicion (mas ancha); floor/ceiling = mean ± 0.85·sd_pos.
+  rookie -> POS_PRIOR: floor/ceiling/sd de la posicion. => poca historia = MAS incertidumbre, no menos.
+  floor/ceiling = EMPIRICAL_QUANTILES, NO percentiles calibrados (documentado; no vender como calibrados).
+
+### FF6 — START/SIT ENGINE V1 (capa de decision, no predictor)
+  lab_ff_start_sit_pair(proj_a,unc_a,avail_a, proj_b,unc_b,avail_b) -> verdict START/CLOSE_CALL/UNAVAILABLE,
+  start_player, delta, combined_sd, reason factual. Gate de availability primero (OUT). 
+  FF6.1 SIN CONFIANZA INVENTADA: la cercania se deriva de las distribuciones (|delta| < 0.25·sqrt(unc_a^2+unc_b^2)
+  = CLOSE_CALL), NO un umbral fijo tipo ">3 pts = HIGH". El LLM podra EXPLICAR, nunca recalcular los puntos.
+
+### FF7 — CAPTURA FORWARD 2026 (cableada, foto pregame inmutable)
+  lab_ff_fwd_capturar_v1(...) SECURITY DEFINER: computa proyeccion V1 + availability, congela en lab_ff_forward
+  (decision_id md5 idempotente; on-conflict-do-nothing). Campos: player_id, temporada/semana, prediction_time,
+  team/opponent, model_version, scoring_config_version, projected/floor/ceiling/uncertainty, cold_start,
+  availability_status, injury/depth as-of, feature_snapshot(method), provenance. Post-juego: solo actual_points/graded.
+  REVOKE a anon/authenticated/public. 2026 outcomes NO tocados.
+
+### FF8 — REGRESIONES
+  R1 champion in-season == B1 (no-QB): 200/200 exacto.
+  R2 QB shrink k=1: MAE 6.561->6.507 (+0.054, in-sample handling).
+  R3 E2E captura forward (pid sintetico, temporada 2099): 2 llamadas -> 1 fila (IDEMPOTENTE); rookie cold-start
+     proj=8.24 (pos prior), cold_start=true, availability=QUESTIONABLE.
+  R4 INMUTABILIDAD: intento cambiar projected_points a 99 -> RECHAZADO (sigue 8.24). DELETE tambien bloqueado
+     (append-only) -> la fila E2E 2099 queda (sintetica, provenance E2E_TEST; no entra a v_lab_ff_eligible por
+     actual_points NULL). Candado demostrado.
+  R5 vista v_lab_ff_eligible 2025 = 6400 ; 0 fuga de BYE/INACTIVE.
+  R6 FF4.8: 0 features APORTA_OOS (IC).
+  R7 Start/Sit: clear START, CLOSE_CALL (gap<0.25·sd), OUT gate -> correctos.
+
+### OBJETOS SHADOW (este bloque)
+  lab_ff_pos_prior (prior 2025 congelado) ; v_lab_ff_eligible (union 2025+forward graded) ;
+  lab_ff_project_v1() ; lab_ff_availability() ; lab_ff_start_sit_pair() ; lab_ff_champion_registry ;
+  lab_ff_fwd_capturar_v1() ; lab_ff_forward (+cold_start,+availability_status). Produccion intacta.
+
+### BLOCKERS ANTES DE DECLARAR WEEKLY PROJECTION V1 "LISTO"
+  a) Forward 2026 REAL = 0 filas (temporada no empieza) -> FANTASY_FINAL_TEST_FORWARD = PENDING. El examen real
+     es 2026; V1 no se ajusta con 2026.
+  b) CROSS_SEASON_DECAY = UNVALIDATED (1 sola temporada) -> se valida cuando 2026 avance.
+  c) Cablear la captura pregame al roster/schedule real 2026 (hoy funcion lista; falta el disparador semanal que
+     recorra los jugadores relevantes de la semana y llame lab_ff_fwd_capturar_v1 antes del kickoff).
+  d) Availability real 2026 depende de ingesta as-of de lesiones/depth (existe forward; verificar pre-kickoff).
+  e) K/DST fuera del universo (QB/RB/WR/TE primero).
+  f) Start/Sit V1 es pairwise; el llenado de slots de roster (optimizer) es capa siguiente (FF6 completo).
+
+### PLAYDOIT (fix operativo de plataforma, re-verificado)
+  casas_apuestas id=2 (PlayDoit).url = https://www.playdoit.mx/?modal=login  -> CORRECTO en base (persiste del fix
+  previo). bookmakers_master.playdoit.home_url = https://www.playdoit.mx/ (tambien .mx). El repo local es
+  docs/scripts backend; el boton "Apostar" vive en el FRONTEND (Lovable), no aqui. Si aun manda a about:blank, es
+  el componente del frontend (no lee casas_apuestas.url o falta redeploy) -> requiere cambio en Lovable, fuera de
+  este repo. La fuente de datos ya es correcta.
