@@ -5783,3 +5783,91 @@ FIX (minimo, sin cambiar logica de dinero; solo compatibilidad de firma):
 VERIFICACION: reto_13m_estado y reto_picks_hoy -> OK con apodo 'test' y 'rodelcast'. Pantalla vuelve a cargar.
 CANDADO: no se toco kelly_stake__base ni la logica de sizing; solo se restauro la compatibilidad de firma que un
   refactor rompio. Soccer/MLB congelados sin cambios.
+
+
+## 7-sep-2026 — MLB13.1 handoff live + NFL Fantasy FF1/FF1.1/FF2/FF3 (checkpoint) + fix PlayDoit
+Todo SHADOW salvo los dos fixes operativos. Producción de modelos intacta. Soccer/MLB congelados.
+
+### MLB13.1 — HANDOFF LIVE (async, no bloquea produccion)
+  El trigger de produccion en oraculo_picks_tracking (trg_dq_captura_oraculo, ya instalado, enqueue-only O(1),
+  exception-safe, TODOS los deportes) llena lab_dq_capture_queue. NUEVO: lab_mlb_drain_forward() (async) lee la cola,
+  filtra eventos MLB (join mlb_stats_cache), computa P_RAW con predecir_mlb, captura en lab_mlb_forward (idempotente,
+  foto inmutable). Cron 416 cada 10 min. E2E SINTETICO: enqueue -> drain -> fila congelada (P_RAW 0.555 real,
+  AVAILABLE_AT_DECISION, PITCHER_PRESENT, market_key mlb|Moneyline). 
+  MLB_FORWARD_CAPTURE_ARCHITECTURE = PASS (handoff instalado) ; MLB_FORWARD_REAL_EVENT_E2E = PENDING (falta decision
+  real del motor). MLB congelado; no se espera el evento.
+
+### FF1 — RECONCILIACION 2025 (CORREGIDA)
+  Union por espn_event_id (sin filtro de año; W18 se juega en enero 2026): 2025 regular (tipo_temporada=2) =
+  272 juegos, 18 semanas, TODAS con game_logs -> 2025_COVERAGE = COMPLETE. (El "256/16 missing" previo era artefacto
+  del filtro extract(year)=2025.) Semanas 5-14 con 13-15 juegos por byes; suma 272. Playoffs/preseason 2025: no en nfl_partidos.
+
+### FF1.1 — SCORING TRUTH (fantasy_liga_config 'principal', Yahoo 10-team H2H)
+  PPR COMPLETO (recepcion=1.0), yarda_pase 0.04, td_pase 4, int -1, yarda_terr/rec 0.1, td 6, balon_perdido -2.
+  Slots: QB1/RB2/WR2/TE1/K1/DEF1/FLEX1(W/R/T), banca 6, IR 2. K/DEF con reglas custom.
+  Funcion canonica lab_ff_points_ppr_v1() (deterministica, versionada). OMISIONES (no en game_logs): fumbles_lost,
+  2pt, return TDs -> efecto menor, documentado.
+
+### FF2 — DATASET WALK-FORWARD (lab_ff_wf)
+  player x week (2025 reg wk1-18, QB/RB/WR/TE). target = PPR de esa semana (lab_ff_points_ppr_v1). Week via
+  game_id->schedule (nfl_partidos), NO por fecha. Features SOLO de semanas < t (window rows unbounded..1 preceding):
+  n_prev, ppr_mean_prev, tgt/car/rec_mean_prev. Filas: QB 677, RB 1340, TE 1101, WR 2140.
+  AUDITORIA TEMPORAL (candados aplicados):
+   - game_logs: SAFE ground truth (target). offense/usage reconstruido walk-forward desde game_logs (no agregados season).
+   - snaps (nfl_snaps): semanal, usable solo hasta t-1 (no cableado aun; disponible).
+   - uso_jugador/uso_avanzado/nfl_jugadores: agregados de temporada -> TEMPORALLY_UNSAFE crudo, NO usados (se reconstruye).
+   - defense_vs_position: PENDIENTE auditar (si es agregado de temporada sin as-of -> TEMPORALLY_UNSAFE; reconstruir o excluir).
+   - injuries: sin historia 2025 (solo semana actual) -> EXCLUIDA del backtest; solo forward 2026 con as-of.
+   - depth_chart: snapshot sin historia -> EXCLUIDA retrospectiva; solo forward congelado.
+   - weather: provenance sin timestamp de captura -> TEMPORALLY_UNPROVEN; excluida hasta probar forecast-as-of.
+  FF2.1 identidad: player_id canonico (espn_player_id). Trades/IR/bye: el equipo/oponente valido de esa semana viene
+   del schedule por espn_event_id (no el equipo actual). Opponent/DvP join = pendiente (siguiente bloque).
+
+### FF3 — BASELINES (walk-forward, pre-registrados) + FF3.1 METRICAS (set comun n_prev>=3)
+  B0 = media de posicion as-of ; B1 = media acumulada del jugador ; B2 = ultimas 3 ; B3 = recency ponderada (0.5/0.3/0.2).
+  MAE por posicion:
+    QB: B0 7.158 | B1 6.519 | B2 6.743 | B3 6.748     (RMSE B1 8.329)
+    RB: B0 6.567 | B1 5.219 | B2 5.596 | B3 5.672     (RMSE B1 7.243)
+    TE: B0 4.845 | B1 4.151 | B2 4.447 | B3 4.522     (RMSE B1 5.786)
+    WR: B0 5.831 | B1 5.001 | B2 5.240 | B3 5.300     (RMSE B1 6.602)
+  HALLAZGO: B1 (media acumulada de temporada) es la MEJOR baseline en las 4 posiciones. La recencia (B2/B3) EMPEORA.
+  => el promedio estable predice mejor que la forma reciente (mismo patron que Soccer/MLB: lo estable gana).
+  RANKING (B1, Spearman aprox / Top-12 hit / Top-5 hit):
+    QB 0.349 / 0.500 / 0.267 ; RB 0.620 / 0.411 / 0.307 ; TE 0.523 / 0.472 / 0.253 ; WR 0.501 / 0.356 / 0.267.
+  RB mejor rankeable (uso pegajoso); QB el mas ruidoso.
+
+### START/SIT — NOMBRE CORRECTO
+  NO hay historico de rosters/lineups -> NO se llama START_SIT_ACCURACY. Lo medido = PAIRWISE_RANKING (via Spearman/
+  Top-N dentro de posicion-semana). Start/Sit real requiere roster+slots+alternativas del usuario (futuro).
+
+### FF3.2 — INCERTIDUMBRE (schema listo)
+  lab_ff_forward soporta projected_points + floor_points + ceiling_points + uncertainty + injury/depth as-of.
+  No modelados sofisticado aun; el schema los admite para Start/Sit.
+
+### 2026 = FORWARD TEST (congelado)
+  FANTASY_DEVELOPMENT = 2025 regular season (wk1-18, completo). FANTASY_FINAL_TEST_FORWARD = 2026 regular season.
+  Hoy N=0 forward (2026 reg no ha empezado; preseason NO cuenta). Captura: lab_ff_forward (foto pregame INMUTABLE por
+  player x week; trg_ff_freeze: solo actual_points/graded_at/notes mutables post-juego; append-only; REVOKE publico).
+
+### HUECOS QUE BLOQUEAN WEEKLY PROJECTION (reales)
+  1. Opponent/DvP walk-forward: falta unir oponente por semana y reconstruir defense-vs-position as-of (o excluir).
+  2. Snaps semanales no cableados aun como feature t-1 (disponibles).
+  3. Injuries/depth-chart: sin historia 2025 -> no auditables; solo forward.
+  4. Scoring: fumbles/2pt/returns no en game_logs (efecto menor; documentado).
+  5. K/DST: no en el dataset aun (posiciones QB/RB/WR/TE primero).
+  Ninguno impide el baseline; el primer modelo debe BATIR a B1 (media acumulada) en MAE y ranking OOS.
+
+### FIXES OPERATIVOS (produccion de plataforma, no modelos)
+  - PlayDoit "Apostar" -> about:blank: casas_apuestas id=2 tenia url='https://playdoit.com' (dominio .com equivocado).
+    Corregido a 'https://www.playdoit.mx/?modal=login' (lo solicitado). bookmakers_master ya tenia .mx.
+  - (previo) RETO 13M no cargaba: firmas kelly_stake/reto_probabilidad_meta restauradas con defaults.
+
+### OBJETOS SHADOW/NUEVOS
+  lab_mlb_drain_forward() + cron 416 ; lab_ff_points_ppr_v1() ; lab_ff_wf (dataset) ; lab_ff_forward (+trg_ff_freeze).
+  Fix de datos: casas_apuestas.url PlayDoit. Nada de modelos productivos tocado.
+
+### CHECKPOINT (10 items)
+  1 recon 256vs272 -> 272 COMPLETE (256 era artefacto de año). 2 scoring truth (PPR full + funcion). 3 dataset WF limpio
+  (lab_ff_wf). 4 cobertura por posicion/semana (100% wk1-18). 5 auditoria temporal DvP/snaps/usage/injuries/depth/weather.
+  6 baselines B0-B3. 7 matriz MAE/RMSE/Spearman/Top-N. 8 pairwise ranking (Spearman/Top-N; START_SIT no inventado).
+  9 captura forward 2026 (lab_ff_forward inmutable). 10 huecos que bloquean. NO se construyo modelo ML/IA avanzado.
