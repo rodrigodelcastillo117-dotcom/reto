@@ -27,14 +27,23 @@
 
 
 -- ============================================================================
--- PARTE 1 (ISS-003a) — v_pick_canonico: calibracion_confiable MLB = señal real
+-- PARTE 1 (ISS-003a) — v_pick_canonico: calibracion_confiable MLB = FALSE (fail-closed)
 -- ============================================================================
--- Reemplaza el literal `true AS bool` (rama MLB, FROM v_picks_mlb_modelo mm) por
--- `mm.confiable`. NULL se propaga como NULL (=FAIL aguas abajo); NO COALESCE(NULL,TRUE).
+-- CORRECCIÓN SEMÁNTICA (2026-09-07): NO mapear mm.confiable a calibracion_confiable.
+-- Probado en predecir_mlb: `edge_vs_mercado.confiable = (brecha <= BRECHA_ALERTA)`
+-- donde brecha = |prob_modelo - prob_mercado|. => MLB_CONFIABLE_SEMANTICS = EDGE_RELIABILITY
+-- (divergencia modelo-vs-mercado), NO confianza de calibración. Meterlo en
+-- calibracion_confiable sería renombrar un concepto para pasar un gate (justo el
+-- patrón que originó estos bugs).
+-- MLB NO tiene una fuente real de confianza de calibración (y su skill es negativo,
+-- #191: el modelo pierde contra la tasa base; predecir_mlb amortigua 70% a base).
+-- => fail-closed: calibracion_confiable MLB = FALSE (literal). El literal viejo era
+-- `true AS bool`. La señal de edge (mm.confiable) se conserva donde ya se usa como
+-- edge (v_mejores_picks_mlb) y en predecir_mlb; NO se pierde, pero NO va aquí.
 DO $vpc$
 DECLARE s text; s2 text;
   needle text := 'true AS bool';
-  repl   text := 'mm.confiable';
+  repl   text := 'false';
 BEGIN
   SELECT pg_get_viewdef('public.v_pick_canonico'::regclass, true) INTO s;
   -- guardas de unicidad y de drift

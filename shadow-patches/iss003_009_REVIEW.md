@@ -127,3 +127,80 @@ No se toca: `decision_economica_v1`, `kelly_stake__base`, `predecir_mlb`, calibr
 - Deploy de la Parte 1+2 (shadow) queda **PENDIENTE de GO**; Parte 3 (skill-registry) opcional, deploy aparte.
 
 **NO DEPLOY.** Detente al terminar.
+
+---
+
+# CORRECCIONES POST-REVISIÓN (2026-09-07) — supersede lo anterior donde aplique
+
+`PREDEPLOY_ISS003_009_GATE = PENDING` (reabierto por el auditor). Se cierran 2 puntos y se amplía el mapa de consumidores.
+
+## MLB_CONFIABLE_SEMANTICS = **EDGE_RELIABILITY**
+Probado en `predecir_mlb` (verbatim): `'confiable', brecha <= BRECHA_ALERTA`, con `brecha = |prob_modelo − prob_mercado|` (`brecha_pp`). El aviso al superar el umbral lo dice literal: *"El modelo y el mercado no se parecen: X puntos… NO es una oportunidad, es una señal de que al modelo le falta información. No apostar la línea de ganador."*
+→ `v_picks_mlb_modelo.confiable` es **fiabilidad del edge (divergencia modelo-vs-mercado)**, **NO** confianza de calibración. (Además existe `predecir_mlb.calibrado = v_en_rango` = "la prob cae en el tramo medido" — es data-readiness, tampoco "calibración confiable"; y aun en rango el skill MLB es negativo, #191.)
+
+## RETRACTACIÓN (ISS-003a)
+Mi primera propuesta mapeaba `mm.confiable → calibracion_confiable`. **Incorrecto**: sería renombrar EDGE_RELIABILITY como CALIBRATION_CONFIDENCE para pasar un gate — justo el patrón que originó estos bugs. Corrección:
+- **`calibracion_confiable` MLB = FALSE (fail-closed)** — MLB no tiene fuente real de confianza de calibración y su skill es negativo. (Shadow Parte 1: `true AS bool` → `false`, ya corregido en el .sql.)
+- **`modelo_confiable`/`edge_confiable` = `mm.confiable`** se conserva donde ya se usa como edge (`v_mejores_picks_mlb`, `predecir_mlb`/`PronosticoMlbModelo`). NO se pierde la señal; NO va a `calibracion_confiable`. (Si se quiere exponer en `v_pick_canonico`, sería columna nueva additiva — opcional, no forzada.)
+
+## RECHAZO ACEPTADO — skill NO va al registry
+Se retira la Parte 3 (skill_final dentro de `economic_model_authority`). `ECONOMIC_MODEL_AUTHORIZED` ("permiso administrativo para mover dinero") ≠ `MODEL_SKILL` ("capacidad predictiva demostrada"). Quedan como gates **independientes**. MLB sigue bloqueado por **dos razones separadas**: `MODEL_SKILL=INSUFFICIENT` **y** `ECONOMIC_MODEL_AUTHORIZED=FALSE`. La fuente autoritativa de skill es un asunto aparte (hoy: MLB=INSUFFICIENT por #191; el gate falla fail-closed cuando el ctx no trae `SKILL_PASS`). No se fusiona con el registry.
+
+## CONSUMER_MAP — ampliado con auditoría frontend (verdicts por superficie)
+| Superficie | Fuente | Presenta MLB como | Gate | Veredicto ISS-009 |
+|---|---|---|---|---|
+| `/mlb` `MejoresPicksMlb.tsx` | `v_mejores_picks_mlb` (nivel) | VALOR/EV, framing "no es quién gana" | nivel de la vista | **INFORMATIONAL** pero `nivel` fuerte/ojo = lenguaje de recomendación → shadow lo degrada a 'informativo' |
+| `/mlb` `PronosticoMlbModelo.tsx` | RPC `predecir_mlb` | texto "✅ QUÉ HARÍA: <team> ML" | `edge.confiable`/aviso (propio) | recomendación textual, sin dinero/botón; gateado por edge — aceptable como análisis, pero relabelar |
+| **Dossier `AnalisisCompletoModal`** | RPC **`analisis_completo`** | **"🎯 PICK SUGERIDO POR EL MOTOR UNIFICADO"** | **ninguno económico** | **GAP**: Athletics ML **+23.5% EV** mostrado como PICK SUGERIDO aunque su `zona.peor_que_volado=true`. Además dispara para CUALQUIER deporte con `mercados` no-vacío (residuo general bajo NONE). |
+| `/reto-13m` `Reto13M.tsx` | RPC `reto_picks_hoy` | `ApostarButton` + Monto | `puede_apostar` (backend) | SAFE hoy: MLB `monto=0`/`puede_apostar=false` (verificado). Depende de `bloqueado_por='sin_modelo'`. |
+| `/hoy` `DestacadoCard` | RPC `destacados_del_dia` | "Agregar a canasta" | `estable` (backend) | SAFE hoy: **0 MLB** en destacados. Camino existe. |
+| `PicksSeguroValorCards`/`AnalysisTab` | edge fn `obtener-picks-seguro-valor` | ApostarButton + BET/ÉLITE | edge fn `ok` | Huérfano (no ruteado). Riesgo latente si se monta. |
+| `v_favorito_mlb`, `v_radar_mlb`, `MLBDeepStatsSection` | motor_cache/badrino | chip favorito / stats | n/a | INFORMATIONAL OK |
+
+**Conclusión frontend:** la página `/mlb` dedicada es informativa (sin botón de apuesta). Los gaps ISS-009 reales están en RPCs backend: **`analisis_completo` (dossier "PICK SUGERIDO")** es el principal, no gateado por elegibilidad económica; `reto_picks_hoy`/`destacados_del_dia` ya están gateados (MLB $0/ausente hoy). El frontend renderiza lo que devuelven esos RPCs → **el gate debe ir en el backend**.
+
+## SQL_DIFF (corregido/ampliado — shadow, NO aplicado)
+1. **v_pick_canonico**: `true AS bool` → `false` (calibracion_confiable MLB fail-closed). ✅ corregido.
+2. **v_mejores_picks_mlb**: `COALESCE(j.confiable, true)` → `COALESCE(j.confiable, false)` (aquí `confiable`=edge, uso semánticamente correcto, NULL=FAIL); + `economically_eligible`/`reason_code`; + `nivel`→'informativo' cuando no elegible.
+3. **`analisis_completo` (NUEVO, requiere scoping)**: el resumen `1_el_resumen.mercados` debe marcar por-mercado `economically_eligible` y el banner sólo decir "PICK SUGERIDO" cuando sea elegible; si no → "ANÁLISIS — NO APUESTA AUTORIZADA". Afecta a todos los deportes (bajo NONE, todos informativos), no sólo MLB. Es función grande (~21KB) → **pendiente de scoping antes de proponer diff byte-exacto**.
+4. Skill al registry: **RETIRADO**.
+
+## FRONTEND_DIFF
+- `MejoresPicksMlb.tsx`: mostrar rótulo inequívoco **"ANÁLISIS MLB — NO APUESTA AUTORIZADA"**, mostrar `economically_eligible=false`/`reason_code`, y no usar 'fuerte'/'ojo' como recomendación (consumir `nivel='informativo'` de la vista parcheada).
+- `AnalisisCompletoModal.tsx` (`BannerPickCanonico`): no pintar "🎯 PICK SUGERIDO" para mercados con `economically_eligible=false`; mostrar el banner informativo + razón. (Depende del fix backend #3.)
+- `PronosticoMlbModelo.tsx`: mantener como análisis; asegurar que "QUÉ HARÍA: … ML" no lea como apuesta autorizada (añadir "análisis, no apuesta autorizada").
+- `Reto13M.tsx`/`Hoy.tsx`: ya gateados por backend; sin cambio salvo mantener `bloqueado_por='sin_modelo'` visible para MLB.
+- No introducir lenguaje económico (PICK/FUERTE/OJO/ELITE/APOSTAR/% banca) en ninguna superficie MLB mientras `MODEL_SKILL != PASS`.
+
+## ATHLETICS_BEFORE_AFTER (corregido)
+```
+BEFORE (hoy)
+  modelo_confiable (edge)  = FALSE
+  calibracion_confiable    = TRUE     (hardcode)               ❌
+  P_RAW=45.9  P_DECISION=46.5  EV_DECISION=+25.07 (sin tocar)
+  dossier                  = "🎯 PICK SUGERIDO" ML Athletics +23.5% (peor_que_volado=true) ❌
+  es_pick=false  stake=$0
+
+AFTER_EXPECTED
+  modelo_confiable (edge)  = FALSE     (conservado como edge_confiable)
+  calibracion_confiable    = FALSE     (fail-closed; NO = mm.confiable)
+  MODEL_SKILL              = INSUFFICIENT
+  economic_authorized      = FALSE
+  economically_eligible    = FALSE
+  reason_code              = MODEL_VERSION_PROVENANCE_MISSING (y SKILL/UNAUTHORIZED con version+registro)
+  dossier                  = "ANÁLISIS — NO APUESTA AUTORIZADA" (no PICK SUGERIDO)
+  stake_final              = $0
+```
+P/EV intactos; el bloqueo viene de gobernanza/evidencia, no de tocar probabilidades.
+
+## ESTADO
+```
+ROOT_CAUSE_ISS003 = CONFIRMED
+ROOT_CAUSE_ISS009 = CONFIRMED
+MLB_MONEY_GATE    = SAFE
+MLB_CONFIABLE_SEMANTICS = EDGE_RELIABILITY
+FRONTEND_DIFF     = ENTREGADO (arriba)
+PENDIENTE para PASS: scoping/diff byte-exacto de analisis_completo (dossier "PICK SUGERIDO")
+PREDEPLOY_ISS003_009_GATE = PENDING
+```
+NO DEPLOY.
