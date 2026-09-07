@@ -147,3 +147,28 @@ exact_decision_price sin 1.25 → 40 ML con precio exacto (discriminante).
 ### PREDEPLOY_ISS006_GATE = **PASS**
 Registry ACL 5/5 · overround INVENTED retirado (confiable = política existente) · bypass v2 gateado ·
 6 cabezas ALL_ZERO · engine 12/12 · versión-inheritance real · CURRENT_AUTHORIZED_MODELS=NONE. **NO DEPLOY.**
+
+---
+
+## DEPLOY_LOG — ISS-006.2 v3 APLICADO EN PRODUCCIÓN (2026-09-07 15:58:29Z)
+
+**DEPLOY_STATUS = SUCCESS** · **ROLLBACK_USED = NO** · **PRODUCTION_ISS006_GATE = PASS**
+
+Aplicado sobre `wpiztubmmmzclhlprgpd` en UNA transacción (COMMIT tras POST-VERIFY `total_economico=0`).
+Snapshot pre-deploy: `shadow-patches/iss006_2_rollback_snapshot.sql` (6 cabezas) + counts before (vpc 14, fbp 2, moh 9, moh_v2 4, super 1).
+
+### ESTADO ECONÓMICO INMEDIATO (post-COMMIT)
+- economic_model_authority: existe, RLS ENABLED, **0 filas / 0 authorized** → `CURRENT_AUTHORIZED_MODELS = NONE`.
+- economic_counts_after: vpc_es_pick=0 · fbp_info_completa=0 · moh=0 · moh_v2=0 · super_apto=0.  Soccer/MLB/NFL económicos = 0.
+- grants: anon write=NO · authenticated write=NO · authenticated SELECT=YES · economic_model_authorize EXECUTE = service_role only.
+
+### SMOKE_RESULTS (prod, no persistente)
+Registry ACL: authenticated INSERT/UPDATE/RPC = DENIED · anon INSERT = DENIED · service_role vía RPC = OK (authorized_by/at server-derived).
+Eligibility: unknown source → $0 · provenance NULL → MODEL_VERSION_PROVENANCE_MISSING · LLM EV+50 → $0 · MLB EV+80 → $0 · C1 (registry=false) → ECONOMIC_MODEL_UNAUTHORIZED.
+6 cabezas: 0 económicos. Producto: análisis informativos siguen (es_pick=false + probabilidad_pct); manual calculators (tamano_apuesta, kelly_usuario) siguen funcionando; ninguna prob LLM cambia un stake.
+Controlled switch (rolled back): autorizar motor_test/vTEST → sólo vTEST elegible; vOTHER/otra fuente → $0; authorized_by='admin_test' (server-derived). Tras rollback: 0 authorized (no persiste).
+
+### CIERRE
+ISS-006 = **CLOSED** · ECONOMIC_MODEL_AUTHORITY = **PASS** · CANONICAL_ECONOMIC_ELIGIBILITY = **PASS** ·
+CURRENT_AUTHORIZED_MODELS = **NONE** · PRODUCTION_ISS006_GATE = **PASS** · ROLLBACK_USED = **NO**.
+Rollback disponible: iss006_2_rollback_snapshot.sql + DROPs de objetos nuevos.
