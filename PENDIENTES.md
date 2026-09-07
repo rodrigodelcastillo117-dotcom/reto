@@ -5871,3 +5871,134 @@ Todo SHADOW salvo los dos fixes operativos. Producción de modelos intacta. Socc
   (lab_ff_wf). 4 cobertura por posicion/semana (100% wk1-18). 5 auditoria temporal DvP/snaps/usage/injuries/depth/weather.
   6 baselines B0-B3. 7 matriz MAE/RMSE/Spearman/Top-N. 8 pairwise ranking (Spearman/Top-N; START_SIT no inventado).
   9 captura forward 2026 (lab_ff_forward inmutable). 10 huecos que bloquean. NO se construyo modelo ML/IA avanzado.
+
+
+## 7-sep-2026 — NFL Fantasy FF3.5 (survivorship) + FF3.6/3.7/3.8 + FF4 Feature Audit. NO ML avanzado.
+Todo SHADOW. Produccion intacta. Soccer/MLB congelados. 2025=DEVELOPMENT; resultados 2026 SELLADOS (no tocados).
+
+### FF3.5 — UNIVERSO PLAYER-WEEK / CANDADO DE SURVIVORSHIP  (lab_ff_playerweek)
+  PROBLEMA: lab_ff_wf se basaba SOLO en filas de nfl_player_game_logs -> eliminaba jugadores activos con ~0 produccion
+  (un TE en cancha con 0 targets no genera statline y desaparecia). Eso es survivorship: el dataset solo veia semanas
+  "buenas".
+  FUENTE PARA DISTINGUIR ACTIVO vs INACTIVO: nfl_snaps (semanal, espn_player_id, snaps_ofensiva, tipo_juego=REG).
+  Un jugador con snaps_ofensiva>0 pero SIN game_log = ACTIVE_ZERO_USAGE (actual_points=0, NO se borra).
+  CONSTRUCCION: para cada jugador con >=1 aparicion (game_log o snap REG) en 2025 reg wk1-18, se expande su VENTANA
+  ACTIVA [primera..ultima semana activa]; el equipo por semana sale del juego real + carry-forward; bye del calendario.
+  ESTADOS: PLAYED / ACTIVE_ZERO_USAGE / BYE / INACTIVE_OR_DNP (availability es CAPA SEPARADA de projection).
+  RESULTADO (player-weeks 2025 reg, QB/RB/WR/TE, 609 jugadores):
+    total ventana-activa   8444
+    PLAYED                 5258   (= el viejo lab_ff_wf)
+    ACTIVE_ZERO_USAGE      1142   <- SURVIVORSHIP RECUPERADO (+21.7% sobre PLAYED). Por pos: QB 10, RB 112, TE 530, WR 490
+    ELEGIBLE (target real) 6400   (PLAYED + ACTIVE_ZERO ; ambos con actual_points)
+    BYE                     488   (actual_points NULL; NO es error de proyeccion)
+    INACTIVE_OR_DNP        1556   (actual_points NULL; disponibilidad, no projection)
+    missing inexplicados      0   (team_null=0; toda semana de la ventana quedo clasificada)
+    semanas activas con 0 pts 1498 (antes mal manejadas)
+  LIMITACION DOCUMENTADA (no se fabrica estado): NO hay historia semanal de lesiones/IR en 2025 (nfl_lesiones_semana
+    solo tiene la semana corriente). => INACTIVE_OR_DNP NO se puede partir en IR / healthy-scratch / lesion. Se deja
+    como un solo estado UNKNOWN de disponibilidad. FREE_AGENT/rookie-antes-de-debutar/retirado quedan FUERA de la ventana
+    activa (no se inventan filas inactivas). TE ACTIVE_ZERO=530 es el hallazgo grande (bloqueadores/TE2 en cancha, 0 tgt).
+
+### FF3.6 — COMMON EVALUATION SET (mismas filas para B0-B3; n_prev>=3)
+  lab_ff_wf reconstruido sobre el universo ELEGIBLE (incluye los 1142 ACTIVE_ZERO). El target medio CAE mucho por
+  quitar la survivorship (TE 7.0->4.33; WR ->6.36) -> antes el baseline se veia mejor de lo real.
+  MAE en el MISMO set comun por posicion:
+    pos  n_common  B0(pos as-of)  B1(cum mean)  B2(last3)  B3(recency)   RMSE_B1  RMSE_B0
+    QB   456       7.262          6.561         6.775      6.779         8.403    8.859
+    RB   1061      6.565          4.895         5.240      5.309         6.971    8.686
+    TE   1238      4.494          3.098         3.266      3.326         4.832    6.138
+    WR   1938      5.743          4.358         4.522      4.556         6.052    7.390
+  => B1 (media acumulada del jugador) SIGUE GANANDO en las 4 posiciones, MAE y RMSE, sobre el universo limpio.
+     Recencia (B2/B3) sigue PEOR. B0 (media de posicion) el peor. Confirmado post-survivorship.
+
+### FF3.7 — WEEK-1 / COLD-START (medido dentro de 2025; 2026 NO usado)
+  NO existe 2024 en la base (partidos solo 2025/2026; game_logs 2025-09..2026-08). novatos=6, ADP=273.
+  => para 2025 no hay "temporada previa"; lo medible es el SHRINKAGE in-season B1* = (n*media_jugador + k*prior_pos)/(n+k).
+  Sweep de k (MAE OOS): sobre TODO n_prev>=1 el optimo es k=0 (B1 puro) salvo QB k~1 (6.456 vs 6.482). En n_prev=1
+  (cold-start real): QB k=1 ayuda (6.465 vs 6.649); RB/TE/WR k=0 (el prior de posicion ARRASTRA en direccion equivocada:
+  un jugador que ya aparecio esta auto-seleccionado como contribuidor). => shrinkage casi nulo.
+  POLITICA 2026 (disenada, validacion cruzada de temporada = PENDING_FORWARD):
+    - n_prev>=1 -> B1 puro (opcional k=1 solo QB).
+    - n_prev=0 VETERANO (tiene 2025) -> heredar media 2025 como pseudo-observaciones; DECAY entre temporadas = PENDING
+      (no medible con 1 sola temporada; arrancar sin decay y calibrar cuando 2026 avance). No usar resultados 2026.
+    - n_prev=0 ROOKIE / sin historia NFL -> ROOKIE_COLD_START = prior de POSICION (media 2025 por posicion), refinable
+      por ADP/draft capital. NO se fabrica media individual.
+    - Escalera de fallback explicita: media-jugador-2025 -> prior-de-posicion -> (nunca NULL).
+
+### FF3.8 — TEAM CHANGES (traspasos)  [47 jugadores con >1 equipo]
+  Verificado con caso real (pid 11252 QB, CLE wk1-5 -> CIN wk6-18): conserva TODA su historia bajo un solo player_id;
+  cada semana recibe el equipo/oponente REAL de esa semana (schedule por espn_event_id); NO hereda retroactivamente su
+  equipo actual. El carry-forward solo rellena semanas inactivas con el ultimo equipo conocido (documentado).
+
+### FF4 — FEATURE AUDIT (walk-forward, incremental por posicion, WITH vs WITHOUT B1)
+  Baseline autoritativo = B1 (sobrevivio FF3.6). Todas las features RECONSTRUIDAS as-of (solo semanas < t):
+    usage (car/tgt/rec por juego, target_share), snap_share (cumulative y last-3), opponent DvP as-of (pts que la
+    defensa rival concedio a la posicion en semanas < t), home/away.  Tablas: lab_ff_raw, lab_ff_feat.
+  FF4.6 validacion: rolling-origin 2 folds (train<=10 -> test 11-14 ; train<=14 -> test 15-18). Aumento lineal
+    pred = B1 + beta*(feat - fmean_train), beta OLS ajustado SOLO en train. MAE OOS pooled:
+    pos  feature      mae_base  mae_aug   mejora
+    QB   opp_dvp      6.704     6.662     +0.042   (unico no-negativo notable; n=264)
+    QB   car_pg       6.704     6.691     +0.013
+    QB   snap_cum     6.704     6.752     -0.048   (DANA)
+    RB   *            ~4.75     ~4.75     <=+0.002 / negativo (todo)
+    RB   is_home                          -0.029
+    TE   *            2.947     >=2.957   NEGATIVO en TODAS (nada ayuda)
+    WR   opp_dvp      4.365     4.363     +0.002
+    WR   tgt_pg/rec_pg                    -0.050 / -0.057  (DANAN)
+  SCREEN previo (corr feature vs residual y-B1, n_prev>=3): todo debil; usage/snap con signo NEGATIVO (B1 SOBRE-predice
+    a jugadores de alto uso = reversion a la media), pero ese "signal" in-sample NO se traduce a mejora OOS -> era
+    sobreajuste. Las features de mayor corr in-sample (WR rec/tgt, TE) son justo las que MAS DANAN OOS.
+  FF4.7 VEREDICTOS (por posicion):
+    USAGE (car/tgt/rec/tgt_share)  -> NO_APORTA_OOS / DANINA_OOS (todas). Ya esta empaquetado en B1.
+    SNAP_SHARE (cum y last-3)      -> NO_APORTA_OOS / DANINA (last-3 de los peores: recencia confirma dano).
+    OPPONENT DvP                    -> INCONCLUSO: QB +0.042 (n=264, ruido); RB/TE/WR negativo (signo inconsistente).
+    HOME/AWAY                       -> DANINA/muerta en todas.
+    WEATHER                         -> TEMPORALLY_UNAUDITABLE (provenance sin ts; fuera hasta PASS).
+    INJURIES / DEPTH_CHART          -> TEMPORALLY_UNAUDITABLE 2025 (sin historia semanal); solo forward.
+  RANKING de B1 en universo corregido (Spearman promedio-semana, n_prev>=3): QB 0.297 | RB 0.671 | TE 0.715 | WR 0.643.
+    (Sube vs antes: incluir ACTIVE_ZERO separa mejor a los contribuidores del lastre.) Ninguna feature mejoro el ranking.
+  HALLAZGO CENTRAL FF4: B1 SOBREVIVE la auditoria completa. Ninguna feature walk-forward (usage/snaps/matchup/home)
+    bate a B1 OOS en ninguna posicion. Mismo patron que Soccer/MLB: lo estable gana; la reactividad/complejidad daña.
+
+### FF5 — CHALLENGERS PROPUESTOS (NO ejecutar hasta tu GO)
+  C0 = B1 (media acumulada del jugador, survivorship-corregida) = baseline autoritativo / champion provisional.
+  Los challengers conceptuales quedan PRE-REGISTRADOS, pero la evidencia FF4 predice que fallaran; la carga es un
+  triunfo OOS REAL con IC block-bootstrap antes de adoptar:
+    C1 = B1 + usage        (FF4: NO_APORTA/DANINA -> baja probabilidad).
+    C2 = C1 + snaps        (FF4: NO_APORTA/DANINA).
+    C3 = C2 + matchup DvP  (FF4: INCONCLUSO; solo QB susurro).
+  Los unicos motivados por evidencia (aun asi, deben PROBAR mejora OOS):
+    C-COLD = B1* con shrinkage cold-start (k=1 QB, k=0 resto) + herencia 2025 para veteranos n_prev=0. Robustez de
+             semanas tempranas, NO señal nueva.
+    C-QBmatch = micro-ajuste QB por opp_dvp (bajisima prioridad; probablemente ruido n=264).
+  NO construir "mega-app" de stats: cada feature debe ganarse el lugar batiendo a B1 OOS con IC.
+
+### FORWARD 2026 (sellado)
+  lab_ff_forward listo (foto pregame inmutable): player_id, week, prediction_time, projected_points/floor/ceiling,
+  model_version, features_as_of, availability (injury/depth as-of), team/opponent, scoring_version; actual_points postgame.
+  Availability es CAPA SEPARADA (FF3.5): la proyeccion se evalua sobre ACTIVE; BYE/INACTIVE no cuentan como error.
+  Resultados regular-season 2026 = NO tocados.
+
+### OBJETOS SHADOW (este bloque)
+  lab_ff_team_week (schedule spine) ; lab_ff_playerweek (universo+estados) ; lab_ff_wf (reconstruido, elegible) ;
+  lab_ff_raw (usage crudo as-of) ; lab_ff_feat (features as-of + DvP). Produccion intacta.
+
+### SALIDA (10 items)
+  1 survivorship auditado (snaps vs game_log: 1142 ACTIVE_ZERO recuperados, TE 530 el mayor).
+  2 universo player-week definitivo (lab_ff_playerweek, 4 estados, 0 inexplicados).
+  3 B0-B3 recalculados en common set -> B1 sigue ganando (limpio).
+  4 estrategia Week-1/cold-start (shrinkage medido ~nulo; herencia 2025 + ROOKIE_COLD_START; decay=PENDING_FORWARD).
+  5 matriz feature x posicion (FF4.7 veredictos).
+  6 snaps/usage/DvP auditados temporalmente (as-of weeks<t) ; injuries/depth/weather UNAUDITABLE.
+  7 MAE/RMSE/Spearman/ranking por feature y baseline (FF4.6 + ranking B1).
+  8 KEEP/REMOVE: KEEP = B1 (solo). REMOVE OOS = usage, snaps, home/away. INCONCLUSO = DvP (QB susurro).
+  9 challengers FF5 propuestos (C0=B1; C1/C2/C3 pre-registrados con baja probabilidad; C-COLD/C-QBmatch motivados).
+  10 blockers reales antes del primer modelo (abajo).
+
+### BLOCKERS REALES ANTES DEL PRIMER MODELO
+  a) Ninguna feature bate a B1 OOS -> el primer modelo NO tiene aun una feature justificada; necesita una fuente/senal
+     nueva o una interaccion multivariante que PRUEBE mejora OOS con IC (no in-sample).
+  b) IR/inactive no separables en 2025 (sin historia de lesiones) -> availability como feature = solo forward.
+  c) Decay cross-temporada (heritage 2025->2026) no validable hasta que 2026 avance = PENDING_FORWARD.
+  d) DvP walk-forward reconstruido pero sin edge; si se persigue, exige IC block-bootstrap por semana.
+  e) K/DST fuera del universo (QB/RB/WR/TE primero).
