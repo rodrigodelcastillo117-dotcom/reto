@@ -214,3 +214,54 @@ A='el dos' (uid acef8d26…), B='rodelcast' (uid 0c631a09…).
 3. Aplicar en una sola transacción; re-correr el smoke (lecturas + intento de escritura ajena rechazado) en prod.
 
 **DETENIDO ANTES DE DEPLOY.** Esperando **GO BLOQUE 0 — DEPLOY**. Después, directo a **ISS-006** (bypass del champion C1 por el LLM) con la tabla de las 11 soccer ML: P mostrada / P C1 / fuente / EV mostrado / EV económico / eligibility / consumer.
+
+---
+
+## DEPLOY_LOG — BLOQUE 0 APLICADO EN PRODUCCIÓN (2026-09-07 ~06:49Z)
+
+**DEPLOY_STATUS = SUCCESS** · **ROLLBACK_USED = NO** · **PRODUCTION_SECURITY_GATE = PASS**
+
+Aplicado sobre `wpiztubmmmzclhlprgpd` en UNA transacción (`BEGIN … COMMIT` con
+`SET LOCAL lock_timeout=8s` / `statement_timeout=55s`). Un primer intento cortó por
+timeout de conexión y el fingerprint confirmó **rollback total** (0 cambios, sin deploy
+parcial); el reintento con guardas de lock **commiteó limpio**.
+
+### Verificación post-deploy (fingerprint md5 pre vs post)
+- 14/14 cuerpos `changed = true`; `upsert_live_scores_guarded` cuerpo intacto (solo grants).
+- 14/14 con `SET search_path` (confirmado por advisors: ninguna en `function_search_path_mutable`).
+
+### GRANTS_AFTER (has_function_privilege)
+| función | anon | authenticated | service_role |
+|---|---|---|---|
+| aceptar_batalla, cancelar_batalla, agregar_favorito, quitar_favorito, generar_codigo_amigo, reto_registrar_favoritos | ❌ | ✅ | ✅ |
+| get_dashboard_stats, get_historial_reciente, get_weekly_snapshots, historial_por_equipo, redimir_codigo_amigo, registrar_ajuste_manual, registrar_movimiento_cuenta | ❌ | ✅ | ✅ |
+| registrar_perfil (signup, fail-closed sin auth.uid) | ✅ | ✅ | ✅ |
+| upsert_live_scores_guarded | ❌ | ❌ | ✅ |
+
+### SMOKE POST-DEPLOY (todos rolled-back vía RAISE; 0 persistencia)
+| test | esperado | actual | PASS |
+|---|---|---|---|
+| S1 apodo_scope('el dos') como A | rodelcast | rodelcast | ✅ |
+| S1 resolver ajeno | ok=false IDENTIDAD_AJENA_RECHAZADA | idem | ✅ |
+| S1 registrar_movimiento_cuenta cross-user | error, sin write | IDENTIDAD_AJENA_RECHAZADA | ✅ |
+| S1 registrar_ajuste_manual cross-user | RAISE, sin write | REJECTED IDENTIDAD_RECHAZADA | ✅ |
+| S1 movimiento/ajuste propio | ok, escribe (rolled back) | ok=true / "Ajuste registrado" | ✅ |
+| S1 get_weekly_snapshots(uid de B) como A | ignora uid → datos de A | count(B_uid)=count(A_uid)=5 | ✅ |
+| S2 registrar_perfil('rongo') (usuario logueado sin perfil) | apodo_legacy_requiere_codigo, rongo.user_id NULL | idem, NULL | ✅ |
+| S3 service_role resolver('rodelcast') | INTERNAL ok | ok=true origen jwt_service_role | ✅ |
+| S3 reto_registrar_favoritos service_role | corre sin error (rolled back) | n=0, sin error | ✅ |
+| S3 upsert priv (svc/anon/auth) | true/false/false | true/false/false | ✅ |
+| S4 anon → 7 funciones mutables/financieras | permission denied | 7/7 DENIED_OK | ✅ |
+
+### HEALTH CHECK
+- Sin fuga de rol/JWT en la conexión pooled (`current_user=postgres`, claims NULL).
+- rongo.user_id=NULL, bankroll=2500; ajustes=5, favoritos=59, amigos=0 (sin cambios; smoke rolled-back, `smoke_ajustes_leaked=0`).
+- **live_scores sigue actualizando**: última `06:50:01Z` > pre-deploy `06:35:01Z` (pipeline service_role vivo tras el REVOKE).
+- Advisors: 0 nuevos findings sobre las 14; superficie anon-ejecutable REDUJO (solo queda registrar_perfil, intencional).
+
+### ESTADO FINAL
+ISS-001 = **CLOSED** · ISS-002 = **CLOSED** · ISS-008 = **CLOSED** (anon + authenticated IDOR cerrados) ·
+SIBLING_IDOR (historial_por_equipo, get_weekly_snapshots, redimir_codigo_amigo, reto_registrar_favoritos) = **CLOSED** ·
+LEGACY_TAKEOVER (registrar_perfil) = **CLOSED**.
+
+Rollback disponible: `shadow-patches/bloque0_rollback_grants.sql` (grants) + snapshot de cuerpos pre-deploy (esta sesión).
