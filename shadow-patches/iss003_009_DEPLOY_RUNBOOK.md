@@ -96,6 +96,11 @@ SELECT ordinal_position, column_name, data_type FROM information_schema.columns
 
 ## 5. FASE 2 — TRANSACCIÓN ÚNICA (`deploy_wrapped.sql`)
 
+> **TURNKEY (listo para correr):** este wrapper + el POST-VERIFY completo (incl. assert G) ya están en
+> `shadow-patches/deploy/deploy_iss003_009.sql` (usa `\ir ../iss003_009_mlb_governance.sql`).
+> Ejecutar desde la raíz del repo: `psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f shadow-patches/deploy/deploy_iss003_009.sql`.
+> Smoke read-only: `shadow-patches/deploy/smoke_post_commit.sql`. Rollback: `shadow-patches/rollback/iss003_009_rollback.sql`.
+
 ```sql
 \set ON_ERROR_STOP on
 BEGIN;
@@ -110,6 +115,8 @@ CREATE TEMP TABLE _vpc_base ON COMMIT DROP AS
 CREATE TEMP TABLE _pev_before ON COMMIT DROP AS
   SELECT espn_event_id, mercado, pick_nombre, probabilidad_pct, ev_pct
     FROM public.v_pick_canonico;                                                 -- baseline P/EV
+CREATE TEMP TABLE _vmm_before ON COMMIT DROP AS
+  SELECT espn_event_id, nivel FROM public.v_mejores_picks_mlb;                   -- baseline visibilidad MLB (assert G)
 
 -- 2.1 === ARTEFACTO CONGELADO, BYTE-EXACTO (SHA 57b7a40...cad) ===
 \i shadow-patches/iss003_009_mlb_governance.sql
@@ -213,9 +220,28 @@ BEGIN
      SELECT espn_event_id,mercado,pick_nombre,ev_pct FROM _pev_before)) d;
   IF ev_diff<>0 THEN RAISE EXCEPTION 'FAIL F2 EV_VALUE_DIFF=% (exp 0)', ev_diff; END IF;
 
-  RAISE NOTICE 'POST-VERIFY OK — contrato/keys/NONE/dinero/paridad P-EV todos verdes';
+  ---------- G. ISS-009 VISIBILIDAD SEMÁNTICA (obligatorio) ----------
+  -- Las MLB degradadas NO deben desaparecer: siguen visibles como 'informativo',
+  -- economically_eligible=false, reason_code no nulo, sin stake (la vista no dimensiona).
+  DECLARE g_missing int; g_notinfo int; g_badreason int;
+  BEGIN
+    SELECT count(*) INTO g_missing FROM (
+      SELECT espn_event_id FROM _vmm_before
+      EXCEPT SELECT espn_event_id FROM public.v_mejores_picks_mlb) d;
+    IF g_missing<>0 THEN RAISE EXCEPTION 'FAIL G1 % filas MLB desaparecieron', g_missing; END IF;
+    SELECT count(*) INTO g_notinfo FROM public.v_mejores_picks_mlb v
+      JOIN _vmm_before b USING (espn_event_id)
+     WHERE b.nivel IN ('ojo','fuerte') AND v.nivel <> 'informativo';
+    IF g_notinfo<>0 THEN RAISE EXCEPTION 'FAIL G2 % degradadas no quedaron informativo', g_notinfo; END IF;
+    SELECT count(*) INTO g_badreason FROM public.v_mejores_picks_mlb
+     WHERE economically_eligible IS DISTINCT FROM false OR reason_code IS NULL;
+    IF g_badreason<>0 THEN RAISE EXCEPTION 'FAIL G3 % filas MLB sin economically_eligible=false/reason_code', g_badreason; END IF;
+  END;
+
+  RAISE NOTICE 'POST-VERIFY OK — contrato/keys/NONE/dinero/paridad P-EV/visibilidad-MLB todos verdes';
 END $verify$;
 ```
+> **G (ISS-009 semantic visibility)**: las 5 filas MLB `ojo/fuerte` de hoy deben quedar como `informativo` (no borradas), con `economically_eligible=false` + `reason_code` real y sin sizing. G1 (no desaparecen) · G2 (degradadas→informativo) · G3 (elig=false+reason).
 
 Mapa de criterios del auditor → asserts:
 - **A1/A2/A3/A4**: 44 cols · col44=`es_pick_reason text` · primeras 43 idénticas · `economic_eligibility_v1` 1 llamada.
