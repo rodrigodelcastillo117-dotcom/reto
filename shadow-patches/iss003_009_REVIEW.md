@@ -3,6 +3,7 @@
 **Modo:** DIAGNÓSTICO + PATCH SHADOW. **NO DEPLOY.** Producción solo lectura; cualquier DDL/test → lab aislado.
 **Invariante mantenida:** `CURRENT_AUTHORIZED_MODELS = NONE`, `MLB economic_authorized = FALSE`, `MLB stake = $0`. No se autoriza MLB. No se recalibra ni se tunea (governance/cableado, no research).
 **AS_OF:** 2026-09-07.
+> **Nota de lectura:** este documento es un rastro de auditoría con ciclos de corrección. Las secciones de estado intermedias (§PREDEPLOY_ISS003_009_GATE inicial, §CORRECCIONES POST-REVISIÓN) fueron **superseded** por el bloque **§ESTADO** al final (ISS-009B), que es el estado autoritativo actual: `PREDEPLOY_ISS003_009_GATE = PASS`, **NO DEPLOY**.
 
 ## Resumen ejecutivo
 - **ISS-003 (hardcode `calibracion_confiable=true`) — CONFIRMADO, vivo en 2 lugares.** El modelo MLB (`predecir_mlb → edge_vs_mercado.confiable`) puede marcar un pick **no-confiable**, pero la app lo propaga como confiable. Medido hoy: **136 filas MLB** con `calibracion_confiable=true` y señal real `false`/`NULL`.
@@ -227,18 +228,51 @@ Campos de identidad/provenance en jmkt: `pick` (c.pick_nombre), `mercado` (c.mer
 ## EXACT_ROOT_CAUSE
 `mercados.length > 0` significa **"hay información de mercado"**, no **"hay apuesta recomendada"**. `jmkt` incluye TODOS los mercados de `v_pick_canonico` para el evento sin propagar `c.es_pick`, y el frontend enciende el banner de recomendación con la mera existencia de filas. El gate económico canónico (es_pick) está a un `c.` de distancia pero se descarta.
 
-## MINIMAL_BACKEND_DIFF (shadow, Parte 4 del .sql)
-Insert en el fragmento `jmkt` (anchor único `'como_se_calculo', c.razon`, verificado ×1; `c.es_pick` hoy 0 usos):
+## REASON_CODE_TRACE (read-only, confirmado 2026-09-07)
+`reason_code` **NO es opcional** y **NO** es `c.razon` (esa es la explicación/rationale del modelo, no la razón de elegibilidad). Trazado en la def viva de `v_pick_canonico` (`pg_get_viewdef`, read-only):
 ```
-+ 'economically_eligible', c.es_pick, 'stake_final', 0,
+tiene_es_pick        = true    -- (economic_eligibility_v1(<ctx>) ->> 'eligible')::boolean AS es_pick
+tiene_es_pick_reason = false   -- NO existe la columna
+menciona_reason_code = false   -- el ->>'reason_code' del mismo objeto se DESCARTA
+n_llamadas_elig      = 1       -- una sola llamada a economic_eligibility_v1
 ```
-Reusa el gate canónico (c.es_pick de v_pick_canonico). No recomputa P/EV, no inventa joins, no reescribe la función. `reason_code` (opcional, no-duplicante): exponer `reason_code` desde v_pick_canonico (misma llamada a economic_eligibility_v1 que ya calcula es_pick) y añadir `'reason_code', c.reason_code`.
+**CAMPO QUE FALTA = `v_pick_canonico.es_pick_reason`.** La vista ya llama a `economic_eligibility_v1(<ctx>)` una vez y saca `es_pick` de `->>'eligible'`, pero tira `->>'reason_code'`. El `<ctx>` exacto (verbatim de prod) es:
+```
+economic_eligibility_v1(jsonb_build_object(
+  'deporte', deporte_registry(c.deporte), 'mercado', c.mercado, 'fuente', c.fuente,
+  'model_version', NULL::text, 'model_skill', NULL::text,
+  'empirical_sufficiency', CASE WHEN COALESCE(c.muestra_calibracion,0) >= 20 THEN 'OK' ELSE 'PENDING' END,
+  'semantic_validity',     CASE WHEN pick_sin_discrepancia_motores(c.espn_event_id,c.mercado,c.pick_desc) THEN 'PASS' ELSE 'FAIL' END,
+  'data_readiness', 'READY',
+  'exact_decision_price',  CASE WHEN exact_decision_price(c.espn_event_id,c.mercado,c.pick_desc,c.home,c.away) THEN 'true' ELSE 'false' END,
+  'market_abstention', mercado_en_abstencion(c.mercado,c.pick_desc),
+  'ev_pct', c.ev_pct, 'ev_threshold', 2.5)) ->> 'eligible')::boolean AS es_pick
+```
 
-## MINIMAL_FRONTEND_DIFF
-`AnalisisCompletoModal` / `BannerPickCanonico`: la condición pasa de `mercados.length > 0` a
-`mercados.some(m => m.economically_eligible === true)`. Mercados con `economically_eligible=false`
-se renderizan bajo **"ANÁLISIS INFORMATIVO — NO APUESTA AUTORIZADA"** (prob, EV, matchup visibles;
-sin "PICK SUGERIDO", sin stake). La gobernanza NO se recomputa en el frontend: sólo lee el flag server-side.
+## MINIMAL_BACKEND_DIFF (shadow — 2 partes, Parte 4 del .sql)
+**Parte 4a — exponer `es_pick_reason` en `v_pick_canonico` (cambio mínimo, additivo).** Computar el jsonb de elegibilidad UNA sola vez (mismo `<ctx>` de arriba) en el CTE que hoy calcula `es_pick`, y derivar **ambos** del mismo objeto:
+```
+<elig_jsonb>   := economic_eligibility_v1(jsonb_build_object( ...ctx idéntico... ))
+es_pick        := (<elig_jsonb> ->> 'eligible')::boolean
+es_pick_reason :=  <elig_jsonb> ->> 'reason_code'   -- columna NUEVA additiva, propagada por las capas de proyección
+```
+Misma autoridad server-side; sin segunda llamada; sin recomputar en frontend; sin usar `c.razon`.
+
+**Parte 4b — insert en el fragmento `jmkt`** (anchor único `'como_se_calculo', c.razon`, verificado ×1):
+```
++ 'economically_eligible', c.es_pick, 'eligibility_reason_code', c.es_pick_reason,
+```
+**NO se envía `stake_final`.** El dossier no dimensiona; para `economically_eligible=false` el frontend simplemente NO muestra sizing. **Nunca fabricar $0** (rechazo del auditor a `'stake_final', 0`). Si en el futuro se quiere sizing en el dossier, debe venir de la autoridad canónica (kelly_stake__base), no de un literal. Reusa el gate canónico; no recomputa P/EV, no inventa joins, no reescribe la función.
+
+## MINIMAL_FRONTEND_DIFF — gate POR MERCADO (no whole-banner)
+`AnalisisCompletoModal` / `BannerPickCanonico`: partición **por mercado**, no un `.some()` que enciende todo el banner:
+```
+mercados_recomendados = mercados.filter(m => m.economically_eligible === true)
+mercados_informativos = mercados.filter(m => m.economically_eligible !== true)
+```
+- SÓLO `mercados_recomendados` pueden llevar **"PICK SUGERIDO"/APOSTAR/RECOMENDADO** (y sizing, si algún día viene de la autoridad canónica).
+- `mercados_informativos` van bajo **"ANÁLISIS INFORMATIVO — NO APUESTA AUTORIZADA"** (prob, EV, matchup visibles; sin sizing; con `eligibility_reason_code`).
+- **1 eligible + 3 no → 1 recomendado + 3 informativos, jamás 4 sugeridos.** La gobernanza NO se recomputa en el frontend: sólo lee el flag server-side por mercado.
 
 ## ATHLETICS_BEFORE_AFTER (dossier)
 ```
@@ -250,22 +284,50 @@ AFTER :  jmkt: cada mercado con economically_eligible=false, stake_final=0
          (P/EV intactos; bloqueo por gobernanza)
 ```
 
-## CROSS_SPORT_TEST_MATRIX (read-only, hoy, NONE)
+## CROSS_SPORT_TEST_MATRIX (read-only prod, hoy, NONE)
 | caso | evidencia | resultado esperado tras fix |
 |---|---|---|
 | soccer no autorizado + EV+ | v_pick_canonico soccer: 69 filas, es_pick=0 | informativo (0 PICK SUGERIDO) |
 | MLB skill insuf + EV+ | v_pick_canonico MLB: 44 filas, es_pick=0 | informativo |
 | unknown model_version + EV+ | economic_eligibility_v1 → UNAUTHORIZED/MISSING | informativo |
 | eligible=false + mercados>0 | Athletics dossier 4 mercados, es_pick=0 | NO PICK SUGERIDO |
-| eligible=true (fixture controlado) | **fuera de producción** (rollback lab): autorizar versión + skill PASS → es_pick=true | permite wording de recomendación |
-Global hoy: `PICK_SUGERIDO_COUNT = 0`, `ECONOMIC_RECOMMENDATION_LABELS = 0` en TODOS los deportes.
+Global hoy en prod: `PICK_SUGERIDO_COUNT = 0`, `ECONOMIC_RECOMMENDATION_LABELS = 0` en TODOS los deportes.
 
-## ESTADO FINAL
+## POSITIVE_PATH_LAB (EJECUTADO en branch aislado, con evidencia)
+**Entorno:** Supabase branch `iss009b-lab` (project_ref `qmantuxjtsutgqipklns`, hijo de prod `wpiztubmmmzclhlprgpd`, `with_data=false`), **borrado al terminar** (`delete_branch → success`). Producción NO se tocó (sólo SELECT). En el lab se transplantaron **verbatim** las defs vivas de prod: `economic_model_authority` (tabla), `economic_model_authorized()` y `economic_eligibility_v1()`. Se sembró **exactamente 1** fila autorizada de fixture (`baseball/Moneyline/motor_fixture_lab/v_lab_1`) para poder producir un `eligible=true`; el resto mimetiza MLB real (`model_version=NULL`).
+
+Se ejecutó la lógica **Parte 4a→4b** (computar el jsonb de elegibilidad UNA vez → derivar `es_pick`+`es_pick_reason` del mismo objeto → armar `jmkt` **sin** `stake_final`) + la **partición por mercado** del frontend. Resultados reales:
+
+| escenario | n_mercados | PICK_SUGERIDO_COUNT (recomendados) | informativos | n_con_clave_stake_final | recomendados |
+|---|---|---|---|---|---|
+| **MIXED** (1 elig + 1 no) | 2 | **1** | 1 | **0** | `["ML Home"]` |
+| **ALL_FALSE** | 2 | **0** | 2 | **0** | `null` |
+| **ONE_TRUE** (1 elig + 2 no) | 3 | **1** | 2 | **0** | `["ML Home"]` |
+
+Elemento `jmkt` real del recomendado (MIXED) y del informativo — **sin clave `stake_final`** en ninguno:
 ```
-ISS003_SEMANTICS               = PASS   (EDGE_RELIABILITY; calibracion_confiable=FALSE fail-closed; edge_confiable=mm.confiable)
-ISS009A_MLB_GOVERNANCE         = PASS   (dinero MLB $0; v_mejores_picks_mlb gateado + COALESCE(...,false))
-ISS009B_GLOBAL_PRESENTATION_GATE = PASS (dossier: economically_eligible=c.es_pick; banner gateado; 0 PICK SUGERIDO bajo NONE, todos los deportes)
+{ "pick":"ML Home",  "ev_pct":6.0,  "economically_eligible":true,
+  "eligibility_reason_code":"ELIGIBLE",                      "como_se_calculo":"..." }   stake_final? NO
+{ "pick":"Over 8.5", "ev_pct":25.0, "economically_eligible":false,
+  "eligibility_reason_code":"MODEL_VERSION_PROVENANCE_MISSING","como_se_calculo":"..." } stake_final? NO
+```
+- **Partición por mercado probada:** 1 eligible + 1 no → **1 recomendado + 1 informativo** (nunca 2 sugeridos). ALL_FALSE → **0 PICK SUGERIDO**. ONE_TRUE → **exactamente** ese 1 mercado recomendado.
+- **`economically_eligible` + `eligibility_reason_code` de la MISMA autoridad server-side:** ambos derivados del único `economic_eligibility_v1(<ctx>)` (reason `ELIGIBLE` en el elegible; reason real en el informativo).
+- **Adversarial (authority-driven, no fabricado):** al `DELETE` la fila autorizada del registro, `ML Home` colapsa a `eligible=false` / `reason_code=ECONOMIC_MODEL_UNAUTHORIZED` (`filas_autorizadas=0`). Sin registro autorizado → 0 recomendados. Confirma que bajo `NONE` (estado de prod) NINGÚN mercado es elegible.
+- **Stake:** nunca se fabricó `$0`; la clave `stake_final` no existe en el payload (`n_con_clave_stake_final=0` en los 3 escenarios).
+
+## ESTADO
+```
+ISS003_SEMANTICS               = PASS
+ISS009A_MLB_GOVERNANCE         = PREDEPLOY_PASS
+ISS009B_CONSUMER_TRACE         = PASS
+ISS009B_BACKEND_PAYLOAD        = PASS   (Parte 4a expone es_pick_reason; Parte 4b propaga
+                                         economically_eligible + eligibility_reason_code; SIN stake_final)
+ISS009B_MIXED_ELIGIBILITY_UI   = PASS   (partición por mercado: recomendados=filter(elig===true) /
+                                         informativos=filter(!==true))
+ISS009B_POSITIVE_PATH_LAB      = PASS   (branch aislado ejecutado: MIXED 1+1, ALL_FALSE 0, ONE_TRUE 1;
+                                         reason_code de autoridad; sin stake fabricado; branch borrado)
 PREDEPLOY_ISS003_009_GATE      = PASS
 CURRENT_AUTHORIZED_MODELS = NONE · MLB economic_authorized = FALSE · MLB stake = $0
 ```
-Invariante global cableado (server-side): `ECONOMICALLY_ELIGIBLE=false → jamás PICK SUGERIDO/APOSTAR/ELITE/FUERTE/% BANCA/stake`, independiente del deporte. **NO DEPLOY.** Producción sólo lectura; el fixture eligible=true se prueba en lab aislado con rollback.
+Invariante global cableado (server-side): `ECONOMICALLY_ELIGIBLE=false → jamás PICK SUGERIDO/APOSTAR/ELITE/FUERTE/% BANCA/stake`, independiente del deporte. **NO DEPLOY.** El positive path se probó en lab aislado (branch creado y borrado); producción quedó sólo-lectura.

@@ -182,13 +182,37 @@ ORDER BY espn_event_id, ((f->>'ev_pct')::numeric) DESC;
 -- resultado del gate económico canónico), pero jmkt NO lo propaga.
 -- PROVENANCE: suficiente. c = v_pick_canonico → no se inventan joins por nombre/equipo.
 --
--- FIX MÍNIMO (insert en el fragmento jmkt, no se reescribe la función): propagar
--- economically_eligible = c.es_pick y stake_final = 0. El frontend gatea el banner con eso.
--- (reason_code: ver nota abajo — requiere exponerlo desde v_pick_canonico; opcional.)
+-- PRE-REQUISITO (Parte 4a) — v_pick_canonico debe EXPONER reason_code de elegibilidad.
+-- Trazado: v_pick_canonico calcula es_pick = economic_eligibility_v1(<ctx>)->>'eligible'
+-- pero DESCARTA el reason_code. `c.razon` NO sirve: es la explicación/rationale del modelo,
+-- no la razón de elegibilidad. Cambio mínimo: en el CTE `marcado`, computar el jsonb de
+-- elegibilidad UNA vez y derivar es_pick + es_pick_reason del mismo objeto; propagar
+-- es_pick_reason por las capas de proyección hasta el SELECT final (columna nueva additiva).
+--   marcado:  <elig_jsonb> := economic_eligibility_v1(jsonb_build_object( ...ctx idéntico al de es_pick... ))
+--             es_pick        := (<elig_jsonb>->>'eligible')::boolean
+--             es_pick_reason := <elig_jsonb>->>'reason_code'
+-- (misma autoridad server-side; sin recomputar en frontend; sin usar c.razon.)
+--
+-- FIX MÍNIMO (Parte 4b) — insert en el fragmento jmkt (no se reescribe la función):
+-- propagar economically_eligible = c.es_pick y eligibility_reason_code = c.es_pick_reason.
+-- NO se envía stake_final: el dossier no dimensiona; para economically_eligible=false el
+-- frontend simplemente NO muestra sizing. Nunca fabricar $0. (Si en el futuro se quiere
+-- sizing en el dossier, debe venir de la autoridad canónica, no un literal.)
+--
+-- ⚠ ORDEN OBLIGATORIO: Parte 4b DEPENDE de Parte 4a. `c.es_pick_reason` NO existe en la def
+-- viva de v_pick_canonico (confirmado read-only: tiene es_pick=true, es_pick_reason=false,
+-- reason_code=false, 1 sola llamada a economic_eligibility_v1 que descarta el reason_code).
+-- Parte 4a NO es un needle-replace: requiere REESCRIBIR v_pick_canonico para computar el jsonb
+-- de elegibilidad UNA vez y derivar es_pick + es_pick_reason del mismo objeto (columna additiva),
+-- propagándola por las capas de proyección. Se entrega como DISEÑO (arriba) porque el cuerpo
+-- completo de la vista debe transcribirse byte-exacto antes de un CREATE OR REPLACE seguro.
+-- => Aplicar Parte 4a (rewrite de v_pick_canonico) ANTES de este DO block. Si se ejecuta este
+-- bloque sin Parte 4a, el CREATE OR REPLACE de analisis_completo fallará (columna inexistente),
+-- que es el comportamiento fail-closed deseado (no propaga un reason_code fabricado).
 DO $ac$
 DECLARE s text; s2 text;
   needle text := '''como_se_calculo'', c.razon)';
-  repl   text := '''economically_eligible'', c.es_pick, ''stake_final'', 0, ''como_se_calculo'', c.razon)';
+  repl   text := '''economically_eligible'', c.es_pick, ''eligibility_reason_code'', c.es_pick_reason, ''como_se_calculo'', c.razon)';
 BEGIN
   SELECT pg_get_functiondef(p.oid) INTO s FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
    WHERE n.nspname='public' AND p.proname='analisis_completo';
@@ -197,17 +221,14 @@ BEGIN
   s2 := replace(s, needle, repl);
   IF s2 = s THEN RAISE EXCEPTION 'ISS009B_ANCHOR_NOT_FOUND'; END IF;
   EXECUTE s2;  -- re-CREATE OR REPLACE FUNCTION analisis_completo con el fragmento parcheado
-  RAISE NOTICE 'analisis_completo: jmkt propaga economically_eligible/stake_final OK';
+  RAISE NOTICE 'analisis_completo: jmkt propaga economically_eligible/eligibility_reason_code OK';
 END $ac$;
--- reason_code (opcional, no-duplicante): exponer `reason_code` desde v_pick_canonico
--- (una sola llamada a economic_eligibility_v1 por fila, la misma que ya calcula es_pick)
--- y añadir 'reason_code', c.reason_code al jmkt. Se especifica en el REVIEW; no se fuerza
--- aquí para mantener el diff mínimo. economically_eligible = c.es_pick basta para el gate.
---
--- FRONTEND (AnalisisCompletoModal / BannerPickCanonico): condición del banner cambia de
---   `mercados.length > 0`  →  `mercados.some(m => m.economically_eligible === true)`.
---   Mercados con economically_eligible=false se muestran bajo "ANÁLISIS INFORMATIVO —
---   NO APUESTA AUTORIZADA" (prob/EV/matchup visibles; sin PICK SUGERIDO/stake).
+-- FRONTEND (AnalisisCompletoModal / BannerPickCanonico) — partición POR MERCADO:
+--   mercados_recomendados = mercados.filter(m => m.economically_eligible === true)
+--   mercados_informativos = mercados.filter(m => m.economically_eligible !== true)
+--   SOLO mercados_recomendados pueden llevar "PICK SUGERIDO"/APOSTAR/RECOMENDADO.
+--   mercados_informativos van bajo "ANÁLISIS INFORMATIVO — NO APUESTA AUTORIZADA"
+--   (prob/EV/matchup visibles; sin sizing). 1 eligible + 3 no → 1 recomendado + 3 informativos.
 
 -- ============================================================================
 -- POST-VERIFY (para el deploy real; aquí como comprobación)
