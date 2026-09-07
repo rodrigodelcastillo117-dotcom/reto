@@ -245,7 +245,7 @@ BEGIN
   RAISE NOTICE 'POST-VERIFY OK — contrato/keys/NONE/dinero/paridad P-EV/visibilidad-MLB todos verdes';
 END $verify$;
 ```
-> **G (ISS-009 semantic visibility)** — comprobado explícitamente: las **5** filas MLB `ojo/fuerte` de hoy **no desaparecen** (G1), quedan **visibles como `informativo`** (G2), con `economically_eligible=false` (G3), `reason_code='MODEL_VERSION_PROVENANCE_MISSING'` = degradación esperada (G4), y **stake=0 sin CTA/autorización económica** derivada de esas filas (G5, ningún evento MLB genera `kelly_pct>0`). El POST-VERIFY emite `PASS <id>` por invariante; el primer `FAIL` aborta y hace ROLLBACK.
+> **G (ISS-009 semantic visibility)** — comprobado explícitamente: las **N** filas MLB `ojo/fuerte` (N dinámico según la cartelera del día — 4–5 observadas) **no desaparecen** (G1), quedan **visibles como `informativo`** (G2), con `economically_eligible=false` (G3), `reason_code='MODEL_VERSION_PROVENANCE_MISSING'` = degradación esperada (G4), y **stake=0 sin CTA/autorización económica** derivada de esas filas (G5, ningún evento MLB genera `kelly_pct>0`). El assert es dinámico (`_vmm_before`), no hardcodea N. El POST-VERIFY emite `PASS <id>` por invariante; el primer `FAIL` aborta y hace ROLLBACK.
 
 Mapa de criterios del auditor → asserts:
 - **A1/A2/A3/A4**: 44 cols · col44=`es_pick_reason text` · primeras 43 idénticas · `economic_eligibility_v1` 1 llamada.

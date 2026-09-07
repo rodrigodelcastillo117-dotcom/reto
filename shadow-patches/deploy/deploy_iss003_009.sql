@@ -130,7 +130,7 @@ BEGIN
 
   ---------- G. ISS-009 VISIBILIDAD SEMÁNTICA (obligatorio) ----------
   SELECT count(*) INTO n_before_reco FROM _vmm_before WHERE nivel IN ('ojo','fuerte');
-  RAISE NOTICE 'INFO G0 filas MLB ojo/fuerte pre-deploy = % (hoy 5)', n_before_reco;
+  RAISE NOTICE 'INFO G0 filas MLB ojo/fuerte pre-deploy = % (dinámico segun cartelera del dia)', n_before_reco;
 
   -- G1 ningún evento MLB presente antes desaparece
   SELECT count(*) INTO g_missing FROM (

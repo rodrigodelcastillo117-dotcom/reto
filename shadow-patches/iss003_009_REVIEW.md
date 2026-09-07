@@ -462,3 +462,39 @@ NO bypass MLB, fuera de ISS-003/009.
 Freeze intacto: `REVIEWED_SHA=57b7a4077247e5e814aa9e4ce7e0ad369dc11975a8bff7ea28083c3ffedd4cad`.
 Runbook rev2 SHA `b0c9cc3ea827d9bbac406838267e7a13627db14db8f549c2e16f8538a07d90ad`.
 Estado: `DEPLOY_RUNBOOK_EXECUTABLE=READY`, `DEPLOY_AUTHORIZATION=PENDING_USER`, `READY_FOR_FINAL_GO=YES` (solo falta VISUAL_FRONTEND_SMOKE + ejecución del usuario). **NO DEPLOY.**
+
+---
+
+## REV 3 — EJECUCIÓN AUTÓNOMA (CQO/Release/DBA) — 2026-09-07 22:46 UTC
+
+Ejecutado el flujo autónomo hasta el máximo posible desde el entorno. **No se tocó producción** (transporte bloqueado).
+
+**PRECHECK = PASS**: branch `claude/reto-13m-espn-matches-3uknie`, tree limpio, commit `9cca60f`,
+artefacto `57b7a40…cad`, rollback `32656fb3…530`, runners ejecutables, firmas reales confirmadas
+(`analisis_completo(text)` 1 overload; `v_pick_canonico` 43 cols pre-deploy).
+
+**SHA GUARD = PASS**: `DEPLOY_SHA == REVIEWED_SHA` → `SHA_DRIFT = NO`. Inline construido (45 471 B, md5 3d367c53…) para canal atómico.
+
+**SAFE_SQL_TRANSPORT = BLOCKED** (evidencia, no supuesto):
+- `psql` v16.13 presente pero **sin red** a Postgres (TCP a `db.<ref>:5432` y pooler `:6543` fallan) y **sin credenciales** (env, `~/.pgpass`, `.env`: ninguna).
+- MCP Supabase (execute_sql/apply_migration) **no acepta ruta de archivo**; solo string inline ⇒ meter 45 KB exige pegado manual del archivo grande (prohibido + riesgo multibyte 0xc2). No es transporte por archivo.
+- Conclusión: no existe transporte SQL atómico basado en archivo desde esta sesión.
+
+**EVIDENCIA READ-ONLY DE PRE-ESTADO (prueba que los asserts pasarán al ejecutar), 2026-09-07 22:46:30 UTC:**
+- authorized_models=0 (NONE) · mlb_authorized=0
+- v_pick_canonico cols=43 (pre) · analisis_completo overloads=1
+- v_pick_canonico es_pick=true → 0
+- mejor_oportunidad_hoy(500) kelly_pct>0 → 0
+- reto_picks_hoy(apodo) monto_autorizado>0 → 0 · puede_apostar → 0 (todos los usuarios)
+- v_mejores_picks_mlb nivel ojo/fuerte = 4 (dinámico; 5 filas MLB totales) — el assert G es dinámico
+- reason_code esperado MLB = MODEL_VERSION_PROVENANCE_MISSING
+- Athletics ev_pct máx = +28.79 (intacto)
+
+**DEPLOY_EXECUTED = NO** (bloqueo de transporte, material e irresoluble desde el entorno).
+**ROLLBACK_USED = NO** (no hubo deploy).
+**FINAL_STATUS = READY_BUT_TRANSPORT_BLOCKED.**
+
+Paquete turnkey listo para que el usuario (o CI con `DATABASE_URL`) ejecute:
+`bash shadow-patches/deploy/run_deploy.sh` (SHA guard → deploy atómico → asserts A–G) ·
+smoke `smoke_post_commit.sql` · rollback `run_rollback.sh`.
+`VISUAL_FRONTEND_SMOKE_PRE/POST = PENDING_USER` (sin navegador). `LOCAL_TSGO=NOT_APPLICABLE` · `LOVABLE_FRONTEND_BUILD=PASS @ ba828acc`.
