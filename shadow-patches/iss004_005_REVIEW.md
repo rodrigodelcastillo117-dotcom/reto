@@ -246,3 +246,28 @@ Simulación inline (116 filas): `n_not_elig=116`, `n_kelly_zero=116`, `n_elig_tr
 - [ ] **Pendiente (no bloquea el shadow):** prueba de humo en navegador (403) y re-derivación de fingerprints inmediatamente antes de un eventual deploy.
 
 **Veredicto:** SQL verificado (dry-run compila + paridad positiva/negativa PASS) y **frontend bypass CERRADO_POR_PATCH** (desplegado en Lovable, build OK). `PREDEPLOY_ISS004_005_GATE = PASS`. Falta solo el **deploy de la cadena única SQL** (a la espera de GO). Después: ISS-003 + ISS-009 (MLB).
+
+---
+
+## DEPLOY_LOG — 2026-09-07 (PRODUCCIÓN)
+
+`GO FINAL` recibido. Ejecutado el runbook exacto. **ROLLBACK_USED = NO.**
+
+- **Precondición:** authorized_models=0, lock_waiters=0, blocking_sessions=0 ✓
+- **Snapshot rollback:** `iss004_005_rollback_snapshot.sql` (5 defs + DROP decision_pick_v1).
+- **Deploy atómico:** 1 txn, `lock_timeout=3s`, `statement_timeout=45s`. Partes 1–6 + POST-VERIFY (RAISE→ROLLBACK) → COMMIT. Sin contención, sin reintentos.
+- **POST-VERIFY (dentro de txn):** EV_UI==EV_DECISION (0 filas diferentes) · P_DECISION única · authorized=0 · es_pick=0 · v_super_pick apto=0 · favoritos fraccion=0. Pasó → COMMIT.
+- **Smoke post-commit (read-only):** authorized=0 · vpc es_pick=0 · superpick apto=0 · superpick kelly=0 · mejor_oportunidad_hoy=0 filas · mejor_oportunidad_hoy_v2=0 filas · favoritos fraccion=0 · reto_picks_hoy monto=0 · **EV_UI≠EV_DECISION en 0 filas**.
+- **Casos reales (EV_UI ahora == EV_DECISION):** Toronto FC–Nashville "Gana Nashville" @2.20 → **−7.16** (antes mostraba +37.9) · Detroit Tigers ML → **−12.12** · Athletics ML → **+25.07**.
+- **Frontend:** `MODEL_DERIVED_AUTOMATIC_JS = 0`, `FRONTEND_AUTOMATIC_KELLY_BYPASS = CLOSED`, `PORTFOLIO_OPTIMIZER = INFORMATIONAL_ONLY` (Lovable 5e814916).
+
+```
+ISS-004 = CLOSED
+ISS-005 = CLOSED
+SINGLE_P_DECISION_AUTHORITY = PASS
+SINGLE_EV_AUTHORITY = PASS
+SINGLE_AUTOMATIC_SIZING_AUTHORITY = PASS
+PRODUCTION_ISS004_005_GATE = PASS
+CURRENT_AUTHORIZED_MODELS = NONE
+ROLLBACK_USED = NO
+```
