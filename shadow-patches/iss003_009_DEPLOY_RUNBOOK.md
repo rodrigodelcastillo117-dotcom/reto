@@ -24,6 +24,21 @@
 
 ---
 
+## 0.1 FLUJO DEFINITIVO DE EJECUCIÓN (orden y reglas de fallo)
+
+```
+VISUAL_FRONTEND_SMOKE_PRE  →  SHA GUARD  →  DEPLOY ATÓMICO  →  ASSERTS DB (A–G)  →  VISUAL_FRONTEND_SMOKE_POST  →  CIERRE
+```
+- **`VISUAL_FRONTEND_SMOKE_PRE`** (manual): confirmar que el frontend / dossier MLB **carga correctamente** ANTES del deploy. **Si falla → NO DEPLOY.**
+- **SHA GUARD** (`run_deploy.sh`): `REVIEWED_SHA` + `ROLLBACK_SHA`. **Si falla (`SHA_DRIFT`) → NO DEPLOY.**
+- **DEPLOY ATÓMICO + ASSERTS DB (A–G)**: una transacción; **si cualquier assert DB falla → ROLLBACK automático** (nada queda aplicado).
+- **`VISUAL_FRONTEND_SMOKE_POST`** (manual): tras el COMMIT, MLB debe verse como análisis **informativo / no accionable**, **sin** "PICK SUGERIDO". **Si los asserts DB pasan pero POST-SMOKE falla → NO declarar éxito; reportar inconsistencia frontend/backend y mantener el incidente abierto. No improvisar otro cambio.**
+- **CIERRE**: solo con PRE-SMOKE ok + SHA ok + asserts DB PASS + POST-SMOKE ok.
+
+Notas de build (documentadas, no re-ejecutar): `LOCAL_TSGO = NOT_APPLICABLE` (repo local sin proyecto TS) · `LOVABLE_FRONTEND_BUILD = PASS @ ba828acc`.
+
+---
+
 ## 1. OBJETOS QUE CAMBIAN (nombres exactos)
 
 | Parte | Objeto | Tipo | Cambio | Contrato |
@@ -271,7 +286,8 @@ SELECT deporte,home,away,mercado,pick_nombre,ev_pct,calibracion_confiable,es_pic
 -- S3 NONE persiste
 SELECT count(*) authorized_models FROM public.economic_model_authority WHERE economic_authorized IS TRUE;  -- 0
 ```
-**S4 — SMOKE VISUAL (frontend `ba828acc`, PENDIENTE_USUARIO):** abrir dossier MLB → "ANÁLISIS INFORMATIVO — NO APUESTA AUTORIZADA", **sin** "PICK SUGERIDO".
+**`VISUAL_FRONTEND_SMOKE_POST` (manual, PENDING_USER):** tras el COMMIT, abrir dossier MLB en el frontend (`ba828acc`) y confirmar que MLB aparece como **análisis informativo / no accionable** ("ANÁLISIS INFORMATIVO — NO APUESTA AUTORIZADA"), **sin** "PICK SUGERIDO" ni CTA de apuesta.
+> Si los asserts DB pasaron pero `VISUAL_FRONTEND_SMOKE_POST` falla: **NO declarar éxito** — reportar inconsistencia frontend/backend y **mantener el incidente abierto**. No improvisar otro cambio.
 
 ---
 
@@ -343,7 +359,9 @@ Clasificación (superficies relevantes a gobernanza MLB):
 - [x] POST-VERIFY con asserts reales de contrato, NONE, **dinero** y **paridad P/EV**
 - [x] `analisis_completo` con overload guard (ABORT si ≠1) + firma exacta (sin LIMIT 1)
 - [x] `GLOBAL_BYPASS_SWEEP = PASS (MLB)`
-- [ ] `VISUAL_FRONTEND_SMOKE` = **PENDING_USER** (dossier MLB)
-- [ ] **GO explícito del auditor** → recién entonces ejecutar §3→§8
+- [ ] `VISUAL_FRONTEND_SMOKE_PRE` = **PENDING_USER** (dossier MLB carga OK, ANTES del deploy — si falla, NO DEPLOY)
+- [ ] `VISUAL_FRONTEND_SMOKE_POST` = **PENDING_USER** (tras deploy: MLB informativo/no accionable, sin "PICK SUGERIDO")
+- [ ] `LOCAL_TSGO = NOT_APPLICABLE` · `LOVABLE_FRONTEND_BUILD = PASS @ ba828acc`
+- [ ] **GO explícito del auditor** → recién entonces ejecutar el flujo §0.1
 
 **Estado:** `DEPLOY_RUNBOOK_EXECUTABLE = READY` · `DEPLOY_AUTHORIZATION = PENDING_USER` · **NO DEPLOY.**
