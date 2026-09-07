@@ -66,3 +66,41 @@ Si `NFL SKILL != PASS` ⇒ `recommended_nfl_picks = 0` SIEMPRE. Puede existir *m
 
 ## ADDENDUM SOLICITADO PARA AGENTE 20 — BARRIDO GLOBAL DE STRINGS
 Búsqueda global en el frontend por: `PICK`, `PREMIUM`, `SEÑAL`, `GANA`, `RECOMENDACIÓN`, `APOSTAR` (y equivalentes). Para cada aparición: identificar la superficie y **de dónde viene el número** que se muestra al lado (mercado implícito / análisis / modelo validado / LLM). Marcar todo caso donde un dato market-only se rotule como pick/recomendación. (El run del Agente 20 en curso tiene prompt fijo; este barrido se corre como pase dedicado y se integra al informe maestro.)
+
+---
+
+## ISS-006 — P1 — SOCCER: EL LLM SE SALTA AL CAMPEÓN C1 (ruta paralela) — DIAGNÓSTICO (FASE A, sin fix)
+
+**AUDIT_AS_OF de esta medición:** 2026-09-07 ~06:52Z. Proyecto wpiztubmmmzclhlprgpd. Solo lectura.
+
+**AUTORIDAD ESPERADA (gobernanza):** Soccer ML → Campeón C1 (Dixon-Coles determinista, `fut_predicciones`) → gates/calibración → eligibility → EV. El LLM (`analizar-partido`) solo debe EXPLICAR.
+
+**RUTA PARALELA REAL (root cause):**
+1. `analizar-partido` (LLM) escribe `analisis_partidos.analisis_json -> 'picks_recomendados'` (prob y EV emitidos por el LLM).
+2. `picks_recomendados_hoy_raw` COSECHA cada elemento como pick: `probabilidad_real` = prob del LLM (`->>'probabilidad_real'`/`->>'prob'`, con **fallback 0.52** si no parsea); `ev_estimado`/`ev_num` = EV del LLM (cap 25%). Gates propios: odds_verificadas, ev_num≥4, prob≥0.15, NOT momio_fabricado/fantasma, NOT vetado_por_leccion. **Ninguno valida la prob contra el campeón C1.**
+3. `picks_recomendados_hoy` (fuente=`motor_picks`) entra a `v_pick_canonico` (rama soccer, deporte≠baseball) con `probabilidad_pct = round(prob del LLM*100,1)`.
+4. Dedup `rn_dup` prefiere `motor_futbol_calibrado`, **pero solo si el motor C1 produjo ese mismo evento+mercado**. En ligas fuera de MLS/LigaMX (o con `muestra<20`), C1 no produce nada → la fila del LLM SOBREVIVE.
+5. **Fuga decisiva:** `es_pick` exige `... AND COALESCE(c.calibracion_confiable, TRUE) ...`. Para la rama LLM `calibracion_confiable = NULL → COALESCE→TRUE` ⇒ **el candado de calibración se salta**. Con precio de casa real y EV≥2.5% (calculado con la prob del LLM), el pick queda `es_pick=TRUE` = recomendación visible.
+
+**EVIDENCIA EN VIVO (2026-09-07):** de 47 filas soccer ML en `v_pick_canonico`, 11 son `es_pick=TRUE`: 6 `motor_futbol_calibrado` + **5 `motor_picks` (LLM)**. Los 5 del LLM NO tienen C1 (muestra C1 = null):
+
+| # | Partido | Liga | Pick | P mostrada | P C1 | fuente P mostrada | EV mostrado | EV económico (dimensiona) | eligibility | consumer |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | Independiente del Valle vs Flamengo | Copa Libertadores | IdV ML | 46.8 | — (n/d) | LLM | +24.0 | = EV mostrado (LLM) | es_pick=TRUE, nivel ok | v_pick_canonico→favoritos_bien_pagados→RETO 13M |
+| 2 | Estrela vs Braga | Liga Portugal | Braga ML | 65.3 | — | LLM | +13.7 | = EV mostrado (LLM) | es_pick=TRUE, ok | idem |
+| 3 | Panathinaikos vs Kifisia | Super League Greece | Empate | 23.1 | — | LLM | +15.5 | = EV mostrado (LLM) | es_pick=TRUE, ventaja_corta | idem |
+| 4 | Como vs RB Leipzig | UEFA Champions | Leipzig ML | 31.1 | — | LLM | +15.1 | = EV mostrado (LLM) | es_pick=TRUE, ventaja_corta | idem |
+| 5 | Slavia Prague vs Lens | UEFA Champions | Slavia ML | 44.0 | — | LLM | +12.2 | = EV mostrado (LLM) | es_pick=TRUE, ventaja_corta | idem |
+
+(Los 6 `motor_futbol_calibrado` con es_pick=TRUE SÍ pasan por C1: Vancouver Empate, Cincinnati, Austin, FC Dallas, Orlando, Portland — su P mostrada es la de C1.)
+
+**POR QUÉ EXISTE LA RUTA:** el motor determinista C1 (`fut_predicciones`/`v_picks_futbol_calibrado`) solo cubre fixtures con `muestra≥20` y match a `ligamx_partidos`; las ligas 2/3/copas internacionales quedan fuera. Para llenar esas ligas se dejó viva la cosecha del LLM (`picks_recomendados_hoy`). El LLM pasó de "explicar" a ser **autoridad única de modelo** en todo el fútbol no-MLS/no-LigaMX, dimensionando dinero real (RETO 13M consume es_pick). Enlaza con #209 (EV de tarjeta ≠ EV que dimensiona), #164/#167 (sizing sobre prob sin calibrar).
+
+**Segundo consumidor (`v_super_pick`/DESTACADOS):** lee `picks_recomendados_hoy` directo; muestra `prob_pct = COALESCE(prob_observada, prob_declarada)` → cae a prob del LLM sin segmento, PERO su `apto_para_mostrar` exige `confiable AND roi_segmento>0` (más protegido que v_pick_canonico).
+
+**FIX PROPUESTO (FASE B, requiere GO — NO aplicado):**
+- **Opción A (mínima, gobernanza estricta):** en `v_pick_canonico`, cambiar la condición de `es_pick` para la rama LLM: exigir `calibracion_confiable = TRUE` de forma explícita (no `COALESCE(...,TRUE)`) **o** que la prob provenga de una fuente validada. Efecto: los 5 picks del LLM dejarían de ser recomendación (pasarían a contexto/informativo), respetando "el LLM no dimensiona".
+- **Opción B (cobertura):** habilitar un motor determinista para esas ligas (cargar segundas/copas en el pipeline C1 — se cruza con #203) para que C1 tenga voz; hasta entonces, esas ligas quedan sin pick (no con pick del LLM).
+- **Recomendación:** A ahora (cierra la fuga de dinero de inmediato), B después (recupera cobertura con modelo válido). NINGUNO toca modelos/prob/EV/Kelly/gates existentes salvo el candado es_pick.
+
+**RIESGO DEL FIX A:** bajo-medio; reduce el número de picks de fútbol visibles (5 hoy) — es el efecto deseado por gobernanza, no una regresión. Requiere regresión: los 6 picks C1 legítimos deben permanecer es_pick=TRUE.
