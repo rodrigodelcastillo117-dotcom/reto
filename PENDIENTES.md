@@ -6095,3 +6095,84 @@ Todo SHADOW. Produccion intacta. Soccer/MLB congelados. Resultados 2026 SELLADOS
   docs/scripts backend; el boton "Apostar" vive en el FRONTEND (Lovable), no aqui. Si aun manda a about:blank, es
   el componente del frontend (no lee casas_apuestas.url o falta redeploy) -> requiere cambio en Lovable, fuera de
   este repo. La fuente de datos ya es correcta.
+
+
+## 7-sep-2026 — FF8.1 gobernanza champion + FF8.2/8.3 + FF9 weekly capture REAL + PlayDoit frontend FIX (Lovable)
+Todo SHADOW en modelos. 2026 outcomes NO tocados. No ML avanzado. No Waivers/Optimizer/Trades/Draft.
+
+### FF8.1 — CHAMPION V1 = B1 PURO (todas las posiciones)
+  Se QUITA el shrinkage QB k=1 del champion (era in-sample, no edge OOS -> no puede ser autoritativo).
+  lab_ff_project_v1 ahora devuelve B1 puro para QB/RB/WR/TE. Regresion: 4693/4693 filas == b1_cummean.
+  QB_SHRINKAGE_CHALLENGER = PROVISIONAL (solo entra a V2 si demuestra mejora forward/OOS legitima; documentado en registry).
+
+### FF8.2 — START/SIT SIN THRESHOLD ARBITRARIO
+  lab_ff_start_sit_pair reescrito: START = SIEMPRE el mayor projected_mean entre disponibles (la cercania NUNCA
+  cambia al recomendado). Expone projection_gap, combined_uncertainty y descriptive_closeness
+  ('PROYECCIONES_MUY_CERCANAS' cuando |gap|<0.25*sigma_comb) SOLO como texto; closeness_policy='PROVISIONAL_UNVALIDATED'.
+  Gate de availability: ambos OUT -> UNAVAILABLE; uno OUT -> START el otro. El LLM podra EXPLICAR, no recalcular.
+
+### FF8.3 — FLOOR/CEILING = EMPIRICOS (no calibrados)
+  Renombrados a hist_low / hist_high (p20/p80 empiricos). unc_method documenta el origen. sample_flag=
+  'LOW_SAMPLE_UNCERTAINTY' cuando n<4 (o cold-start) -> mas incertidumbre, no menos. No se venden como percentiles calibrados.
+
+### FF9 — WEEKLY FORWARD CAPTURE REAL (cableada + cron)
+  lab_ff_capturar_semana(season,week): jugadores fantasy-relevantes (nfl_jugadores activos QB/RB/WR/TE) -> une al
+  calendario 2026 (excluye BYE, no hay fila de schedule) -> availability as-of (nfl_lesiones_semana/depth) ->
+  lab_ff_project_v1 -> congela con lab_ff_fwd_capturar_v1. Idempotente (on-conflict decision_id), append-only,
+  exception-safe por jugador (no bloquea), re-ejecutable sin duplicar.
+  CANDADO DE VENTANA (FF9.1): solo captura kickoffs dentro de [now, now+10d] -> NO congela semanas futuras con
+  proyeccion stale (que ignoraria semanas 2026 aun no jugadas). lab_ff_capturar_semana_actual() elige la semana
+  inminente. CRON 417 (diario 13:00 UTC).
+  FF9.1 prediction_time < kickoff por jugador/evento -> prediction_validity VALID_PREGAME; si now()>=kickoff ->
+  LATE_PREDICTION_INVALID (no cuenta en evaluacion). OFFICIAL_PREGAME_SNAPSHOT_V1 = primera captura VALID_PREGAME
+  congelada (on-conflict-do-nothing preserva la autoritativa; un refresh no la sobrescribe).
+  FF9.2 lab_ff_grade_semana(season,week): actual_points via lab_ff_points_ppr_v1 con stats reales (game_log; 0 si
+  hubo snaps ofensivos sin statline; NULL=DNP). Solo actualiza actual_points/graded_at. NUNCA toca projected/
+  model_version/availability/team/opponent/scoring/uncertainty (freeze trigger lo garantiza).
+
+  CAPTURA REAL EJECUTADA: lab_ff_capturar_semana_actual() -> 2026 Week 1 = 785 filas VALID_PREGAME (0 tardias,
+  0 bye [semana 1 sin byes], 0 errores; 372 LOW_SAMPLE; availability real ACTIVE_EXPECTED/QUESTIONABLE/OUT/UNKNOWN).
+  => FF_FORWARD_CAPTURE = LIVE (785 fotos pregame reales). FF_FORWARD_REAL_EVENT_E2E = PENDING_GRADING (falta que se
+  jueguen los partidos + correr lab_ff_grade_semana).
+
+### REGRESIONES (todas PASS)
+  - champion V1 = B1 puro 4 posiciones (4693/4693); QB k=1 fuera del champion.
+  - ninguna feature FF4 entra (la funcion solo usa B1).
+  - injury/depth solo modifican availability_status (la proyeccion usa solo historia).
+  - LLM no modifica projected_points (no hay LLM en el path; Start/Sit LLM solo explica).
+  - BYE no genera prediccion (semana 5 test: 54 skips; captura excluye equipos en bye).
+  - OUT -> UNAVAILABLE / START el disponible.
+  - prediction after kickoff -> LATE_PREDICTION_INVALID (test kickoff pasado).
+  - dos capturas iguales -> una fila (semana1 total=785 tras doble corrida).
+  - postgame: actual_points escribible (12.3); projected_points BLOQUEADO (sigue 6.36).
+  - captura de semana futura fuera de ventana -> 0 (no congela prematuro; se limpio una corrida week5 erronea).
+  - PlayDoit jamas about:blank (fix frontend abajo).
+
+### PLAYDOIT — FIX FRONTEND (Lovable, proyecto reto13) + DEPLOY
+  Causa RAIZ (hallada por el agente): el RPC build_bookmaker_link devuelve 42501 permission denied para anon, asi
+  que payload.stake_url nunca llegaba y la pestaña pre-abierta quedaba en about:blank.
+  FIX en src/components/ApostarButton.tsx: la URL se resuelve SIEMPRE desde casas_apuestas.url (match por nombre
+  con ilike), fallback bookmakers_master.home_url, fallback mapa local; se valida startsWith('https://'); si no hay
+  URL valida -> cierra la pestaña y muestra 'Casa no disponible' (NUNCA about:blank). PlayDoit confirmado ->
+  https://www.playdoit.mx/?modal=login. Type-check/build verdes. Deploy a produccion (reto13.lovable.app) lanzado.
+  NOTA: para restaurar el deep-link prellenado del RPC habria que GRANT EXECUTE ON build_bookmaker_link a
+  anon/authenticated (cambio de base, no hecho; el boton ya abre la casa correctamente sin el).
+
+### ESTADO DE ARQUITECTURA
+  WEEKLY_PROJECTION_V1_ARCHITECTURE = PASS (champion B1 puro + cold-start + uncertainty + captura real cableada + grading).
+  START_SIT_V1_ARCHITECTURE = PASS (ordena por projected_mean, availability separada, sin policy arbitraria).
+  FANTASY_FINAL_TEST_FORWARD = PENDING (2026 en curso; V1 no se ajusta con 2026).
+
+### BLOCKERS ANTES DE DECLARAR WEEKLY PROJECTION V1 "PRODUCTION-READY"
+  a) 0 semanas 2026 calificadas aun -> sin evaluacion forward real (MAE/RMSE/Spearman/Top-N/calibracion por rango/
+     por posicion/cold-start vs established) hasta que se jueguen y se corra lab_ff_grade_semana.
+  b) CROSS_SEASON_DECAY = UNVALIDATED (1 sola temporada de historia).
+  c) availability real depende de que la ingesta as-of de lesiones/depth corra pre-kickoff cada semana.
+  d) K/DST fuera; roster optimizer / Waivers / Trades / Draft = capas siguientes (NO ahora).
+  e) deep-link RPC (build_bookmaker_link) requiere GRANT si se quiere slip prellenado.
+
+### OBJETOS (este bloque)
+  lab_ff_project_v1 (B1 puro, hist_low/high, sample_flag) ; lab_ff_start_sit_pair (reescrito) ;
+  lab_ff_fwd_capturar_v1 (prediction_validity, snapshot policy) ; lab_ff_capturar_semana / _actual ;
+  lab_ff_grade_semana ; lab_ff_forward (+prediction_validity,+sample_flag) ; cron 417 ; registry actualizado.
+  Frontend: ApostarButton.tsx (Lovable) + deploy. Modelos de produccion intactos. Soccer/MLB congelados.
