@@ -111,7 +111,12 @@ Dos entradas, **un solo núcleo**:
 
 ---
 
-## 7) FRONTEND_KELLY_JS_STATUS = **HAS_BYPASS** (barrido global: **3** caminos vivos)
+## 7) FRONTEND_KELLY_JS_STATUS = **CLOSED_BY_PATCH** (barrido global halló **3** caminos vivos; los 3 cerrados)
+
+> **RESUELTO 2026-09-07** (commit Lovable `5e814916`, `tsgo exit 0`, build OK, verificado por diff + lectura de archivos):
+> KellyCriterion.tsx y KellyReferenceTable.tsx **borrados**; AddPickForm.tsx y OraculoBanner.tsx (importador oculto) limpios; AiCopilotBar.tsx y PortfolioOptimizerModal.tsx sin matemática de dinero (texto "Sizing automático deshabilitado — requiere decisión económica del servidor"); `kelly-calculator.ts` reducido a `META_SEMANAL` + `checkOverbet` (guardia sobre el monto tecleado por el usuario = RISK_REVIEW). **No queda matemática cliente modelo→dinero.** El diagnóstico original (los 3 caminos) queda abajo como registro.
+
+### Diagnóstico original (antes del patch)
 
 Auditoría estática global del proyecto Lovable `reto13` (`00f8f06b-…`), sólo lectura. El barrido completo (fórmulas Kelly/EV + caps `0.08/0.05/0.03/0.02`) encontró **TRES** bypasses `MODEL_DERIVED_AUTOMATIC`, no dos.
 
@@ -231,11 +236,13 @@ Simulación inline (116 filas): `n_not_elig=116`, `n_kelly_zero=116`, `n_elig_tr
 - [x] Autoridad de sizing única: `kelly_stake__base` ($) + `decision_pick_v1` (fracción), misma fórmula sobre `prob_decide`.
 - [x] `EV_UI == EV_DECISION` garantizado por construcción; ranking y gate pasan a EV_DECISION.
 - [x] `eligible=false → stake=$0 + razón` en todas las superficies (I6: 116/116).
-- [x] SQL: sin cap 2% vs 5% divergente; sin `kelly_fraccion_pct` como autoridad paralela; sin recomputar desde P_RAW; sin monto desde prob LLM.
-- [ ] **FRONTEND: ABIERTO.** El barrido global halló **3** bypasses vivos (KellyCriterion/kelly-calculator, AiCopilotBar, PortfolioOptimizerModal). FRONTEND_DIFF listo (§10) pero **no aplicado**. `SINGLE_AUTOMATIC_SIZING_AUTHORITY` NO puede ser PASS global hasta cerrarlos — y (C) exige un RPC server nuevo o deshabilitar el modal.
+- [x] SQL (shadow, verificado en dry-run): sin cap 2% vs 5% divergente; sin `kelly_fraccion_pct` como autoridad paralela; sin recomputar desde P_RAW; sin monto desde prob LLM.
+- [x] **FRONTEND: CERRADO** (`FRONTEND_AUTOMATIC_KELLY_BYPASS = CLOSED_BY_PATCH`, commit `5e814916`, build OK). Los 3 bypasses eliminados/neutralizados; PortfolioOptimizerModal quedó PORTFOLIO_ANALYSIS_ONLY.
+- [x] FULL_PATCH_DRYRUN = PASS; POSITIVE_PATH_PARITY = PASS; NEGATIVE_PATH_PARITY = PASS (§11).
+- Pendiente: **deploy de la cadena única SQL** (`iss004_005_cadena_economica_unica.sql`) — sigue SHADOW, requiere GO. Hasta ese deploy, las autoridades SQL paralelas (`kelly_fraccion_pct`/`calibrar_prob_motor_live` en mejor_oportunidad_hoy/favoritos) siguen vivas en prod (con NONE autorizado dan $0, pero el número diverge).
 - [x] Manual (`CalculadoraMonto`, `tamano_apuesta`) y RISK_REVIEW (`revisar_apuesta`) preservados.
 - [x] Etapas inexistentes reportadas como MISSING/PARCIAL (P_FAIR aproximada; portfolio RONGOL/CDaR fuera de bloque), no inventadas.
 - [x] `CURRENT_AUTHORIZED_MODELS=NONE` intacto; ISS-006.2 intacto.
 - [ ] **Pendiente (no bloquea el shadow):** prueba de humo en navegador (403) y re-derivación de fingerprints inmediatamente antes de un eventual deploy.
 
-**Veredicto:** el diseño SQL está listo y verificado (dry-run compila + paridad positiva/negativa PASS). **`PREDEPLOY_ISS004_005_GATE` sigue REOPENED** hasta cerrar el bypass frontend (3 caminos vivos). **NO DEPLOY.** Después de cerrar frontend + GO: ISS-003 + ISS-009 (MLB).
+**Veredicto:** SQL verificado (dry-run compila + paridad positiva/negativa PASS) y **frontend bypass CERRADO_POR_PATCH** (desplegado en Lovable, build OK). `PREDEPLOY_ISS004_005_GATE = PASS`. Falta solo el **deploy de la cadena única SQL** (a la espera de GO). Después: ISS-003 + ISS-009 (MLB).
