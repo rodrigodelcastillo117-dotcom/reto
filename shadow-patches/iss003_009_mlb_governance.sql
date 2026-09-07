@@ -173,6 +173,43 @@ ORDER BY espn_event_id, ((f->>'ev_pct')::numeric) DESC;
 
 
 -- ============================================================================
+-- PARTE 4 (ISS-009B) — analisis_completo: el dossier no dice "PICK SUGERIDO" si no elegible
+-- ============================================================================
+-- ROOT CAUSE: el banner "🎯 PICK SUGERIDO POR EL MOTOR UNIFICADO" (AnalisisCompletoModal)
+-- enciende con `mercados.length > 0` — es decir, "hay info de mercado" se confunde con
+-- "hay apuesta recomendada". El payload `jmkt` (= 1_el_resumen.mercados) se arma
+-- `from v_pick_canonico c` (join por espn_event_id+pick), que YA trae `c.es_pick` (el
+-- resultado del gate económico canónico), pero jmkt NO lo propaga.
+-- PROVENANCE: suficiente. c = v_pick_canonico → no se inventan joins por nombre/equipo.
+--
+-- FIX MÍNIMO (insert en el fragmento jmkt, no se reescribe la función): propagar
+-- economically_eligible = c.es_pick y stake_final = 0. El frontend gatea el banner con eso.
+-- (reason_code: ver nota abajo — requiere exponerlo desde v_pick_canonico; opcional.)
+DO $ac$
+DECLARE s text; s2 text;
+  needle text := '''como_se_calculo'', c.razon)';
+  repl   text := '''economically_eligible'', c.es_pick, ''stake_final'', 0, ''como_se_calculo'', c.razon)';
+BEGIN
+  SELECT pg_get_functiondef(p.oid) INTO s FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+   WHERE n.nspname='public' AND p.proname='analisis_completo';
+  IF (length(s)-length(replace(s,needle,'')))/length(needle) <> 1 THEN
+    RAISE EXCEPTION 'ISS009B_ANCHOR_NO_UNICO'; END IF;
+  s2 := replace(s, needle, repl);
+  IF s2 = s THEN RAISE EXCEPTION 'ISS009B_ANCHOR_NOT_FOUND'; END IF;
+  EXECUTE s2;  -- re-CREATE OR REPLACE FUNCTION analisis_completo con el fragmento parcheado
+  RAISE NOTICE 'analisis_completo: jmkt propaga economically_eligible/stake_final OK';
+END $ac$;
+-- reason_code (opcional, no-duplicante): exponer `reason_code` desde v_pick_canonico
+-- (una sola llamada a economic_eligibility_v1 por fila, la misma que ya calcula es_pick)
+-- y añadir 'reason_code', c.reason_code al jmkt. Se especifica en el REVIEW; no se fuerza
+-- aquí para mantener el diff mínimo. economically_eligible = c.es_pick basta para el gate.
+--
+-- FRONTEND (AnalisisCompletoModal / BannerPickCanonico): condición del banner cambia de
+--   `mercados.length > 0`  →  `mercados.some(m => m.economically_eligible === true)`.
+--   Mercados con economically_eligible=false se muestran bajo "ANÁLISIS INFORMATIVO —
+--   NO APUESTA AUTORIZADA" (prob/EV/matchup visibles; sin PICK SUGERIDO/stake).
+
+-- ============================================================================
 -- POST-VERIFY (para el deploy real; aquí como comprobación)
 --   V1  0 filas MLB con calibracion_confiable=true y señal real (mm.confiable) <> true.
 --   V2  v_mejores_picks_mlb: 0 filas MLB con nivel IN ('ojo','fuerte') (todas 'informativo' o 'flojo' bajo NONE).

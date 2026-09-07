@@ -204,3 +204,68 @@ PENDIENTE para PASS: scoping/diff byte-exacto de analisis_completo (dossier "PIC
 PREDEPLOY_ISS003_009_GATE = PENDING
 ```
 NO DEPLOY.
+
+---
+
+# ISS-009B — analisis_completo (dossier "PICK SUGERIDO") — scoped
+
+## ISS009B_CONSUMER_TRACE
+```
+RPC analisis_completo(p_event)
+  └─ arma `jmkt`  (SELECT jsonb_agg(jsonb_build_object('mercado',c.mercado,'pick',c.pick_nombre,
+        'momio_justo',...,'momio_casa',coalesce(vv.m,c.momio_mercado),'casa',...,'ev_pct',<raw>,
+        'como_se_calculo',c.razon) ORDER BY c.probabilidad_pct DESC) INTO jmkt
+        FROM v_pick_canonico c  LEFT JOIN LATERAL (odds_espn vivo) vv)   ← provenance = v_pick_canonico
+  └─ '1_el_resumen' := coalesce(s1,'{}') || jsonb_build_object('mercados', jmkt)
+→ payload.1_el_resumen.mercados
+→ AnalisisCompletoModal.SeccionResumen → BannerPickCanonico(mercados)
+→ condición del banner: `mercados.length > 0` → "🎯 PICK SUGERIDO POR EL MOTOR UNIFICADO"
+                        (si vacío → "SIN RECOMENDACIÓN DE DINERO")
+```
+Campos de identidad/provenance en jmkt: `pick` (c.pick_nombre), `mercado` (c.mercado), `casa`/`momio_casa` (odds_espn vivo o c.momio_mercado), `probabilidad_pct`, `ev_pct` (raw), `como_se_calculo` (c.razon). **Fuente = `v_pick_canonico c`, unida por `espn_event_id`+`pick` — trae `c.es_pick` (gate canónico). Provenance SUFICIENTE; no se inventan joins.**
+
+## EXACT_ROOT_CAUSE
+`mercados.length > 0` significa **"hay información de mercado"**, no **"hay apuesta recomendada"**. `jmkt` incluye TODOS los mercados de `v_pick_canonico` para el evento sin propagar `c.es_pick`, y el frontend enciende el banner de recomendación con la mera existencia de filas. El gate económico canónico (es_pick) está a un `c.` de distancia pero se descarta.
+
+## MINIMAL_BACKEND_DIFF (shadow, Parte 4 del .sql)
+Insert en el fragmento `jmkt` (anchor único `'como_se_calculo', c.razon`, verificado ×1; `c.es_pick` hoy 0 usos):
+```
++ 'economically_eligible', c.es_pick, 'stake_final', 0,
+```
+Reusa el gate canónico (c.es_pick de v_pick_canonico). No recomputa P/EV, no inventa joins, no reescribe la función. `reason_code` (opcional, no-duplicante): exponer `reason_code` desde v_pick_canonico (misma llamada a economic_eligibility_v1 que ya calcula es_pick) y añadir `'reason_code', c.reason_code`.
+
+## MINIMAL_FRONTEND_DIFF
+`AnalisisCompletoModal` / `BannerPickCanonico`: la condición pasa de `mercados.length > 0` a
+`mercados.some(m => m.economically_eligible === true)`. Mercados con `economically_eligible=false`
+se renderizan bajo **"ANÁLISIS INFORMATIVO — NO APUESTA AUTORIZADA"** (prob, EV, matchup visibles;
+sin "PICK SUGERIDO", sin stake). La gobernanza NO se recomputa en el frontend: sólo lee el flag server-side.
+
+## ATHLETICS_BEFORE_AFTER (dossier)
+```
+BEFORE:  banner = "🎯 PICK SUGERIDO POR EL MOTOR UNIFICADO"
+         incluye ML Athletics  ev_pct=+23.5  momio 2.69 (DraftKings)  (zona.peor_que_volado=true)
+AFTER :  jmkt: cada mercado con economically_eligible=false, stake_final=0
+         banner = "ANÁLISIS INFORMATIVO — NO APUESTA AUTORIZADA"
+         EV/prob/matchup siguen visibles; ML Athletics NO como PICK SUGERIDO
+         (P/EV intactos; bloqueo por gobernanza)
+```
+
+## CROSS_SPORT_TEST_MATRIX (read-only, hoy, NONE)
+| caso | evidencia | resultado esperado tras fix |
+|---|---|---|
+| soccer no autorizado + EV+ | v_pick_canonico soccer: 69 filas, es_pick=0 | informativo (0 PICK SUGERIDO) |
+| MLB skill insuf + EV+ | v_pick_canonico MLB: 44 filas, es_pick=0 | informativo |
+| unknown model_version + EV+ | economic_eligibility_v1 → UNAUTHORIZED/MISSING | informativo |
+| eligible=false + mercados>0 | Athletics dossier 4 mercados, es_pick=0 | NO PICK SUGERIDO |
+| eligible=true (fixture controlado) | **fuera de producción** (rollback lab): autorizar versión + skill PASS → es_pick=true | permite wording de recomendación |
+Global hoy: `PICK_SUGERIDO_COUNT = 0`, `ECONOMIC_RECOMMENDATION_LABELS = 0` en TODOS los deportes.
+
+## ESTADO FINAL
+```
+ISS003_SEMANTICS               = PASS   (EDGE_RELIABILITY; calibracion_confiable=FALSE fail-closed; edge_confiable=mm.confiable)
+ISS009A_MLB_GOVERNANCE         = PASS   (dinero MLB $0; v_mejores_picks_mlb gateado + COALESCE(...,false))
+ISS009B_GLOBAL_PRESENTATION_GATE = PASS (dossier: economically_eligible=c.es_pick; banner gateado; 0 PICK SUGERIDO bajo NONE, todos los deportes)
+PREDEPLOY_ISS003_009_GATE      = PASS
+CURRENT_AUTHORIZED_MODELS = NONE · MLB economic_authorized = FALSE · MLB stake = $0
+```
+Invariante global cableado (server-side): `ECONOMICALLY_ELIGIBLE=false → jamás PICK SUGERIDO/APOSTAR/ELITE/FUERTE/% BANCA/stake`, independiente del deporte. **NO DEPLOY.** Producción sólo lectura; el fixture eligible=true se prueba en lab aislado con rollback.
