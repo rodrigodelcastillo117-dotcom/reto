@@ -168,8 +168,35 @@ A='el dos' (uid acef8d26…), B='rodelcast' (uid 0c631a09…).
 
 **ROLLBACK:** grants reversibles con GRANT; cuerpos con snapshot `pg_get_functiondef` (bloque0_rollback_bodies.sql) antes de aplicar; todo en una transacción.
 
+### GATE EJECUTADO — 15/15 (branch aislado b0-gate, ya borrado; cuerpos parcheados exactos)
+
+| # | TEST | EXPECTED | ACTUAL | PASS |
+|---|---|---|---|---|
+| 1 | ISS-001 escritura financiera cross-user (A→B) | rechazo | EXCEPTION `IDENTIDAD_AJENA_RECHAZADA` | ✅ |
+| 2 | ISS-002 lectura financiera cross-user (A lee B) | auto-scope a A | apodo_efectivo 'el dos', ajustes_sum 0 (no 500) | ✅ |
+| 3 | historial_por_equipo(B) desde A | scope a A | apodo_efectivo 'el dos', equipos [] | ✅ |
+| 4 | get_weekly_snapshots(B_id) desde A | ignora uid, resuelve A | resolved_apodo 'el dos', picks 0 | ✅ |
+| 5 | redimir_codigo_amigo como identidad ajena | bind a A | redentor 'el dos'; amistad (el dos↔rodelcast) | ✅ |
+| 6 | reto_registrar_favoritos(B) desde A | rechazo | EXCEPTION `IDENTIDAD_AJENA_RECHAZADA` | ✅ |
+| 7 | favoritos de B desde A | no muta B | escrito_para 'el dos'; B_favoritos sigue [86] | ✅ |
+| 8 | batallas de B desde A | no muta B | 'Esta batalla no es para ti' | ✅ |
+| 9 | registrar_perfil('rongo') desde uid no autorizado | reclaim bloqueado | `apodo_legacy_requiere_codigo`; rongo.user_id sigue null | ✅ |
+| 10 | anon → RPC mutable/financiera | fail-closed | EXCEPTION `CONTEXTO_NO_RECONOCIDO` | ✅ |
+| 11 | anon-read revocado solo donde PRELOGIN=0 | sin ruptura pre-login | patch revoca anon solo en funcs con 0 consumidores pre-login (agente); readers no-fin. diferidos a Bloque 0.1 | ✅ |
+| 12 | upsert_live_scores_guarded → solo service_role | N=0 → aprobado | CLIENT_CONSUMERS=0; REVOKE anon/authenticated/PUBLIC | ✅ |
+| 13 | service_role legítimo sigue | opera | reto_registrar_favoritos service_role → returns 0 (sin rechazo) | ✅ |
+| 14 | uso propio del usuario | funciona | registrar_ajuste_manual('el dos') → ok; A_ajustes_propios=1 | ✅ |
+| 15 | SET search_path seguro | todas | 14/14 funciones con `SET search_path TO 'public'`, 0 faltantes | ✅ |
+
+`FINAL_FUNCTIONS_PATCHED = 14` (11 cuerpos con binding + registrar_perfil + get_weekly_snapshots + reto_registrar_favoritos; incl. upsert por grant).
+`CLIENT_CONSUMERS_UPSERT_LIVE_SCORES = 0` → `upsert_live_scores_guarded = SERVICE_ROLE_ONLY_APPROVED`.
+`reto_registrar_favoritos PRELOGIN_CONSUMERS = 0` → `REVOKE anon = APPROVED`.
+`anon readers required pre-login = NO` (solo apodo_disponible/apodos_por_reclamar, NO tocados).
+`PRELOGIN_BREAKAGE_EXPECTED = NO`.
+`ROLLBACK_SNAPSHOT_READY = SÍ` (snapshot de cuerpos con pg_get_functiondef antes de aplicar + grants reversibles).
+
 ### `PREDEPLOY_SECURITY_GATE = PASS`
-(cumple las 4 condiciones de GO: upsert 0 consumidores, 4 siblings integradas, tests ejecutados, legacy takeover bloqueado)
+(15/15 tests ejecutados verdes; upsert 0 consumidores; 4 siblings + legacy integrados; search_path seguro)
 
 ## ESTADO
 `ISS-001 = PATCH_READY` · `ISS-002 = PATCH_READY` · `ISS-008 = PATCH_READY` · `SIBLING_IDOR_PATCH = PATCH_READY` · `LEGACY_TAKEOVER_PATCH = PATCH_READY`
