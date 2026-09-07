@@ -6483,3 +6483,74 @@ Todo SHADOW. 2026 outcomes NO usados. Sin transacciones a Yahoo. Modelos de prod
   8 blockers antes de Trades: (a) conectar liga real (Yahoo o screenshots del usuario) -> poblar lab_ff_ownership;
      (b) definir rest-of-season value sin pesos magicos; (c) K/DST predictive PENDING; (d) FORWARD_PREDICTIVE_VALIDATION
      PENDING (0 semanas 2026). NO Trades/Draft. Sin transacciones.
+
+
+## 7-sep-2026 — FF15.7-FF15.12 Screenshot League Ingest V1 (Yahoo OAuth = V2) + PlayDoit fix real. NO Trades.
+Todo SHADOW. Sin transacciones Yahoo. 2026 outcomes NO usados. Modelos de produccion intactos.
+
+### DECISION: Screenshot import = V1 ; Yahoo OAuth = V2 (elegido por el usuario)
+
+### FF15.7 — SCREENSHOT LEAGUE INGEST (lab_ff_ingest_screenshot)
+  Ingest append-only a lab_ff_ownership: por fila {nombre,posicion,equipo,provider_player_id,ownership_status,
+  fantasy_team_id,team_name,roster_slot,raw_text,faab_balance,waiver_priority,waiver_release_time}. Preserva
+  screen_type + raw_text (auditoria), league_snapshot_id (uuid por captura), source=FANTASY_HELPER_SCREENSHOT,
+  captured_at. Resuelve identidad con v2 (nombre+pos+equipo). No sobrescribe snapshots previos.
+  Nuevas cols en lab_ff_ownership: screen_type, raw_text, posicion.
+  PROTOCOLO DE CAPTURA (documentado): A League settings ; B My Team ; C rosters de TODOS los rivales ; D Free
+  Agents + Waivers (paginacion suficiente). No asumir "no aparece = disponible".
+
+### FF15.8 — COVERAGE GATE (lab_ff_coverage_gate)
+  Reporta teams_expected (=fantasy_liga_config.equipos=10), teams_captured, rostered_players, free_agents, waivers,
+  resolved, ambiguous, unresolved, conflicts. Estado:
+   WAITING_USER_INPUT (0 rostered) / REAL_LEAGUE_SNAPSHOT_PARTIAL / REAL_LEAGUE_SNAPSHOT_COMPLETE.
+  COMPLETE exige: teams_captured>=expected, conflicts=0, ambiguous+unresolved=0, y FA/WAIVERS>0. Si no -> PARTIAL.
+
+### FF15.9 — IDENTIDAD DESDE SCREENSHOT (lab_ff_resolver_identidad_v2)
+  Prioridad provider_player_id -> luego escalonado nombre+posicion+equipo -> nombre+posicion -> nombre. Nunca
+  elige si hay ambiguedad: >1 candidato = AMBIGUOUS ; 0 = UNRESOLVED ; 1 = RESOLVED. Guarda raw_text original.
+  AMBIGUOUS/UNRESOLVED nunca recomendables (el motor filtra RESOLVED).
+
+### FF15.10 — SNAPSHOT CONSISTENCY (lab_ff_ownership_reconciliar, reusado)
+  Un jugador con >1 ownership_status en el snapshot real -> CONFLICT_FAIL_CLOSED_UNKNOWN. No se resuelve en silencio.
+
+### FF15.11 — REAL WAIVERS E2E (lab_ff_waivers_real) — FAIL-CLOSED
+  Chequea coverage gate; si != COMPLETE -> devuelve una sola fila INSUFFICIENT_COVERAGE con el detalle
+  ("No tengo suficiente informacion de la liga: equipos X/10, FA.., waivers.., sin resolver.., conflictos..").
+  Solo si COMPLETE corre lab_ff_waivers_ui (v2 exhaustivo, read-only). El candado: preferimos "no se" a inventar FA.
+  E2E MECANICA PROBADA (liga throwaway SS_TEST, MY_TEAM 2 jugadores): ingest 2 RESOLVED -> gate PARTIAL (1/10) ->
+  waivers_real = INSUFFICIENT_COVERAGE. Limpiado. Con la liga real 'Baby Back Gibbs': gate = WAITING_USER_INPUT (0/10).
+
+### FF15.12 — OAUTH V2 CONTRACT (lab_ff_sync_contract, documentado, NO implementado)
+  Metodos que el futuro Yahoo Sync debera satisfacer, TODOS alimentando el MISMO lab_ff_ownership (downstream
+  compartido; Waivers no se reconstruye):
+   sync_league -> fantasy_liga_config ; sync_teams -> lab_ff_ownership(team/owner) ; sync_rosters -> lab_ff_ownership ;
+   sync_available -> FREE_AGENT ; sync_waivers -> WAIVERS+release_time ; sync_faab_priority -> faab/priority. estado V2_PENDING.
+
+### GOBERNANZA
+  WAIVERS_V1_ARCHITECTURE = PASS ; WAIVERS_REAL_LEAGUE_E2E = WAITING_USER_INPUT (faltan screenshots reales).
+  REAL_LEAGUE_SYNC = SCREENSHOT_V1_READY (ingest+gate+identidad+fail-closed listos; sin datos aun).
+
+### QUE NECESITO DEL USUARIO PARA CERRAR WAIVERS REAL (pasar a PASS)
+  Subir al Fantasy Helper capturas de Yahoo de esta semana: (A) config de liga, (B) tu roster, (C) rosters de los
+  10 equipos, (D) Free Agents + Waivers. Con eso: ingest -> gate COMPLETE -> lab_ff_waivers_real -> recomendaciones
+  reales read-only. Sin los 10 equipos + pool, el sistema seguira diciendo "no se si esta disponible".
+
+### PLAYDOIT — FIX REAL DESPLEGADO
+  Causa real (hallada por el agente Lovable): el culpable NO era ApostarButton (ya arreglado) sino StakeButton
+  (boton verde "Apostar en Stake" en tarjetas de parlay) que abria un enlace sin verificar. Se creo helper
+  compartido src/lib/casaUrl.ts (resolverUrlCasa/esUrlValida/homeDeCasa; playdoit -> https://www.playdoit.mx/?modal=login)
+  usado por AMBOS botones; sin URL valida -> boton deshabilitado + "Enlace no disponible", nunca about:blank.
+  Service worker subido a reto13m-v6 (forzar bundle nuevo, evitar cache PWA vieja). Type-check verde. DEPLOY a
+  reto13.lovable.app lanzado.
+
+### OBJETOS (este bloque)
+  lab_ff_ownership (+screen_type,raw_text,posicion) ; lab_ff_resolver_identidad_v2 ; lab_ff_ingest_screenshot ;
+  lab_ff_coverage_gate ; lab_ff_waivers_real ; lab_ff_sync_contract. Frontend: src/lib/casaUrl.ts + StakeButton/
+  ApostarButton unificados + sw v6 (Lovable, desplegado).
+
+### CHECKPOINT / BLOCKERS ANTES DE TRADES
+  1 protocolo screenshots (A-D) ; 2 ingest Fantasy Helper (lab_ff_ingest_screenshot) ; 3 coverage gate ;
+  4 identity reconciliation (v2, name+pos+team) ; 5 snapshot consistency (reconciliar) ; 6 E2E real = NO (sin
+  screenshots) ; 7 WAIVERS_REAL_LEAGUE_E2E = WAITING_USER_INPUT ; 8 contrato Yahoo OAuth V2 (lab_ff_sync_contract).
+  NO Trades / NO Draft / NO transacciones Yahoo / NO FAAB heuristico. Trades espera: ownership real completo +
+  valor rest-of-season (no week1 points).
