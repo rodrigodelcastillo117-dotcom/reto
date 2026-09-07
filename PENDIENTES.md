@@ -5490,3 +5490,99 @@ Todo SHADOW. Producción MLB intacta. Soccer congelado ~96%. FINAL TEST NO abier
   - MLB7 challengers: C0 actual ; C1 núcleo (liga+offense/RA) ; C2 +recent_form explícito ; variantes según sobreviva.
   - MLB9 skill gate ML y O/U por separado vs naive as-of (IC robusto) -> PASS/FAIL/INSUFFICIENT.
   - Recuperar cobertura de líneas reales O/U (mapping radar espn) antes de validar mercado O/U.
+
+
+## 7-sep-2026 — MLB8 CORREGIDO + candados 2.3/2.4/5/4.1/4.2/3.3/3.4 + PLATOON/BULLPEN + challengers
+Todo SHADOW. Producción MLB intacta. Soccer congelado ~96%. NINGUN SKILL_PASS final. FINAL_TEST_FORWARD no existe aún.
+
+### MLB8.1/8.2 — RECLASIFICACION (el "FINAL 274" NO era virgen)
+  El universo 1053 ya se inspeccionó globalmente (baseline Brier 0.24732, NB r=5, NB vs Poisson, mercado O/U).
+  => FINAL_274_UNTOUCHED = FALSE. Reclasificado: TODO historico <= 2026-08-30 = DEVELOPMENT (1053).
+  VALIDATION también participó en ablaciones -> se colapsa en DEVELOPMENT (no fue confirmación independiente).
+  Tuning interno futuro: nested/rolling temporal DENTRO de development.
+  FINAL_TEST_FORWARD = datos > 2026-08-30, nunca usados. HOY: 0 juegos con resultado post-0830 ->
+  FINAL_TEST_EVIDENCE = INSUFFICIENT (esperar evidencia forward). No se fabrica un virgen dentro de fechas ya vistas.
+  (lab_mlb_split_seal reescrito; lab_mlb_wf.regimen = DEVELOPMENT/INVALID.)
+
+### MLB2.3 — DECISION_TIME != FIRST_PITCH
+  cached_at <= first_pitch prueba AVAILABLE_PRE_KICKOFF, no AVAILABLE_AT_DECISION (no sabemos a qué hora
+  habríamos apostado). HISTORICAL_DECISION_TIME = UNPROVEN. Para feature research se usa el snapshot pregame
+  documentando la limitación. Para economía/Eligibility/exact odds se exige decision_time real forward.
+
+### MLB2.4 — cached_at CONFIABLE
+  DEFAULT now() ; 0 triggers (nada lo reescribe) ; 133 minutos distintos, rango May-Sep alineado a cada juego
+  (un backfill único no podría producir cached_at de mayo/junio que preceden cada juego).
+  => CACHE_AVAILABILITY_TIMESTAMP = TRUSTED. Residual: no hay lock append-only (se puede añadir forward).
+
+### MLB5 — PREGAME_STARTER_REFERENCE (no "confirmed")
+  Por timestamp: el pitcher del cache es pregame (no retrospectivo). Match vs abridor real ~98% donde verificable
+  (boxscore 36%). Pero a ~12h no se puede probar si era projected/probable/officially confirmed.
+  => STARTER_STATUS = PREGAME_KNOWN_STATUS_UNKNOWN. 
+  MISSINGNESS: 130 juegos con pitcher NULL = régimen aparte: Brier 0.25038 (~volado, home 0.485) vs
+  PITCHER_PRESENT 923: Brier 0.24710 (home 0.522). Tratar como régimen separado (923 usable + 130 degradado).
+
+### MLB4.1 — PROVENANCE INTERNA DE FEATURES
+  RECONSTRUIDAS walk-forward (source_event_time < snapshot, sin season-final): offense rpg, RA, liga_rpg,
+    last10 (reconstruido hoy desde historico) -> PROVEN.
+  CACHE pregame (PREGAME_BOUNDED; lógica interna no auditada línea a línea, pero acotada por cached_at pregame):
+    pitcher FIP/ERA, park, platoon splits, bullpen_fatigue -> APROX_ASOF/PROVISIONAL.
+
+### MLB4.2 — RECENT_FORM bootstrap robusto (reconstruido, DEVELOPMENT n=1053)
+  dBrier(agregar recent) = +0.00023 ; IC iid ±0.00025 (CRUZA 0 por -0.00002).
+  Block bootstrap por semana (15 bloques, 2000 iters, con reemplazo): CI95 [+0.00005, +0.00041], 99.2% positivo.
+  => signo consistente pero magnitud NEGLIGIBLE (~0.0002 Brier = 0.08% del baseline). Además es la 1-de-5 que
+  cruzó p~0.05 (exposición a comparaciones múltiples). VEREDICTO: consistente-pero-negligible; NO es base del cerebro.
+  (El +0.00033 previo era sobre cache-last10 + subset DISC+VAL; con reconstrucción limpia sobre dev completo se diluye.)
+
+### MLB4 — ABLACIONES LIMPIAS COMPLETAS (DEVELOPMENT; ΔBrier pareado + IC cluster/semana)
+  feature            efecto            IC_cluster    veredicto
+  RECENT_FORM        +0.00023          ±0.00025      INCONCLUSO/negligible (bootstrap consistente pero ~0)
+  TEAM_DEFENSE_RA    +0.00165 (D+V)    ±0.00167      INCONCLUSO (mayor magnitud; IC toca 0)
+  STARTER (pitcher)  +0.00042 (D+V)    ±0.00213      INCONCLUSO
+  TEAM_OFFENSE       -0.00040 (D+V)    ±0.00148      INCONCLUSO
+  PARK               +0.00003 (D+V)    ±0.00006      INCONCLUSO (despreciable)
+  BULLPEN (add 0.50) -0.00028          ±0.00069      NO_APORTA / leans DAÑINA -> mantener OFF (re-verificado limpio)
+  PLATOON            n/a               n/a           INSUFFICIENT_COVERAGE (24/1053=2.3% con factor!=1) -> TEMPORALLY_UNAUDITABLE
+  WEATHER            excluida          —             TEMPORALLY_UNPROVEN (sin capture ts)
+  LINEUP             excluida          —             LINEUP_NOT_AVAILABLE_AT_DECISION (post-juego)
+  HALLAZGO: ninguna feature de ML es claramente APORTA en split limpio con IC robusto. Señal difusa y minúscula.
+
+### MLB3.3 — O/U PUSH-AWARE vs LINEA REAL (definitivo)
+  Cobertura 139/1053 (13%); 74 líneas enteras; 6 push; 133 graded non-push. Prob condicional (excluye push sin sesgo).
+  NB r=5 vs LINEA REAL push-aware: Brier 0.26040 ; naive constante (over 0.444) = 0.2469 -> NB PEOR que naive.
+  => NB NO tiene edge de mercado. Su victoria sobre Poisson es SOLO forma distribucional a línea fija arbitraria.
+  OU_MARKET_VALIDATION = FAIL vs líneas reales (cobertura 13%; sin edge). El 0.25607 previo queda superado (no push-aware).
+
+### MLB3.4 — PROVENANCE NB r=5
+  El código (predecir_mlb) fijó r=5 midiendo sobre los juegos 2026 (este mismo universo) -> NB_R5 = LEGACY_TUNED_IN_SAMPLE.
+  Sigue como C0 de producción, NO como mejora OOS demostrada. Nuevo r sólo con tuning dentro de DEVELOPMENT + forward.
+
+### CHALLENGERS CANDIDATOS (construir en DEVELOPMENT con nested/rolling; NO abrir forward para seleccionar)
+  C0 = producción actual (offense/RA/pitcher/park + platoon + amortigua 0.70 + NB r=5 totals).
+  C1 = núcleo mínimo: liga + offense/RA + pitcher + park + amortigua (sin platoon/bullpen/recent, todos negligibles).
+  C2 = C1 + recent_form reconstruido (sólo si sobrevive forward; hoy negligible).
+  C3 (estructural, el más prometedor): reemplazar el hack amortigua por un modelo de VARIANZA con Z independiente
+     POR EQUIPO (el propio motor lo señaló: var margen real 22.09 vs Poisson 9.15; Z compartido NO explica, Z por
+     equipo SÍ predice 21.24). Es el único cambio con hipótesis mecánica real, no ajuste de exponentes.
+  O/U: r alternativo sólo académico (sin edge de mercado demostrado).
+
+### SALIDA DEL CHECKPOINT (8 items)
+  1. cached_at status: TRUSTED (default now(), 0 triggers, no backfill único).
+  2. starter provenance: PREGAME_STARTER_REFERENCE / PREGAME_KNOWN_STATUS_UNKNOWN; 130 nulls = régimen aparte.
+  3. provenance por feature: offense/RA/liga/last10 PROVEN (reconstruidos); pitcher/park/platoon/bullpen PREGAME_BOUNDED.
+  4. RECENT_FORM bootstrap: consistente pero negligible (~0.0002); no base del cerebro.
+  5. PLATOON (cobertura 2.3% -> unauditable) / BULLPEN (NO_APORTA, leans DAÑINA, OFF) ablation hechas.
+  6. O/U real-line push-aware: NB Brier 0.26040 > naive 0.2469 -> sin edge de mercado (FAIL vs líneas reales).
+  7. NB r=5 provenance: LEGACY_TUNED_IN_SAMPLE.
+  8. challengers: C0..C3 (C3 varianza per-team Z = el más prometedor).
+  NINGUN SKILL_PASS final. Cualquier champion nuevo exige FINAL_TEST_FORWARD (hoy INSUFFICIENT).
+
+### CANDADOS
+  Producción intacta. Sin Kelly/stake/Beta/Wilson. Sin calibración cross-sport. Soccer congelado. No se abrió forward.
+  Objetos SHADOW: lab_mlb_wf (+regimen,rpg_l10,delta_recent,plat,bpmult), lab_mlb_split_seal (reescrito),
+  lab_mlb_lam, lab_mlb_ploc, lab_poisson_phome, lab_nb_pover.
+
+### LECTURA
+  MLB Moneyline: señal real pero minúscula y difusa; ninguna feature individual clara. El mejor avance no es
+  agregar features (todas ~0) sino el modelo de varianza (C3). O/U: NB mejor forma que Poisson pero SIN edge de
+  mercado -> no es la joya que parecía a línea fija. Ser despiadados: hasta tener FINAL_TEST_FORWARD, nada de PASS.
