@@ -5586,3 +5586,91 @@ Todo SHADOW. Producción MLB intacta. Soccer congelado ~96%. NINGUN SKILL_PASS f
   MLB Moneyline: señal real pero minúscula y difusa; ninguna feature individual clara. El mejor avance no es
   agregar features (todas ~0) sino el modelo de varianza (C3). O/U: NB mejor forma que Poisson pero SIN edge de
   mercado -> no es la joya que parecía a línea fija. Ser despiadados: hasta tener FINAL_TEST_FORWARD, nada de PASS.
+
+
+## 7-sep-2026 — MLB7: C1/C3 pre-registrados sobre DEVELOPMENT (nested rolling). Resultado: NULL VALIOSO.
+Todo SHADOW. Producción intacta. Sin Kelly/risk/stake/Beta/Wilson/calibración post-hoc. Soccer congelado.
+NO existe FINAL TEST histórico -> NINGUN SKILL_PASS_FINAL. Máximo permitido: DEVELOPMENT_CHAMPION.
+
+### CORRECCIONES DE ESTADO
+  OU_MARKET_VALIDATION = PARTIAL_INSUFFICIENT_EVIDENCE (no "FAIL vs market"): cobertura real-line 13%,
+    sin comparación no-vig/decision-odds, baseline debe ser temporal.
+  NB r=5 = LEGACY_TUNED_IN_SAMPLE; referencia C0, no mejora demostrada.
+
+### 1) DEFINICION EXACTA (pre-registrada ANTES de medir)
+  C0 = producción: media (offense/RA/pitcher/park) + amortigua(52.8, 0.70) + Poisson-ganador, empate 50/50. Referencia.
+  C1 = media más parsimoniosa. OFF por falta de evidencia/cobertura: weather, lineup, bullpen, platoon.
+       Selección estructural por rolling. RESULTADO: quitar pitcher (0.24857) o ir a base-liga (0.24973) EMPEORA
+       vs full (0.24750) in-sample; ninguna ablación justifica quitar -> C1_mean = C0_mean (nada que simplificar).
+       => C1 ≡ C0 en este harness (platoon/bullpen ya OFF). EXP_OFF=0.50 congelado, no retuneado.
+  C3A = MISMA media que C0 + varianza nueva: Runs_home~NB(lam_h,k), Runs_away~NB(lam_a,k) independientes,
+        dispersión única k, empate 50/50, SIN amortigua (la NB ES la corrección de varianza). lab_nb_phome().
+  C3B = misma media que C1 + varianza NB. Como C1_mean=C0_mean, C3B ≡ C3A (no se evalúa aparte).
+
+### 2) DISPERSION k POR OUTER FOLD (rolling-origin; k elegido SOLO en train previo)
+  fold  ventana            train      kstar   (grid {2,3,4,5,8})
+  F1    07-01..07-15       <07-01     2
+  F2    07-16..07-31       <07-16     5
+  F3    08-01..08-15       <08-01     4
+  F4    08-16..08-31       <08-16     3
+  => k salta 2/5/4/3 sin óptimo estable -> VARIANCE_MODEL_UNSTABLE. La dispersión que "pide" el dato no es
+     una constante estructural; cambia por ventana.
+
+### 3) MATRIZ ROLLING OOS (P_RAW puro, sin calibración legacy; empate 50/50 igual para todos)
+  fold  n    brier_C0   brier_C3A  ΔC3A-C0   brier_base_temporal  ΔC0-base
+  F1    159  0.24575    0.24615    +0.00040  0.25062              -0.00487
+  F2    194  0.24906    0.24912    +0.00006  0.25024              -0.00118
+  F3    203  0.25042    0.25080    +0.00037  0.24949              +0.00094
+  F4    164  0.24097    0.24212    +0.00115  0.24953              -0.00856
+  POOLED n=720 (9 week-blocks, block-bootstrap/cluster IC):
+    C3A vs C0:   +0.00047  IC ±0.00068  -> C3 NO mejora (centrado peor; cruza 0). C3 RECHAZADO.
+    C0 vs base:  -0.00308  IC ±0.00337  -> cruza 0: C0 NO bate robustamente al baseline temporal.
+
+### 4) ESTABILIDAD TEMPORAL
+  C3A peor que C0 en LOS 4 folds (signo consistente equivocado). k inestable. -> varianza NB independiente
+  parsimoniosa NO aporta. C0 bate al baseline en 3/4 folds pero pierde en F3 y el pooled cruza 0 -> señal débil/inestable.
+
+### 5) PITCHER PRESENT / NULL (régimen de missingness, fallback documentado, sin inventar FIP)
+  PITCHER_PRESENT n=923 brier_C0 0.24710 (home 0.522) ; PITCHER_NULL n=130 brier_C0 0.25038 (home 0.485, ~volado).
+  C0/C3 idénticos en patrón: el modelo sólo "funciona" (débilmente) con pitcher presente. NULL = DATA_READINESS futuro,
+  NO threshold monetario ahora.
+
+### 6) CALIBRATION (P_RAW puro, full DEVELOPMENT, pooled one-vs... binario ML)
+  C0: slope≈1.07 intercept≈-0.04 (de la regresión in-sample; = coef legacy, por eso LEGACY_CALIBRATION_IN_SAMPLE).
+  C3A: al encoger hacia 0.5, reduce sobre-confianza pero NO mejora Brier -> recalibrar la varianza no compró skill.
+  (No se aplica calibración post-hoc a ningún challenger; se evalúa P_RAW.)
+
+### 7) O/U RESEARCH (push-aware, secundario) = DEVELOPMENT_SIGNAL (cobertura 13%, sin PASS/FAIL)
+  NB r=5 vs línea real push-aware: Brier 0.26040 (n=133 non-push) vs naive 0.2469. NB estructuralmente mejor que
+  Poisson a línea fija, pero SIN edge vs líneas reales. Estado: DEVELOPMENT_SIGNAL. Falta cobertura + baseline temporal
+  + no-vig para cualquier veredicto. No ROI.
+
+### 8) DEVELOPMENT_CHAMPION
+  = C0 (producción, sin cambios) POR PARSIMONIA: ningún challenger lo supera. C1 no simplifica (empeora quitar), C3
+  no mejora (varianza NB peor + k inestable). PERO su ventaja sobre el baseline temporal NO es significativa (pooled
+  cruza 0). => Postura correcta: MLB Moneyline SIN señal propia robusta -> $0, no promover, no inventar features.
+  Es el resultado "C0≈C1≈C3" anticipado: valioso. NO SKILL_PASS_FINAL, NO PRODUCTION_READY.
+
+### 9) BLOCKERS PARA FINAL_TEST_FORWARD
+  a) No existe muestra forward: 0 juegos con resultado > 2026-08-30 -> FINAL_TEST_EVIDENCE = INSUFFICIENT.
+  b) Falta acumular captura forward real (lab_mlb_forward, creada): decision_time, P_RAW, model_version, starter_ref,
+     cache_ts, data_readiness, exact_decision_odds, market_key; post-evento result/closing/CLV.
+  c) HISTORICAL_DECISION_TIME=UNPROVEN -> economía/eligibility exige decision_time forward real.
+  d) Cobertura O/U real-line 13% -> recuperar mapping radar<->espn para validar mercado.
+  e) Antes de cualquier PASS: correr el mismo protocolo sobre FINAL_TEST_FORWARD acumulado (nunca visto).
+
+### SELECCION MULTIPLE (transparencia)
+  Variantes de media probadas: 3 (full, no-pitcher, base-liga). Dispersiones k consideradas: 5 ({2,3,4,5,8}).
+  Outer folds: 4. Criterio: menor Brier en train para k; parsimonia para media (empate -> más simple).
+  Ninguna diferencia material (>0.001) sobrevivió; no se persiguieron diferencias de 0.0001 con más parámetros.
+
+### OBJETOS SHADOW (este bloque)
+  lab_nb_phome() (winner NB independiente, empate 50/50) ; lab_mlb_wf (+c3_k2..k8, p_c1_nopit, p_c1_base) ;
+  lab_mlb_forward (captura forward append-only) ; lab_mlb_split_seal (correcciones de estado). Producción intacta.
+
+### LECTURA
+  MLB confirma la hipótesis distinta a Soccer sólo a medias: la media λ NO se puede simplificar (quitar features
+  empeora) PERO tampoco se puede mejorar la varianza con NB independiente (k inestable, no bate amortigua). El
+  resultado neto es que MLB Moneyline no tiene señal propia robusta sobre el baseline temporal -> lo correcto es
+  $0 y esperar FINAL_TEST_FORWARD, no seguir inventando features. C3 (varianza) queda descartado en su forma
+  parsimoniosa; un Z-por-equipo más complejo NO se justifica sin nueva evidencia (el simple ya falló).
