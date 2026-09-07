@@ -6176,3 +6176,73 @@ Todo SHADOW en modelos. 2026 outcomes NO tocados. No ML avanzado. No Waivers/Opt
   lab_ff_fwd_capturar_v1 (prediction_validity, snapshot policy) ; lab_ff_capturar_semana / _actual ;
   lab_ff_grade_semana ; lab_ff_forward (+prediction_validity,+sample_flag) ; cron 417 ; registry actualizado.
   Frontend: ApostarButton.tsx (Lovable) + deploy. Modelos de produccion intactos. Soccer/MLB congelados.
+
+
+## 7-sep-2026 — FF9.3/9.4 multi-snapshot + B1 cross-season + FF10 roster inventory + FF11 lineup optimizer V1
+Todo SHADOW en modelos. 2026 outcomes NO usados para tuning. No ML avanzado. No Waivers/Trades/Draft.
+
+### FF9.3 — MULTI-SNAPSHOT APPEND-ONLY (corrige "primera foto <=10d")
+  Antes: 1 fila eterna por semana (primera captura = official). AHORA: multiples snapshots pregame por
+  player x season x week x model x HORA-bucket. Idempotencia = ese bucket (misma hora = 1 fila; horas
+  distintas = snapshots nuevos). Nunca sobrescribe snapshots anteriores (append-only + freeze trigger).
+  OFFICIAL/LATEST (v_lab_ff_official_snapshot): distinct on (player,season,week) el de MAX(prediction_time)
+  entre VALID_PREGAME. Pre-kickoff = latest (lo consume la UI; una lesion del viernes genera snapshot nuevo sin
+  borrar el del martes). Post-kickoff queda sellado (no hay mas snapshots validos). LATE_PREDICTION_INVALID
+  jamas candidato a official (la vista lo excluye).
+  Las 785 fotos Week1 originales se CONSERVAN como snapshots historicos; NO se borran ni reemplazan. Re-corri la
+  captura -> ahora 1570 filas wk1 (785 originales + 785 nuevas), 2 snapshots/jugador, official = 785 (el latest).
+
+### FF9.4 — POLITICA CROSS-SEASON DE B1 (congelada, sin decay)
+  lab_ff_project_v1 reescrito: B1_t = media de igual peso de TODAS las player-weeks elegibles anteriores a t
+  (temporadas previas 2025 + semanas 2026 ya terminadas). Nunca semana actual/futura. ACTIVE_ZERO_USAGE previos
+  cuentan como 0; BYE/INACTIVE no cuentan (no estan en v_lab_ff_eligible). CROSS_SEASON_DECAY=UNVALIDATED (no se
+  inventa decay; 1 sola temporada de historia). Backtest 2025 intacto (no hay season<2025): 4693/4693 == b1_cummean.
+  Rookie/sin historia NFL -> prior de posicion; cold_start=true HASTA su primera aparicion elegible IN-SEASON
+  (cold_start = (in_season_n==0)); tras la primera semana 2026 jugada, cold_start=false y aplica B1 pooled.
+
+### REGRESIONES FF9 (10/10 PASS)
+  1 multiples snapshots pregame por persona: 785 jugadores con 2 snapshots.
+  2 ningun snapshot previo modificado (append-only; nuevas filas).
+  3 latest pregame = lo que consume la UI (v_lab_ff_official_snapshot).
+  4 post-kickoff official = ultimo snapshot valido pregame (max prediction_time<kickoff).
+  5 captura post-kickoff no reemplaza official (LATE excluida de la vista).
+  6 injury update -> availability del snapshot NUEVO, no del viejo (fila nueva).
+  7 projected_mean solo cambia si cambian inputs: 785/785 con 2 snapshots tienen proj IDENTICA (0 difieren).
+  8 Week2 usa Week1 solo tras terminar (v_lab_ff_eligible solo tiene actual_points graded).
+  9 ninguna Week2 usa juego no finalizado (grading lee solo game_logs finales).
+  10 historia 2025+2026 con politica B1 congelada, sin decay post-hoc.
+  (+ multi-snapshot no rompe: idempotencia por bucket; late=INVALID; postgame no altera pregame ya probados.)
+
+### FF10 — INVENTARIO / ESTADO DE LIGA REAL
+  fantasy_liga_config ('principal', Yahoo, 10 equipos, H2H, mi_equipo='Baby Back Gibbs', temporada 2026):
+    slots (huecos): QB1[QB] RB2[RB,FB] WR2[WR] TE1[TE] K1[K,PK] DEF1[DEF,DST] FLEX1[WR,RB,TE,FB]; banca 6; IR 2;
+    reglas: puntos_negativos true, playoffs 4 equipos sem 16-17, waivers lista rodante, trades hasta 28-nov.
+  fantasy_roster_semanal (apodo,temporada,semana,jugadores jsonb,rival_nombre,analisis): EXISTE pero VACIA (0 filas)
+    -> es el store del roster del usuario; falta poblarlo (entrada manual o FANTASY HELPER por screenshot #41).
+  CAPA DE PRODUCTO (disenada): ALL_NFL_PLAYERS -> FANTASY_RELEVANT_POOL (785 capturados wk1) -> ROSTERED (del store)
+    + FREE_AGENTS (capturados no rosterizados). No se elimina ningun jugador (se necesitan para Waivers luego).
+  CONEXION real pendiente: resolver nombre->espn_player_id del roster del usuario y escribir fantasy_roster_semanal;
+    opponent roster / free-agent engine = bloque Waivers (NO ahora).
+
+### FF11 — LINEUP OPTIMIZER V1 (construido y probado; NO recalcula proyecciones)
+  lab_ff_optimizar_lineup(player_ids[], season, week): lee v_lab_ff_official_snapshot, maximiza projected_mean
+  sujeto a los slots de fantasy_liga_config: QB1, RB2, WR2, TE1, FLEX1 (W/R/T). Greedy top-proj por posicion +
+  FLEX = mejor sobrante elegible (optimo para lineup de 1 FLEX con slots independientes).
+  OUT -> INELIGIBLE (no startable). BYE / sin snapshot -> UNRESOLVED (NO_PROJECTION_OR_BYE). QUESTIONABLE ->
+  se titula igual (mayor proj) pero marcado STARTER_RISK_QUESTIONABLE (riesgo de disponibilidad, NO altera puntos).
+  K/DEF fuera de V1 (universo QB/RB/WR/TE; sin proyeccion aun) -> documentado.
+  PRUEBA (roster demo real wk1): QB Josh Allen 22.27 (Stafford 21.43 banca) ; RB McCaffrey 24.51[Q]+Bijan 22.05 ;
+    WR Nacua 23.56[Q]+JSN 21.29 ; TE McBride 18.58 ; FLEX Gibbs 21.70 (sobre J.Taylor 21.31/Achane 20.18/Chase 19.73).
+    Optimo y con riesgo de availability visible. El optimizer NO recalcula: usa el projected_points congelado.
+
+### OBJETOS (este bloque)
+  lab_ff_project_v1 (B1 pooled cross-season) ; lab_ff_fwd_capturar_v1 (bucket horario, multi-snapshot) ;
+  v_lab_ff_official_snapshot (latest pregame + player_name) ; lab_ff_grade_semana (califica solo official) ;
+  lab_ff_optimizar_lineup() ; lab_ff_forward (785 wk1 originales + 785 nuevas = 1570). Cron 417 sigue.
+  Modelos de produccion intactos. Soccer/MLB congelados.
+
+### ESTADO / BLOCKERS
+  WEEKLY_PROJECTION_V1_ARCHITECTURE=PASS ; START_SIT_V1_ARCHITECTURE=PASS ; LINEUP_OPTIMIZER_V1=BUILT.
+  Bloqueantes: (a) conectar/poblar el roster real (fantasy_roster_semanal) con resolucion nombre->id ;
+  (b) K/DEF sin proyeccion ; (c) 0 semanas 2026 calificadas -> evaluacion forward pendiente ;
+  (d) Waivers/Trades/Draft = siguientes bloques, NO ahora. No se uso ningun outcome 2026.
