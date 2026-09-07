@@ -458,6 +458,178 @@ REVOKE EXECUTE ON FUNCTION public.generar_codigo_amigo(text)        FROM anon, P
 -- Pipeline de marcadores: no tiene identidad de usuario -> fuera del cliente por completo.
 REVOKE EXECUTE ON FUNCTION public.upsert_live_scores_guarded(jsonb) FROM anon, authenticated, PUBLIC;
 
+-- ---------------------------------------------------------------------
+-- SIBLING_IDOR — misma root cause hallada por el sweep. Misma filosofía.
+-- ---------------------------------------------------------------------
+
+-- historial_por_equipo: lee historial de apuestas por apodo (read IDOR financiero).
+-- SQL-lang: se scopea con apodo_scope. Se preserva la ruta admin/all para service_role
+-- (auth.uid()=null -> apodo_scope(null)=null -> pasa el OR y ve todo); authenticated -> propio.
+CREATE OR REPLACE FUNCTION public.historial_por_equipo(p_apodo text DEFAULT NULL::text, p_min_apuestas integer DEFAULT 3, p_deporte text DEFAULT NULL::text)
+ RETURNS TABLE(equipo text, deporte text, apuestas bigint, ganadas bigint, perdidas bigint, pct_acierto numeric, arriesgado numeric, dano numeric, neto numeric, roi_solo numeric, vs_tu_promedio numeric, calificacion text, nota text)
+ LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+  with scope as (select public.apodo_scope(p_apodo) as ap),          -- [SIBLING_IDOR]
+  b as (
+    select v.* from v_apuestas_equipo v
+    where v.equipo is not null
+      and v.resultado in ('ganado','perdido')
+      and ((select ap from scope) is null or v.apodo = (select ap from scope))
+      and (p_deporte is null or v.deporte ilike '%'||p_deporte||'%')
+  ), base as (
+    select 100.0*sum(neto_sola)/nullif(sum(arriesgado),0) roi_global from b
+  ), g as (
+    select b.equipo, (array_agg(b.deporte order by b.fecha desc))[1] deporte,
+           count(*) apuestas, count(*) filter (where b.resultado='ganado') ganadas,
+           count(*) filter (where b.resultado='perdido') perdidas,
+           sum(b.arriesgado) arriesgado, sum(b.neto_culpa) culpa,
+           sum(b.neto_repartido) repartido, sum(b.neto_sola) sola
+    from b group by b.equipo
+  ), c as (
+    select g.*, base.roi_global,
+           (100.0*g.sola/nullif(g.arriesgado,0) - base.roi_global) * g.apuestas/(g.apuestas+6.0) dif
+    from g cross join base
+  )
+  select c.equipo, c.deporte, c.apuestas, c.ganadas, c.perdidas,
+         round(100.0*c.ganadas/nullif(c.apuestas,0), 1),
+         round(c.arriesgado, 2), round(greatest(-c.culpa, 0), 2), round(c.repartido, 2),
+         round(100.0*c.sola/nullif(c.arriesgado,0), 1), round(c.dif, 1),
+         case when c.apuestas < p_min_apuestas then '—'
+              when c.dif >=  15 then 'A' when c.dif >=   5 then 'B'
+              when c.dif >=  -5 then 'C' when c.dif >= -15 then 'D' else 'F' end,
+         case when c.apuestas < p_min_apuestas
+                then 'muestra corta ('||c.apuestas||' apuesta'||case when c.apuestas=1 then '' else 's' end||'): no alcanza para calificar'
+              when c.culpa < 0 then 'te ha costado $'||round(-c.culpa,2)
+              when c.culpa > 0 then 'te ha dejado $'||round(c.culpa,2)
+              else 'a mano' end
+  from c order by c.culpa asc;
+$function$;
+
+-- get_weekly_snapshots(uid): IGNORA el uid del cliente; resuelve el usuarios.id del auth.uid().
+-- service_role (auth.uid null) conserva el uid explícito (ruta interna).
+CREATE OR REPLACE FUNCTION public.get_weekly_snapshots(uid uuid)
+ RETURNS TABLE(week_start date, week_end date, bankroll_inicio numeric, bankroll_cierre numeric, meta numeric, profit numeric, picks_count bigint, parlays_count bigint, wins bigint, losses bigint)
+ LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+DECLARE r RECORD; running numeric; wp numeric; ajuste numeric; pc bigint; prc bigint; w bigint; l bigint;
+        user_apodo text; v_auth uuid := auth.uid();
+BEGIN
+  IF v_auth IS NOT NULL THEN                                            -- [SIBLING_IDOR]
+    SELECT id INTO uid FROM usuarios WHERE user_id = v_auth;            -- ignora el uid del cliente
+    IF uid IS NULL THEN RETURN; END IF;                                 -- fail-closed
+  END IF;
+  SELECT apodo, bankroll_inicial INTO user_apodo, running FROM usuarios WHERE id = uid;
+  IF user_apodo IS NULL THEN RETURN; END IF;
+  FOR r IN (
+    SELECT date_trunc('week', fecha)::date AS ws, (date_trunc('week', fecha) + interval '6 days')::date AS we
+    FROM ( SELECT fecha FROM picks WHERE apodo = user_apodo AND resultado IN ('ganado','perdido')
+           UNION SELECT fecha FROM parlays WHERE apodo = user_apodo AND resultado IN ('ganado','perdido')
+           UNION SELECT fecha FROM ajustes_cuenta WHERE apodo = user_apodo ) d
+    GROUP BY ws, we ORDER BY ws )
+  LOOP
+    SELECT COALESCE(SUM(gn),0) INTO wp FROM (
+      SELECT ganancia_neta AS gn FROM picks WHERE apodo=user_apodo AND fecha BETWEEN r.ws AND r.we AND resultado IN ('ganado','perdido')
+      UNION ALL SELECT ganancia_neta FROM parlays WHERE apodo=user_apodo AND fecha BETWEEN r.ws AND r.we AND resultado IN ('ganado','perdido')) x;
+    SELECT COALESCE(SUM(monto),0) INTO ajuste FROM ajustes_cuenta WHERE apodo=user_apodo AND fecha BETWEEN r.ws AND r.we;
+    SELECT COUNT(*) INTO pc FROM picks WHERE apodo=user_apodo AND fecha BETWEEN r.ws AND r.we AND resultado IN ('ganado','perdido');
+    SELECT COUNT(*) INTO prc FROM parlays WHERE apodo=user_apodo AND fecha BETWEEN r.ws AND r.we AND resultado IN ('ganado','perdido');
+    SELECT COUNT(*) INTO w FROM ( SELECT id FROM picks WHERE apodo=user_apodo AND fecha BETWEEN r.ws AND r.we AND resultado='ganado'
+      UNION ALL SELECT id FROM parlays WHERE apodo=user_apodo AND fecha BETWEEN r.ws AND r.we AND resultado='ganado') x;
+    SELECT COUNT(*) INTO l FROM ( SELECT id FROM picks WHERE apodo=user_apodo AND fecha BETWEEN r.ws AND r.we AND resultado='perdido'
+      UNION ALL SELECT id FROM parlays WHERE apodo=user_apodo AND fecha BETWEEN r.ws AND r.we AND resultado='perdido') x;
+    week_start := r.ws; week_end := r.we; bankroll_inicio := running; bankroll_cierre := running + wp + ajuste;
+    meta := running * 1.15; profit := wp; picks_count := pc; parlays_count := prc; wins := w; losses := l;
+    RETURN NEXT;
+    running := running + wp + ajuste;
+  END LOOP;
+END $function$;
+
+-- redimir_codigo_amigo: bindea el redentor a auth.uid(); ignora p_apodo del cliente; fail-closed.
+CREATE OR REPLACE FUNCTION public.redimir_codigo_amigo(p_apodo text, p_codigo text)
+ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+DECLARE v_yo text; v_owner text; v_a text; v_b text;
+BEGIN
+  v_yo := public.usuario_economico_actual();                            -- [SIBLING_IDOR]
+  IF v_yo IS NULL THEN RETURN jsonb_build_object('ok', false, 'error', 'IDENTIDAD_REQUERIDA'); END IF;
+  p_apodo := v_yo;
+  SELECT apodo INTO v_owner FROM usuarios WHERE codigo_amigo = upper(trim(p_codigo));
+  IF v_owner IS NULL THEN RETURN jsonb_build_object('ok', false, 'error', 'Código no encontrado'); END IF;
+  IF v_owner = p_apodo THEN RETURN jsonb_build_object('ok', false, 'error', 'No puedes agregarte a ti mismo'); END IF;
+  v_a := least(v_owner, p_apodo); v_b := greatest(v_owner, p_apodo);
+  IF EXISTS (SELECT 1 FROM amigos WHERE apodo_a = v_a AND apodo_b = v_b AND estado = 'aceptada') THEN
+    RETURN jsonb_build_object('ok', true, 'ya_eran_amigos', true, 'amigo', v_owner);
+  END IF;
+  INSERT INTO amigos (apodo_a, apodo_b, estado, codigo_invitacion, accepted_at)
+  VALUES (v_a, v_b, 'aceptada', p_codigo, now())
+  ON CONFLICT (apodo_a, apodo_b) DO UPDATE SET estado = 'aceptada', accepted_at = now();
+  RETURN jsonb_build_object('ok', true, 'ya_eran_amigos', false, 'amigo', v_owner);
+END; $function$;
+
+-- reto_registrar_favoritos: identidad autoritativa via resolver (authenticated->propio;
+-- service_role/INTERNAL->apodo explícito; anon->rechazado). + REVOKE anon (defensa en profundidad).
+CREATE OR REPLACE FUNCTION public.reto_registrar_favoritos(p_apodo text DEFAULT 'rodelcast'::text)
+ RETURNS integer LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+declare v_ident jsonb; n int;
+begin
+  v_ident := public.resolver_identidad_economica(p_apodo);              -- [SIBLING_IDOR]
+  if not coalesce((v_ident->>'ok')::boolean,false) then
+    raise exception 'IDENTIDAD_RECHAZADA: %', coalesce(v_ident->>'motivo','CONTEXTO_NO_RECONOCIDO');
+  end if;
+  p_apodo := v_ident->>'apodo';
+  insert into reto_picks_mostrados (
+    apodo, espn_event_id, liga, deporte, partido, equipo, pick, momio, casa,
+    prob_modelo, prob_momio, ventaja_pp, ev_pct, apuesta_pct, nivel_seguridad, info_completa, saque)
+  select p_apodo, f.espn_event_id, f.liga, f.deporte, f.partido, f.equipo, f.pick,
+         f.momio, f.casa, f.prob_modelo, f.prob_momio, f.ventaja_pp, f.ev_pct, round(100*f.fraccion,2),
+         case when f.prob_modelo >= 65 then 'SEGURO' when f.prob_modelo >= 55 then 'MODERADO' else 'MONEDA AL AIRE' end,
+         f.info_completa, f.saque
+  from public.favoritos_bien_pagados() f
+  where f.info_completa and coalesce(f.falta,'') not ilike 'ventaja de%' and f.saque > now() + interval '30 minutes'
+  on conflict (apodo, espn_event_id, pick) do nothing;
+  get diagnostics n = row_count;
+  return n;
+end $function$;
+
+REVOKE EXECUTE ON FUNCTION public.reto_registrar_favoritos(text) FROM anon, PUBLIC;
+
+-- registrar_perfil: BLOQUEA el reclaim silencioso de apodos legacy (user_id IS NULL) SIN código.
+-- Antes: takeover posible (p.ej. 'rongo' bankroll 2500 + 21 apuestas, sin código).
+-- El alta de apodo NUEVO NO se toca; el reclaim legacy pasa a exigir código (reclamar_apodo).
+CREATE OR REPLACE FUNCTION public.registrar_perfil(p_apodo text, p_bankroll numeric DEFAULT 1500)
+ RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+DECLARE v_uid uuid; v_ap text; v_existente record;
+BEGIN
+  v_uid := auth.uid();
+  IF v_uid IS NULL THEN RETURN jsonb_build_object('ok', false, 'error', 'Necesitas iniciar sesión primero'); END IF;
+  IF EXISTS (SELECT 1 FROM usuarios WHERE user_id = v_uid) THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'Esta cuenta ya tiene un apodo asignado',
+      'apodo', (SELECT apodo FROM usuarios WHERE user_id = v_uid));
+  END IF;
+  v_ap := btrim(p_apodo);
+  IF length(v_ap) < 2 OR length(v_ap) > 30 THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'El apodo debe tener entre 2 y 30 caracteres');
+  END IF;
+  IF v_ap !~ '^[A-Za-z0-9 _.-]+$' THEN
+    RETURN jsonb_build_object('ok', false, 'error', 'El apodo solo admite letras, números, espacios, guiones y puntos');
+  END IF;
+  SELECT * INTO v_existente FROM usuarios WHERE lower(apodo) = lower(v_ap);
+  IF FOUND THEN
+    IF v_existente.user_id IS NOT NULL THEN
+      RETURN jsonb_build_object('ok', false, 'error', 'Ese apodo ya está tomado');
+    END IF;
+    -- [SEC] Antes reclamaba el apodo legacy SIN código (takeover). BLOQUEADO:
+    RETURN jsonb_build_object('ok', false, 'error', 'apodo_legacy_requiere_codigo',
+      'mensaje', 'Ese apodo ya existe de una versión anterior; reclámalo con tu código de reclamo.');
+  END IF;
+  INSERT INTO usuarios (apodo, email, user_id, bankroll_inicial, activo)
+  VALUES (v_ap, (SELECT email FROM auth.users WHERE id = v_uid), v_uid, COALESCE(p_bankroll, 1500), true);
+  RETURN jsonb_build_object('ok', true, 'apodo', v_ap, 'accion', 'creado',
+    'bankroll', COALESCE(p_bankroll,1500), 'mensaje', 'Perfil creado');
+END $function$;
+
 COMMIT;
 
 -- =====================================================================
