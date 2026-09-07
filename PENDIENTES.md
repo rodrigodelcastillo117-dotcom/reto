@@ -6246,3 +6246,85 @@ Todo SHADOW en modelos. 2026 outcomes NO usados para tuning. No ML avanzado. No 
   Bloqueantes: (a) conectar/poblar el roster real (fantasy_roster_semanal) con resolucion nombre->id ;
   (b) K/DEF sin proyeccion ; (c) 0 semanas 2026 calificadas -> evaluacion forward pendiente ;
   (d) Waivers/Trades/Draft = siguientes bloques, NO ahora. No se uso ningun outcome 2026.
+
+
+## 7-sep-2026 — FF11.1 micro-cierre: anti-backdate + history_status + roster real E2E + K/DST + full-lineup optimizer
+Todo SHADOW en modelos. 2026 outcomes NO usados para tuning. No ML avanzado. NO Waivers/Trades/Draft.
+
+### 1. GOBERNANZA (estados corregidos)
+  WEEKLY_PROJECTION_V1_ARCHITECTURE = PASS ; START_SIT_V1_ARCHITECTURE = PASS ;
+  FORWARD_PREDICTIVE_VALIDATION = PENDING (0 semanas 2026 calificadas). "Predictive PASS" NO se declara.
+  SKILL_POSITION_OPTIMIZER_V1 = PASS ; FULL_LINEUP_OPTIMIZER_V1 = PASS (ahora con K+DEF).
+
+### FF9.5 — CANDADO ANTI-BACKDATE (server-authoritative)
+  lab_ff_forward.captured_at (nuevo) lo fija un trigger BEFORE INSERT (trg_ff_anti_backdate) = now(); ignora cualquier
+  valor de cliente; fuerza prediction_time <= captured_at; deriva prediction_validity de captured_at vs kickoff.
+  Vista OFFICIAL exige prediction_validity='VALID_PREGAME' AND captured_at < kickoff (verdad de servidor).
+  PRUEBA ADVERSARIAL: INSERT post-kickoff con prediction_time=kickoff-4h y prediction_validity='VALID_PREGAME'
+  forzado -> el trigger lo reescribió a LATE_PREDICTION_INVALID (captured_at>kickoff) y NO aparece en official. PASS.
+
+### FF9.6 — HISTORY_STATUS (veterano != rookie)
+  Nuevo history_status: ESTABLISHED_CROSS_SEASON / IN_SEASON_ESTABLISHED / LIMITED_NFL_HISTORY / ROOKIE_NO_NFL_HISTORY.
+  cold_start = true SOLO para ROOKIE_NO_NFL_HISTORY. 2026 wk1: 413 ESTABLISHED_CROSS_SEASON (veteranos 2025, cold_start
+  false), 299 ROOKIE (cold_start true), 73 LIMITED. Un veterano con historia 2025 ya NO se confunde con rookie.
+  (backfill de history_status/cold_start en las filas existentes; es clasificacion, no cambia projected_points.)
+
+### FF10.1 — ROSTER REAL E2E (nombre -> id -> store -> optimizer)
+  lab_ff_resolver_nombre(nombre): normaliza y matchea nfl_jugadores.nombre_norm; 0 match -> NULL; >1 -> EXCEPTION
+  (AMBIGUOUS_NAME, no elige en silencio). Pool activo QB/RB/WR/TE: 0 homonimos (alias table vacia, no se usa).
+  fantasy_roster_semanal.jugadores = jsonb ARRAY de {tipo:SKILL|K|DST, ref, nombre}. E2E: 10 skill por nombre
+  (0 sin resolver) + K 'Harrison Butker' + DST 'KC' -> guardado (12) -> optimizer leyo del store -> lineup completo.
+  Cleanup del roster E2E hecho.
+
+### FF11.2 — KICKER BASELINE (lab_ff_k_points, walk-forward)
+  Scoring de fantasy_liga_config.puntuacion_k (FG 3/3/3/4/5/6, PAT 1). K logs 2025: 536 filas, 43 kickers,
+  espn_player_id NULL -> se usa 'jugador' (nombre). n_common=409:
+    MAE media-jugador 3.901 vs MAE media-posicion 3.778 (RMSE 4.864 ; mean 8.67 sd 4.66).
+  HALLAZGO: la media individual NO bate a la media de posicion (la iguala/empeora) -> K es ruido intercambiable.
+  K_CHAMPION = media as-of (posicion ~ jugador); sin modelo sofisticado. lab_ff_k_project() expone el B1 de jugador
+  con fallback a media de posicion. DATA-READINESS: kicker_logs sin espn_player_id (mapear id para forward).
+
+### FF11.3 — DST BASELINE (lab_ff_dst_points, TEAM-WEEK)
+  nfl_defense_logs = 544 filas team-week 2025 (SI existe walk-forward; defensa_fantasy era agregado de temporada,
+  no se usa). Scoring de puntuacion_def (sack1, int2, fum2, TD6, safety4, blk2, ret-TD6, pat-ret2, pts_permitidos
+  por tramos 10/7/4/1/0/-1/-4). n_common=448:
+    MAE media-equipo 4.538 vs MAE media-liga 4.401 (RMSE 5.828 ; mean 6.13 sd 5.73).
+  HALLAZGO: igual que K, la media de liga iguala/supera a la del equipo -> DST tambien es ruido. DST_CHAMPION =
+  media as-of (liga ~ equipo). lab_ff_dst_project() expone el B1 de equipo con fallback a media de liga. DST NO es
+  DATA_INSUFFICIENT (defense_logs cubre los componentes).
+
+### FF11.4 — FULL-LINEUP OPTIMIZER (QB1 RB2 WR2 TE1 FLEX1 K1 DEF1)
+  lab_ff_optimizar_full(skill_pids[], k_jugador, dst_equipo, season, week): slots skill (greedy top-proj + FLEX =
+  mejor sobrante RB/WR/TE) + K (lab_ff_k_project) + DEF (lab_ff_dst_project). Cada jugador usado <=1 vez; FLEX solo
+  RB/WR/TE; OUT/BYE inelegibles; QUESTIONABLE elegible con warning, projection intacta; NUNCA recalcula projected_mean.
+  OPTIMALIDAD: con 1 solo FLEX y K/DEF en slots independientes, greedy top-por-posicion + mejor-sobrante-FLEX es
+  GLOBALMENTE OPTIMO (mover un titular base a FLEX para liberar su slot a uno menor nunca sube el total).
+  E2E (roster real wk1, leido del store): QB Allen 22.27 | RB Bijan 22.05 + Gibbs 21.70 | WR Nacua 23.56[Q] + JSN
+  21.29 | TE McBride 18.58 | FLEX J.Taylor 21.31 | K Butker 8.67 | DEF KC 5.41. Lineup de 9 slots COMPLETO.
+
+### REGRESIONES (10/10 PASS)
+  1 postgame no crea snapshot pregame backdateado (adversarial PASS).
+  2 veteran wk1 con historia 2025 != rookie (413 ESTABLISHED vs 299 ROOKIE).
+  3 rookie real usa prior de posicion (ROOKIE_COLD_START).
+  4 roster nombre->ID sin homonimos (0 dupes; resolver lanza EXCEPTION si ambiguo).
+  5 ningun jugador en dos slots (distinct starters = true).
+  6 FLEX solo RB/WR/TE (flex pos = RB).
+  7 OUT/BYE jamas titular (OUT_never_starter = true; BYE sin snapshot -> UNRESOLVED).
+  8 QUESTIONABLE mantiene projection intacta (Nacua 23.56, solo flag de riesgo).
+  9 lineup contiene exactamente los slots requeridos (QB1 RB2 WR2 TE1 FLEX1 K1 DEF1 = 9).
+  10 optimizer nunca recalcula projected_mean (usa el projected_points congelado).
+
+### OBJETOS (este bloque)
+  lab_ff_forward (+captured_at,+history_status; trg_ff_anti_backdate) ; lab_ff_project_v1 (history_status) ;
+  v_lab_ff_official_snapshot (captured_at gate + player_name) ; lab_ff_resolver_nombre() ; lab_ff_k_points() +
+  lab_ff_k_project() ; lab_ff_dst_points() + lab_ff_dst_project() ; lab_ff_optimizar_full(). Cron 417 sigue.
+  Modelos de produccion intactos. Soccer/MLB congelados.
+
+### ESTADO EXACTO PARA WAIVERS
+  LISTO: proyeccion por jugador (B1 congelado, cross-season, anti-backdate, multi-snapshot official/latest),
+  Start/Sit, roster real por nombre, K/DST baselines, full-lineup optimizer, capa de producto
+  ALL->RELEVANT->ROSTERED+FREE_AGENTS definida. Waivers ya puede responder: free agent -> projected value ->
+  mejora sobre tu peor titular -> slot/bye/availability -> recomendacion.
+  PENDIENTE (no bloquea Waivers, si la validacion final): FORWARD_PREDICTIVE_VALIDATION (0 semanas 2026 jugadas) ;
+  kicker_logs sin espn_player_id (mapear para forward K) ; poblar rosters reales de usuarios via FANTASY HELPER.
+  NO iniciado: Waivers/Trades/Draft (siguiente bloque, con tu GO).
