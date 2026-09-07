@@ -1,324 +1,334 @@
 # RUNBOOK — DEPLOY SQL · ISS-003 / ISS-009 / ISS-009B (Gobernanza MLB)
 
-> **ESTADO: NO DEPLOY.** Este runbook describe *exactamente* el deploy; no lo ejecuta.
-> `DEPLOY_RUNBOOK_READY = READY` · `DEPLOY_AUTHORIZATION = PENDING`
-> No se toca producción hasta GO explícito del auditor.
+> **ESTADO: NO DEPLOY.** Describe *exactamente* el deploy; no lo ejecuta.
+> `DEPLOY_RUNBOOK_DESIGN = PASS` · `DEPLOY_RUNBOOK_EXECUTABLE = READY` · `DEPLOY_AUTHORIZATION = PENDING_USER`
+> No se toca producción sin GO explícito del auditor.
+> Rev. 2 — incorpora las 6 correcciones del auditor (rollback ejecutable, asserts de dinero reales, paridad P/EV, hardening de `analisis_completo`, SHA del rollback, `SAFE_SQL_TRANSPORT` probado).
 
 ---
 
-## 0. INVARIANTES QUE ESTE DEPLOY DEBE MANTENER (no negociables)
+## 0. INVARIANTES (no negociables)
 
-- `CURRENT_AUTHORIZED_MODELS = NONE` (0 modelos autorizados) — **antes y después**.
+- `CURRENT_AUTHORIZED_MODELS = NONE` (0 modelos autorizados) — antes y después.
 - MLB `economic_authorized = FALSE`, MLB `stake = $0`, MLB no se autoriza.
-- No recalibra, no tunea, no toca P (`probabilidad_pct`) ni EV (`ev_pct`), no toca `EXP_OFF` / NB r=5 / features.
-- No abre ISS-007, no toca NFL, no añade refactors, no re-despliega frontend.
-- Solo cableado / gobernanza: 3 cambios quirúrgicos ya congelados en el artefacto.
+- No recalibra/tunea, no toca `probabilidad_pct` ni `ev_pct`, no toca `EXP_OFF`/NB r=5/features.
+- No abre ISS-007, no toca NFL/NHL/NBA/Tennis, no re-despliega frontend, no refactors.
+- Solo cableado/gobernanza: los 3 cambios quirúrgicos ya congelados en el artefacto.
 
-**Artefacto congelado:**
-`shadow-patches/iss003_009_mlb_governance.sql`
-`REVIEWED_SHA = 57b7a4077247e5e814aa9e4ce7e0ad369dc11975a8bff7ea28083c3ffedd4cad`
-(36 108 bytes)
+**Artefacto congelado (aprobado):** `shadow-patches/iss003_009_mlb_governance.sql`
+`REVIEWED_SHA = 57b7a4077247e5e814aa9e4ce7e0ad369dc11975a8bff7ea28083c3ffedd4cad` · 36 108 bytes
+(revalidado en esta sesión: `sha256sum` == REVIEWED_SHA → `SHA_DRIFT = FAIL` NO; freeze intacto).
 
----
-
-## 1. OBJETOS QUE CAMBIAN (nombres exactos, sin ambigüedad)
-
-| Parte | Objeto | Tipo | Cambio |
-|------|--------|------|--------|
-| **Parte 1** | `public.v_pick_canonico` | VIEW (`CREATE OR REPLACE`) | (a) arm MLB de `unidos`: `true AS bool` → `false AS bool` (ISS-003a, `calibracion_confiable` MLB fail-closed). (b) `es_pick` pasa a derivarse de `CROSS JOIN LATERAL economic_eligibility_v1(<ctx>)` **1 sola llamada** (`elig.j`). (c) columna **additiva #44** `es_pick_reason text` = `elig.j->>'reason_code'`, propagada m0→m→SELECT top. Las 43 columnas previas **idénticas** en nombre/orden/tipo. |
-| **Parte 2** | `public.v_mejores_picks_mlb` | VIEW (`CREATE OR REPLACE`) | `COALESCE(j.confiable, true)` → `COALESCE(j.confiable, false)` (ISS-003b). Añade `economically_eligible` + `reason_code` (2 cols) desde `economic_eligibility_v1`. `nivel` degrada a `'informativo'` cuando no es elegible. Matemática intacta. |
-| **Parte 3** | *(ninguno)* | — | **NO EJECUTA.** Solo comentarios: propuesta de `skill_final` en `economic_model_authority` + cambio de `g_skill` en `economic_eligibility_v1`. Requiere su propio deploy atómico + GO independiente. **Fuera de este deploy.** |
-| **Parte 4** | `public.analisis_completo` | FUNCTION (`CREATE OR REPLACE` vía DO-block) | DO-block: `pg_get_functiondef` → `replace` del needle `'como_se_calculo', c.razon)` por `'economically_eligible', c.es_pick, 'eligibility_reason_code', c.es_pick_reason, 'como_se_calculo', c.razon)` → `EXECUTE`. Aborta si el needle no es único. **NO** envía `stake_final`. |
-
-**Orden real de dependencias = orden literal del archivo: Parte 1 → Parte 2 → Parte 4.**
-Parte 4 (`analisis_completo`) consume `c.es_pick_reason`, columna que **solo existe tras la Parte 1**. Si se ejecutara la Parte 4 antes que la Parte 1, el `CREATE OR REPLACE FUNCTION` fallaría por columna inexistente (fail-closed deseado, aborta la transacción). Ejecutar el archivo de arriba a abajo satisface el orden.
-
-**Baselines observados read-only en prod (hoy, pre-deploy):**
-- `v_pick_canonico`: **43 columnas**, sin `es_pick_reason` (confirma no desplegado).
-- `v_mejores_picks_mlb`: **22 columnas**.
-- `analisis_completo`: **1 overload**, needle ISS-009B **único** (count = 1).
-- `economic_model_authority.economic_authorized = TRUE`: **0 filas** (⇒ NONE); MLB: **0**.
+**Artefacto de rollback (generado, real, ejecutable):** `shadow-patches/rollback/iss003_009_rollback.sql`
+`ROLLBACK_ARTIFACT_SHA256 = 32656fb3560261c6f2eae1bf5a25e5bd2eb4b34e93844d82531f978ff0aa3530` · 69 940 bytes (no vacío/truncado; ver §9).
 
 ---
 
-## 2. TRANSPORTE DEL ARTEFACTO (restricción ambiental — leer antes de ejecutar)
+## 1. OBJETOS QUE CAMBIAN (nombres exactos)
 
-El MCP `execute_sql` corrompe pastes grandes multibyte (split de bytes 0xc2) y el proxy bloquea `curl` a `*.supabase.co` (403 de política). Por eso **el deploy atómico de 36 KB NO debe pegarse por `execute_sql`**. Mecanismos válidos, en orden de preferencia:
+| Parte | Objeto | Tipo | Cambio | Contrato |
+|------|--------|------|--------|----------|
+| **1** | `public.v_pick_canonico` | VIEW `CREATE OR REPLACE` | `true AS bool`→`false AS bool` (ISS-003a); `es_pick` vía `CROSS JOIN LATERAL economic_eligibility_v1(<ctx>)` **1 llamada**; col additiva **#44 `es_pick_reason text`** | 43→**44** cols; 1–43 idénticas |
+| **2** | `public.v_mejores_picks_mlb` | VIEW `CREATE OR REPLACE` | `COALESCE(j.confiable,true)`→`COALESCE(j.confiable,false)` (ISS-003b); +`economically_eligible`,+`reason_code`; `nivel`→`informativo` si no elegible | 22→**24** cols |
+| **3** | *(ninguno)* | — | **NO EJECUTA** (solo comentarios: `skill_final`/cambio a `economic_eligibility_v1`). Requiere GO propio. | — |
+| **4** | `public.analisis_completo(text)` | FUNCTION `CREATE OR REPLACE` vía DO-block | `pg_get_functiondef`→`replace(needle)`→`EXECUTE`; propaga `economically_eligible=c.es_pick`, `eligibility_reason_code=c.es_pick_reason`; **sin** `stake_final` | firma exacta `analisis_completo(text)`, 1 overload |
 
-1. **`psql` con el archivo en disco** (recomendado, atómico, sin corrupción):
-   ejecutar el *wrapper* de §4 con `\i` al artefacto congelado. `psql` transfiere el archivo intacto; `\set ON_ERROR_STOP on` + `BEGIN/COMMIT` explícitos dan todo-o-nada.
-2. **Supabase SQL Editor**: pegar el *wrapper* de §4 con el contenido del artefacto embebido (verificar SHA del archivo fuente **antes** de copiar; el editor no corrompe el paste del navegador como sí lo hace el MCP).
+**Orden de dependencias = orden literal del archivo: Parte 1 → Parte 2 → Parte 4.** La Parte 4 consume `c.es_pick_reason`, que solo existe tras la Parte 1.
 
-**No** usar `apply_migration` del MCP para el payload de 21 KB de la Parte 1 sin verificación por chunks md5 — riesgo de corrupción; no cumple "atómico en una transacción" de forma limpia.
+**Baselines observados read-only (pre-deploy, esta sesión):**
+`v_pick_canonico`=43 cols (sin `es_pick_reason`); `v_mejores_picks_mlb`=22 cols; `analisis_completo`=1 overload, needle único (=1); `economic_authorized=TRUE`→0 filas (NONE); MLB=0; `v_mejores_picks_mlb` `nivel IN (ojo,fuerte)`=**5 HOY** (bug ISS-009 que cierra la Parte 2 → 0 post-deploy).
 
 ---
 
-## 3. FASE 0 — FREEZE DEL ARTEFACTO (antes de todo; sin tocar DB)
+## 2. `SAFE_SQL_TRANSPORT = BLOCKED` (probado esta sesión) — el deploy lo ejecuta el USUARIO
+
+Prueba real, inocua (no se ejecutó el artefacto):
+- `psql` **instalado** (v16.13, `/usr/bin/psql`).
+- **Sin credenciales** de DB en la sesión (ni `DATABASE_URL`/`PG*`/`SUPABASE*` en env, ni secretos en disco del proyecto).
+- **Sin red** a la DB: TCP a `db.<ref>.supabase.co:5432`, `aws-0-us-east-1.pooler.supabase.com:6543` y `:5432` → **los 3 fallan** (el egress solo permite el proxy HTTPS + MCP).
+
+Conclusión honesta: **desde esta sesión no existe transporte atómico seguro** para el archivo de 36 KB. `execute_sql`/`apply_migration` del MCP corrompen pastes grandes multibyte (0xc2) y están **prohibidos** para el archivo grande; `psql` no puede conectar. **No se busca atajo.**
+
+➡ **El deploy debe correrlo el usuario** con su propio `psql`/SQL-editor y el archivo congelado (SHA verificado). El wrapper de §5 y el POST-VERIFY de §6 son el guion exacto a ejecutar en ese canal.
+
+---
+
+## 3. FASE 0 — FREEZE (sin tocar DB)
 
 ```bash
-CURRENT_SHA=$(sha256sum shadow-patches/iss003_009_mlb_governance.sql | awk '{print $1}')
 REVIEWED_SHA=57b7a4077247e5e814aa9e4ce7e0ad369dc11975a8bff7ea28083c3ffedd4cad
-test "$CURRENT_SHA" = "$REVIEWED_SHA" && echo "FREEZE OK — DEPLOYED_SHA == REVIEWED_SHA" \
-  || { echo "ABORT — SHA MISMATCH: $CURRENT_SHA"; exit 1; }
+CUR=$(sha256sum shadow-patches/iss003_009_mlb_governance.sql | awk '{print $1}')
+[ "$CUR" = "$REVIEWED_SHA" ] && echo "FREEZE OK" || { echo "SHA_DRIFT=FAIL ($CUR)"; exit 1; }
+# idem para el rollback:
+ROLLBACK_SHA=32656fb3560261c6f2eae1bf5a25e5bd2eb4b34e93844d82531f978ff0aa3530
+[ "$(sha256sum shadow-patches/rollback/iss003_009_rollback.sql|awk '{print $1}')" = "$ROLLBACK_SHA" ] || { echo "ROLLBACK DRIFT"; exit 1; }
 ```
-
-**Condición:** `CURRENT_SHA == REVIEWED_SHA`. Si no coincide → **ABORT**, no se toca producción. Este check se repite justo antes de invocar `psql`/pegar en el editor.
+Si el SHA del artefacto no coincide → **ABORT**, no se toca producción.
 
 ---
 
-## 4. FASE 1 — PRECONDITION READ-ONLY (sin DDL)
-
-Correr como SELECT (read-only). **ABORT** si cualquiera falla; no continuar a la transacción.
+## 4. FASE 1 — PRECONDITION READ-ONLY (sin DDL) — ABORT si algo falla
 
 ```sql
--- P1  Autorización = NONE  (esperado: authorized_models=0, mlb_authorized=0)
+-- P1 Autorización = NONE
 SELECT
-  (SELECT count(*) FROM public.economic_model_authority WHERE economic_authorized IS TRUE) AS authorized_models,
-  (SELECT count(*) FROM public.economic_model_authority WHERE economic_authorized IS TRUE AND deporte='baseball') AS mlb_authorized;
--- ABORT si authorized_models <> 0  OR  mlb_authorized <> 0
+  (SELECT count(*) FROM public.economic_model_authority WHERE economic_authorized IS TRUE) AS authorized_models,   -- =0
+  (SELECT count(*) FROM public.economic_model_authority WHERE economic_authorized IS TRUE AND deporte='baseball') AS mlb_authorized;  -- =0
 
--- P2  Lock waiters sobre los objetos objetivo (esperado: 0)
-SELECT count(*) AS lock_waiters
-  FROM pg_locks l
-  JOIN pg_class c     ON c.oid = l.relation
-  JOIN pg_namespace n ON n.oid = c.relnamespace
- WHERE n.nspname='public'
-   AND c.relname IN ('v_pick_canonico','v_mejores_picks_mlb')
-   AND NOT l.granted;
--- ABORT si lock_waiters <> 0
+-- P2 analisis_completo overload guard (HARD): exactamente 1, o ABORT
+SELECT count(*) AS overloads FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+ WHERE n.nspname='public' AND p.proname='analisis_completo';   -- =1  (si <>1 => ABORT)
 
--- P3  Sesiones idle-in-transaction que bloquearían el AccessExclusiveLock del CREATE OR REPLACE VIEW (esperado: vacío)
-SELECT pid, state, now()-xact_start AS xact_age, left(query,80) AS q
-  FROM pg_stat_activity
- WHERE datname=current_database() AND pid<>pg_backend_pid()
-   AND state='idle in transaction'
- ORDER BY xact_start;
--- ABORT si hay filas (resolver antes; no forzar)
+-- P3 locks / bloqueos sobre los objetos objetivo
+SELECT count(*) AS lock_waiters FROM pg_locks l
+  JOIN pg_class c ON c.oid=l.relation JOIN pg_namespace n ON n.oid=c.relnamespace
+ WHERE n.nspname='public' AND c.relname IN ('v_pick_canonico','v_mejores_picks_mlb') AND NOT l.granted;  -- =0
+SELECT pid, now()-xact_start AS age, left(query,80) q FROM pg_stat_activity
+ WHERE datname=current_database() AND pid<>pg_backend_pid() AND state='idle in transaction' ORDER BY xact_start;  -- vacío
 
--- P4  Baseline de contrato v_pick_canonico (esperado: 43 filas) — guardar como evidencia
-SELECT ordinal_position, column_name, data_type
-  FROM information_schema.columns
- WHERE table_schema='public' AND table_name='v_pick_canonico'
- ORDER BY ordinal_position;
+-- P4 baseline de contrato (=43 filas) — evidencia
+SELECT ordinal_position, column_name, data_type FROM information_schema.columns
+ WHERE table_schema='public' AND table_name='v_pick_canonico' ORDER BY ordinal_position;
 ```
-
-**P5 — Capturar definiciones vivas para rollback (read-only; guardar a disco ANTES de la transacción):**
-
-```sql
--- Guardar cada salida a shadow-patches/rollback/<obj>_live_<YYYYMMDD-HHMM>.sql
-SELECT 'CREATE OR REPLACE VIEW public.v_pick_canonico AS ' || pg_get_viewdef('public.v_pick_canonico'::regclass, true) || ';';
-SELECT 'CREATE OR REPLACE VIEW public.v_mejores_picks_mlb AS ' || pg_get_viewdef('public.v_mejores_picks_mlb'::regclass, true) || ';';
-SELECT pg_get_functiondef(p.oid)
-  FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
- WHERE n.nspname='public' AND p.proname='analisis_completo';   -- ya es CREATE OR REPLACE FUNCTION completo
-```
-
-> `pg_get_viewdef` devuelve solo el cuerpo `SELECT`; por eso se antepone `CREATE OR REPLACE VIEW ... AS` para que el archivo de rollback sea ejecutable tal cual. `pg_get_functiondef` ya devuelve la sentencia completa.
-> **Nada de DDL en esta fase.**
+**P5 — ROLLBACK ya generado (§9).** Antes del deploy re-verificar que las defs vivas siguen == las capturadas (drift-guard): recomputar `pg_get_viewdef`/`pg_get_functiondef` de los 5 objetos y comparar contra el rollback; si difieren, **regenerar el rollback y recalcular su SHA** antes de continuar.
 
 ---
 
-## 5. FASE 2 — TRANSACCIÓN ÚNICA (wrapper de deploy)
-
-Archivo `deploy_wrapped.sql` (scaffolding del runbook; el artefacto entra intacto vía `\i`):
+## 5. FASE 2 — TRANSACCIÓN ÚNICA (`deploy_wrapped.sql`)
 
 ```sql
 \set ON_ERROR_STOP on
 BEGIN;
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ;   -- snapshot estable para paridad P/EV
 SET LOCAL lock_timeout      = '3s';
-SET LOCAL statement_timeout = '45s';
+SET LOCAL statement_timeout = '60s';
 
--- 2.0  Snapshot drift-safe del contrato ANTES de la primera DDL (para assert A3)
+-- 2.0 baselines drift-safe ANTES de la primera DDL (fijan el snapshot)
 CREATE TEMP TABLE _vpc_base ON COMMIT DROP AS
-  SELECT ordinal_position, column_name, data_type
-    FROM information_schema.columns
-   WHERE table_schema='public' AND table_name='v_pick_canonico';
+  SELECT ordinal_position, column_name, data_type FROM information_schema.columns
+   WHERE table_schema='public' AND table_name='v_pick_canonico';                 -- contrato (43 filas)
+CREATE TEMP TABLE _pev_before ON COMMIT DROP AS
+  SELECT espn_event_id, mercado, pick_nombre, probabilidad_pct, ev_pct
+    FROM public.v_pick_canonico;                                                 -- baseline P/EV
 
--- 2.1  === ARTEFACTO CONGELADO, BYTE-EXACTO (SHA 57b7a40...cad) ===
---      Orden literal = orden de dependencias: Parte 1 → Parte 2 → Parte 3(doc) → Parte 4
+-- 2.1 === ARTEFACTO CONGELADO, BYTE-EXACTO (SHA 57b7a40...cad) ===
 \i shadow-patches/iss003_009_mlb_governance.sql
---      === FIN ARTEFACTO ===
+--      === FIN ARTEFACTO ===  (orden literal = Parte 1 → 2 → 4)
 
--- 2.2  POST-VERIFY (§6) va aquí, dentro de la MISMA transacción, antes del COMMIT.
---      (bloque DO $verify$ ... $verify$; — ver §6)
-
+-- 2.2 POST-VERIFY (§6) — dentro de la MISMA transacción, antes del COMMIT.
 COMMIT;
 ```
-
-Notas:
-- El artefacto **no** contiene `BEGIN/COMMIT`; los pone el wrapper → todo en una sola transacción.
-- `\set ON_ERROR_STOP on`: cualquier error (incluido `RAISE EXCEPTION` del POST-VERIFY o un `lock_timeout`) detiene el script; al no llegarse al `COMMIT`, la transacción **revierte** al cerrar la sesión. **No hay reintento automático.**
-- Con Supabase SQL Editor: sustituir la línea `\i ...` por el contenido del artefacto (SHA verificado antes de copiar) y pegar el POST-VERIFY donde indica 2.2.
-- `CREATE OR REPLACE VIEW` toma `AccessExclusiveLock`; si un lector lo retiene, espera hasta `lock_timeout=3s` y aborta (fail-fast deseado).
-- El propio motor ya protege el contrato: `CREATE OR REPLACE VIEW` **rechaza** renombrar/reordenar/cambiar tipo de columnas existentes; solo permite añadir al final. Refuerza A2/A3.
+- El artefacto **no** contiene `BEGIN/COMMIT`; los pone el wrapper → una sola transacción.
+- `ON_ERROR_STOP` + ausencia de `COMMIT` al fallar ⇒ **ROLLBACK** automático. **Sin reintento automático.**
+- `REPEATABLE READ`: los datos quedan en un snapshot fijo; la única diferencia BEFORE/AFTER es el cambio de definición (lo que queremos medir). La transacción ve su propia DDL (contrato 44 visible; `es_pick_reason` legible tras la Parte 1).
+- `CREATE OR REPLACE VIEW` rechaza renombrar/reordenar/cambiar tipo o **quitar** columnas → refuerza el contrato aditivo a nivel motor.
 
 ---
 
-## 6. FASE 3 — POST-VERIFY DENTRO DE LA TRANSACCIÓN (antes del COMMIT)
-
-Un solo bloque; cualquier fallo hace `RAISE EXCEPTION` → aborta → **ROLLBACK** (no se corrige sobre la marcha).
+## 6. FASE 3 — POST-VERIFY (misma transacción, antes del COMMIT)
 
 ```sql
 DO $verify$
 DECLARE
-  ncol int; c44 text; t44 text; ndiff int; ncalls int;
-  ac_ee int; ac_rc int; mlb_eligible int; vmm_reco int; vmm_elig int;
+  ncol int; c44 text; t44 text; ndiff int; ncalls int; n_ovl int;
+  ac_ee int; ac_rc int;
+  vpc_es_pick int; vmm_reco int; vmm_elig int;
+  moh_kelly int; reto_monto int; reto_puede int;
+  p_diff int; ev_diff int;
 BEGIN
-  ---------- A. CONTRATO v_pick_canonico (estructural, determinista) ----------
+  ---------- A. CONTRATO v_pick_canonico ----------
   SELECT count(*) INTO ncol FROM information_schema.columns
    WHERE table_schema='public' AND table_name='v_pick_canonico';
-  IF ncol <> 44 THEN RAISE EXCEPTION 'FAIL A1 v_pick_canonico cols=% (exp 44)', ncol; END IF;
+  IF ncol<>44 THEN RAISE EXCEPTION 'FAIL A1 vpc cols=% (exp 44)', ncol; END IF;
 
-  SELECT column_name, data_type INTO c44, t44 FROM information_schema.columns
+  SELECT column_name,data_type INTO c44,t44 FROM information_schema.columns
    WHERE table_schema='public' AND table_name='v_pick_canonico' AND ordinal_position=44;
   IF c44 IS DISTINCT FROM 'es_pick_reason' OR t44 IS DISTINCT FROM 'text'
-    THEN RAISE EXCEPTION 'FAIL A2 col44=%/% (exp es_pick_reason/text)', c44, t44; END IF;
+    THEN RAISE EXCEPTION 'FAIL A2 col44=%/%', c44,t44; END IF;
 
-  -- primeras 43 idénticas al baseline (nombre+orden+tipo)
   SELECT count(*) INTO ndiff FROM (
-    SELECT b.ordinal_position, b.column_name, b.data_type FROM _vpc_base b
+    SELECT ordinal_position,column_name,data_type FROM _vpc_base
     EXCEPT
-    SELECT c.ordinal_position, c.column_name, c.data_type
-      FROM information_schema.columns c
-     WHERE c.table_schema='public' AND c.table_name='v_pick_canonico' AND c.ordinal_position <= 43
-  ) d;
-  IF ndiff <> 0 THEN RAISE EXCEPTION 'FAIL A3 primeras-43 drift rows=%', ndiff; END IF;
+    SELECT ordinal_position,column_name,data_type FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='v_pick_canonico' AND ordinal_position<=43) d;
+  IF ndiff<>0 THEN RAISE EXCEPTION 'FAIL A3 primeras-43 drift=%', ndiff; END IF;
 
-  -- economic_eligibility_v1 llamada EXACTAMENTE 1 vez en la def
-  SELECT (length(v)-length(replace(v,'economic_eligibility_v1(','')))
-           / length('economic_eligibility_v1(')
-    INTO ncalls
-    FROM (SELECT pg_get_viewdef('public.v_pick_canonico'::regclass, true) AS v) q;
-  IF ncalls <> 1 THEN RAISE EXCEPTION 'FAIL A4 economic_eligibility_v1 calls=% (exp 1)', ncalls; END IF;
+  SELECT (length(v)-length(replace(v,'economic_eligibility_v1(','')))/length('economic_eligibility_v1(')
+    INTO ncalls FROM (SELECT pg_get_viewdef('public.v_pick_canonico'::regclass,true) v) q;
+  IF ncalls<>1 THEN RAISE EXCEPTION 'FAIL A4 eev1 calls=% (exp 1)', ncalls; END IF;
 
-  ---------- B. analisis_completo propaga las llaves ----------
-  SELECT
-    (length(d)-length(replace(d,'economically_eligible','')))/length('economically_eligible'),
-    (length(d)-length(replace(d,'eligibility_reason_code','')))/length('eligibility_reason_code')
-    INTO ac_ee, ac_rc
-    FROM (SELECT pg_get_functiondef(p.oid) AS d FROM pg_proc p
-            JOIN pg_namespace n ON n.oid=p.pronamespace
-           WHERE n.nspname='public' AND p.proname='analisis_completo' LIMIT 1) q;
-  IF ac_ee < 1 OR ac_rc < 1
-    THEN RAISE EXCEPTION 'FAIL B1 analisis_completo keys ee=% rc=%', ac_ee, ac_rc; END IF;
+  ---------- B. analisis_completo (overload guard + llaves, SIN LIMIT 1) ----------
+  SELECT count(*) INTO n_ovl FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
+   WHERE n.nspname='public' AND p.proname='analisis_completo';
+  IF n_ovl<>1 THEN RAISE EXCEPTION 'FAIL B0 analisis_completo overloads=% (exp 1) ABORT', n_ovl; END IF;
+  SELECT (length(d)-length(replace(d,'economically_eligible','')))/length('economically_eligible'),
+         (length(d)-length(replace(d,'eligibility_reason_code','')))/length('eligibility_reason_code')
+    INTO ac_ee,ac_rc
+    FROM (SELECT pg_get_functiondef('public.analisis_completo(text)'::regprocedure) d) q;   -- firma exacta, no LIMIT 1
+  IF ac_ee<1 OR ac_rc<1 THEN RAISE EXCEPTION 'FAIL B1 keys ee=% rc=%', ac_ee,ac_rc; END IF;
 
   ---------- C. CONTRATO v_mejores_picks_mlb ----------
-  PERFORM 1 FROM information_schema.columns
-   WHERE table_schema='public' AND table_name='v_mejores_picks_mlb' AND column_name='economically_eligible';
+  PERFORM 1 FROM information_schema.columns WHERE table_schema='public'
+    AND table_name='v_mejores_picks_mlb' AND column_name='economically_eligible';
   IF NOT FOUND THEN RAISE EXCEPTION 'FAIL C1 vmm falta economically_eligible'; END IF;
-  PERFORM 1 FROM information_schema.columns
-   WHERE table_schema='public' AND table_name='v_mejores_picks_mlb' AND column_name='reason_code';
+  PERFORM 1 FROM information_schema.columns WHERE table_schema='public'
+    AND table_name='v_mejores_picks_mlb' AND column_name='reason_code';
   IF NOT FOUND THEN RAISE EXCEPTION 'FAIL C2 vmm falta reason_code'; END IF;
 
-  ---------- D. INVARIANTES DE DATO BAJO NONE (slate-independientes) ----------
-  -- Bajo NONE (model_version NULL/MISSING) es_pick debe ser false para TODO el universo
-  SELECT count(*) INTO mlb_eligible FROM public.v_pick_canonico WHERE es_pick IS TRUE;
-  IF mlb_eligible <> 0 THEN RAISE EXCEPTION 'FAIL D1 es_pick=true count=% (exp 0)', mlb_eligible; END IF;
-
+  ---------- D. INVARIANTES BAJO NONE ----------
+  SELECT count(*) INTO vpc_es_pick FROM public.v_pick_canonico WHERE es_pick IS TRUE;
+  IF vpc_es_pick<>0 THEN RAISE EXCEPTION 'FAIL D1 es_pick=true=% (exp 0)', vpc_es_pick; END IF;
   SELECT count(*) INTO vmm_reco FROM public.v_mejores_picks_mlb WHERE nivel IN ('ojo','fuerte');
-  IF vmm_reco <> 0 THEN RAISE EXCEPTION 'FAIL D2 vmm nivel ojo/fuerte count=% (exp 0)', vmm_reco; END IF;
-
+  IF vmm_reco<>0 THEN RAISE EXCEPTION 'FAIL D2 vmm nivel ojo/fuerte=% (exp 0)', vmm_reco; END IF;
   SELECT count(*) INTO vmm_elig FROM public.v_mejores_picks_mlb WHERE economically_eligible IS TRUE;
-  IF vmm_elig <> 0 THEN RAISE EXCEPTION 'FAIL D3 vmm economically_eligible=true count=% (exp 0)', vmm_elig; END IF;
+  IF vmm_elig<>0 THEN RAISE EXCEPTION 'FAIL D3 vmm economically_eligible=true=% (exp 0)', vmm_elig; END IF;
 
-  RAISE NOTICE 'POST-VERIFY OK — contrato 44/es_pick_reason, 1 call, keys propagadas, MLB/global eligible=0';
+  ---------- E. DINERO REAL (superficies automáticas en alcance; hoy verificadas =0) ----------
+  SELECT count(*) INTO moh_kelly FROM public.mejor_oportunidad_hoy(500) WHERE kelly_pct>0;
+  IF moh_kelly<>0 THEN RAISE EXCEPTION 'FAIL E1 mejor_oportunidad_hoy kelly_pct>0=% (exp 0)', moh_kelly; END IF;
+  SELECT count(*) INTO reto_monto FROM public.usuarios u
+    CROSS JOIN LATERAL public.reto_picks_hoy(u.apodo) r WHERE r.monto_autorizado>0;
+  IF reto_monto<>0 THEN RAISE EXCEPTION 'FAIL E2 reto_picks_hoy monto_autorizado>0=% (exp 0)', reto_monto; END IF;
+  SELECT count(*) INTO reto_puede FROM public.usuarios u
+    CROSS JOIN LATERAL public.reto_picks_hoy(u.apodo) r WHERE r.puede_apostar IS TRUE;
+  IF reto_puede<>0 THEN RAISE EXCEPTION 'FAIL E3 reto_picks_hoy puede_apostar=% (exp 0)', reto_puede; END IF;
+
+  ---------- F. PARIDAD P/EV (BEFORE vs AFTER, bidireccional) ----------
+  SELECT count(*) INTO p_diff FROM (
+    (SELECT espn_event_id,mercado,pick_nombre,probabilidad_pct FROM _pev_before
+     EXCEPT ALL
+     SELECT espn_event_id,mercado,pick_nombre,probabilidad_pct FROM public.v_pick_canonico)
+    UNION ALL
+    (SELECT espn_event_id,mercado,pick_nombre,probabilidad_pct FROM public.v_pick_canonico
+     EXCEPT ALL
+     SELECT espn_event_id,mercado,pick_nombre,probabilidad_pct FROM _pev_before)) d;
+  IF p_diff<>0 THEN RAISE EXCEPTION 'FAIL F1 P_VALUE_DIFF=% (exp 0)', p_diff; END IF;
+  SELECT count(*) INTO ev_diff FROM (
+    (SELECT espn_event_id,mercado,pick_nombre,ev_pct FROM _pev_before
+     EXCEPT ALL
+     SELECT espn_event_id,mercado,pick_nombre,ev_pct FROM public.v_pick_canonico)
+    UNION ALL
+    (SELECT espn_event_id,mercado,pick_nombre,ev_pct FROM public.v_pick_canonico
+     EXCEPT ALL
+     SELECT espn_event_id,mercado,pick_nombre,ev_pct FROM _pev_before)) d;
+  IF ev_diff<>0 THEN RAISE EXCEPTION 'FAIL F2 EV_VALUE_DIFF=% (exp 0)', ev_diff; END IF;
+
+  RAISE NOTICE 'POST-VERIFY OK — contrato/keys/NONE/dinero/paridad P-EV todos verdes';
 END $verify$;
 ```
 
-Cobertura vs criterios del auditor:
-- **44 columnas** → A1. **col 44 = es_pick_reason text** → A2. **primeras 43 idénticas** → A3. **1 llamada** → A4.
-- **calibracion_confiable MLB != hardcode TRUE** → garantizado por Parte 1 (`false AS bool`) + A4 (una sola vía de gate) + D1/D2/D3 (ningún MLB elegible/recomendado). *(La verificación por-fila de `calibracion_confiable` de un juego MLB concreto es parte del SMOKE §8, porque depende del calendario del día.)*
-- **analisis_completo con economically_eligible + eligibility_reason_code** → B1.
-- **eligible=true count = 0 / MLB economic picks = 0 / stake>0 = 0** → D1/D2/D3 (bajo NONE, `stake` MLB = 0 por construcción: ninguna superficie dimensiona sin elegibilidad).
-- **P / EV intactos** → Parte 1/2 no tocan `probabilidad_pct` ni `ev_pct`; A3 prueba que esas columnas no cambian en `v_pick_canonico`.
+Mapa de criterios del auditor → asserts:
+- **A1/A2/A3/A4**: 44 cols · col44=`es_pick_reason text` · primeras 43 idénticas · `economic_eligibility_v1` 1 llamada.
+- **B0/B1**: overload_count=1 (ABORT si ≠1, sin `LIMIT 1`; usa `analisis_completo(text)::regprocedure`) · keys propagadas.
+- **C1/C2**: `v_mejores_picks_mlb` con `economically_eligible`+`reason_code`.
+- **D1/D2/D3**: NONE → 0 es_pick, 0 nivel ojo/fuerte, 0 economically_eligible.
+- **E1/E2/E3 (dinero real, no "por construcción")**: `mejor_oportunidad_hoy(500).kelly_pct>0=0`; `reto_picks_hoy(apodo).monto_autorizado>0=0` y `puede_apostar=0` sobre TODOS los usuarios reales. *(Hoy verificado =0; son invariantes bajo NONE.)*
+- **F1/F2 (paridad P/EV)**: `EXCEPT ALL` bidireccional BEFORE↔AFTER bajo `REPEATABLE READ` ⇒ `P_VALUE_DIFF=0`, `EV_VALUE_DIFF=0`. Cubre Athletics (EV máx observado hoy **+28.79**; el ML ~+25.07): su `ev_pct` debe quedar idéntico (la paridad lo exige, no un número fijo).
 
-> Si **cualquier** assert falla → la excepción aborta la transacción → **ROLLBACK**. No se edita el artefacto en caliente; se corrige el artefacto en frío, se recongela SHA, y se reinicia el runbook.
+Superficies de dinero **fuera de alcance** (no dependen de los objetos que cambian → el deploy no puede alterarlas; no se asertan aquí): `v_super_pick.kelly_pct_sugerido`, `favoritos_bien_pagados.fraccion`. Ver §11.
 
 ---
 
 ## 7. FASE 4 — COMMIT
 
-- Solo si **todos** los asserts pasaron (el bloque `DO $verify$` terminó con `NOTICE ... OK` y sin excepción):
-  ```sql
-  COMMIT;
-  ```
-- Si hubo error de lock/timeout o assert: **ROLLBACK** (automático por ON_ERROR_STOP / cierre de sesión). **Sin reintento automático.** Diagnosticar, resolver la causa, reiniciar desde FASE 0.
+`COMMIT;` solo si el bloque `DO $verify$` terminó con `NOTICE ... OK` sin excepción. Cualquier fallo → **ROLLBACK** (automático). **Sin reintento automático** de lock/timeout.
 
 ---
 
 ## 8. FASE 5 — SMOKE POST-COMMIT (READ-ONLY, conexión nueva)
 
 ```sql
--- S1  Las superficies existen y no rompen (conteos; ninguna excepción)
-SELECT 'v_pick_canonico'          AS obj, count(*) AS n FROM public.v_pick_canonico
-UNION ALL SELECT 'v_mejores_picks_mlb',      count(*) FROM public.v_mejores_picks_mlb
-UNION ALL SELECT 'v_super_pick',             count(*) FROM public.v_super_pick
-UNION ALL SELECT 'reto_picks_hoy',           count(*) FROM public.reto_picks_hoy
-UNION ALL SELECT 'mejor_oportunidad_hoy',    count(*) FROM public.mejor_oportunidad_hoy
-UNION ALL SELECT 'mejor_oportunidad_hoy_v2', count(*) FROM public.mejor_oportunidad_hoy_v2
-UNION ALL SELECT 'favoritos_bien_pagados',   count(*) FROM public.favoritos_bien_pagados;
--- (analisis_completo es FUNCTION con parámetros; su prueba estructural es B1 §6.
---  Su prueba de payload viva es el SMOKE VISUAL del dossier en frontend — ver S4.)
+-- S1 superficies vivas no rompen
+SELECT 'v_pick_canonico' o,count(*) n FROM public.v_pick_canonico
+UNION ALL SELECT 'v_mejores_picks_mlb',count(*) FROM public.v_mejores_picks_mlb
+UNION ALL SELECT 'v_super_pick',count(*) FROM public.v_super_pick
+UNION ALL SELECT 'v_oraculo_canonico',count(*) FROM public.v_oraculo_canonico
+UNION ALL SELECT 'mejor_oportunidad_hoy',count(*) FROM public.mejor_oportunidad_hoy(500);
+-- reto_picks_hoy/favoritos_bien_pagados requieren args; analisis_completo es FUNCTION(text) — smoke de payload = dossier frontend (S4)
 
--- S2  CASO OBLIGATORIO — Athletics ML (columnas reales de v_pick_canonico)
-SELECT deporte, home, away, mercado, pick_nombre,
-       ev_pct,                 -- EV medido; debe permanecer intacto (~ +25.07)
-       calibracion_confiable,  -- MLB ⇒ false (ISS-003a)
-       es_pick,                -- ⇒ false (no elegible bajo NONE)
-       es_pick_reason          -- razón real (p.ej. MODEL_VERSION_PROVENANCE_MISSING)
+-- S2 Athletics ML (columnas reales)
+SELECT deporte,home,away,mercado,pick_nombre,ev_pct,calibracion_confiable,es_pick,es_pick_reason
   FROM public.v_pick_canonico
- WHERE deporte='baseball'
-   AND (home ILIKE '%Athletics%' OR away ILIKE '%Athletics%')
+ WHERE deporte='baseball' AND (home ILIKE '%Athletics%' OR away ILIKE '%Athletics%')
  ORDER BY ev_pct DESC;
--- Esperado por fila: es_pick=false, es_pick_reason no nulo, calibracion_confiable=false,
---                    ev_pct SIN cambio. Si no hay juego de Athletics hoy, usar cualquier MLB.
+-- esperado: es_pick=false, es_pick_reason no nulo, calibracion_confiable=false, ev_pct intacto
 
--- S3  Autorización sigue en NONE tras el commit
-SELECT count(*) AS authorized_models FROM public.economic_model_authority WHERE economic_authorized IS TRUE;
--- esperado: 0
+-- S3 NONE persiste
+SELECT count(*) authorized_models FROM public.economic_model_authority WHERE economic_authorized IS TRUE;  -- 0
 ```
-
-**S4 — SMOKE VISUAL DEL DOSSIER (frontend, ya desplegado `ba828acc`):**
-Abrir un dossier de un partido MLB. Con el backend ya emitiendo `economically_eligible=false` por mercado, debe verse **"ANÁLISIS INFORMATIVO — NO APUESTA AUTORIZADA"** y **no** "🎯 PICK SUGERIDO". (Antes del deploy SQL, el flag no existe → `undefined` → fail-closed → mismo resultado visual; tras el deploy, el flag llega explícito con su motivo.)
+**S4 — SMOKE VISUAL (frontend `ba828acc`, PENDIENTE_USUARIO):** abrir dossier MLB → "ANÁLISIS INFORMATIVO — NO APUESTA AUTORIZADA", **sin** "PICK SUGERIDO".
 
 ---
 
-## 9. FASE 6 — PLAN DE ROLLBACK (preparado; NO ejecutar salvo fallo crítico post-commit)
+## 9. FASE 6 — ROLLBACK REAL (preparado; NO ejecutar salvo fallo crítico POST-COMMIT)
 
-El rollback restaura los objetos desde las **defs vivas capturadas en P5** (FASE 1). No se improvisa SQL.
+Archivo: `shadow-patches/rollback/iss003_009_rollback.sql` (69 940 bytes, SHA `32656fb3…3530`). Generado DB-side desde las defs vivas PRE-DEPLOY. **Ejecutable en orden correcto** (código, no solo nota):
 
-```sql
-\set ON_ERROR_STOP on
-BEGIN;
-SET LOCAL lock_timeout='3s';
-SET LOCAL statement_timeout='45s';
-\i shadow-patches/rollback/v_pick_canonico_live_<STAMP>.sql       -- CREATE OR REPLACE VIEW ... (def previa)
-\i shadow-patches/rollback/v_mejores_picks_mlb_live_<STAMP>.sql   -- CREATE OR REPLACE VIEW ... (def previa)
-\i shadow-patches/rollback/analisis_completo_live_<STAMP>.sql     -- CREATE OR REPLACE FUNCTION ... (def previa)
+```
+BEGIN;  (lock_timeout 3s, statement_timeout 60s)
+  1) CREATE OR REPLACE FUNCTION public.analisis_completo(text) ...      -- función late-bound, primero
+  2) DROP VIEW public.v_mejores_picks_mlb;  CREATE OR REPLACE VIEW ...  -- 24→22 (0 vistas dependientes)
+  3) DROP VIEW public.v_pick_canonico CASCADE;                          -- 44→43 (CREATE OR REPLACE no quita columnas)
+     CREATE OR REPLACE VIEW public.v_pick_canonico ...
+     CREATE OR REPLACE VIEW public.lab_dq_medicion_v1 ...               -- recrear 3 dependientes del CASCADE
+     CREATE OR REPLACE VIEW public.v_lab_dq_capturas_faltantes ...
+     CREATE OR REPLACE VIEW public.v_oraculo_canonico ...
+  4) ALTER VIEW ... OWNER TO ...; ALTER VIEW ... SET (...); GRANT ... (146 GRANTs)  -- el DROP los borró; se reponen
 COMMIT;
 ```
-
-- **Orden de rollback = inverso de dependencias:** primero restaurar `analisis_completo` (que referencia `es_pick_reason`) y **luego** `v_pick_canonico`, para no dejar la función apuntando a una columna que el rollback de la vista elimina. → **Ejecutar `analisis_completo_live` ANTES de `v_pick_canonico_live`.** (Reordenar los `\i` en consecuencia.)
-- Ejecutar **solo** ante fallo crítico observado *después* del COMMIT (un smoke que revele regresión real). Un fallo *dentro* de la transacción ya revierte solo — ahí no se usa este plan.
-
----
-
-## 10. NO HACER durante este deploy
-
-- ❌ Autorizar modelos · ❌ recalibrar MLB · ❌ tocar P (`probabilidad_pct`) / EV (`ev_pct`) · ❌ cambiar `EXP_OFF`
-- ❌ ejecutar la Parte 3 (skill_final / cambio a `economic_eligibility_v1`) — requiere GO propio
-- ❌ abrir ISS-007 · ❌ tocar NFL · ❌ añadir refactors · ❌ re-desplegar frontend
-- ❌ reintento automático tras lock/timeout · ❌ editar el artefacto en caliente · ❌ fabricar `stake=$0`
+Notas críticas del rollback (asimetría con el deploy):
+- El deploy usa `CREATE OR REPLACE` (aditivo, **preserva** grants/owner). El rollback **debe** `DROP` para quitar columnas ⇒ pierde owner/reloptions/grants ⇒ **se reponen dentro del mismo archivo** (capturados). Orden: analisis_completo → v_mejores_picks_mlb → v_pick_canonico (+cascade), como pide el auditor.
+- `DROP VIEW public.v_pick_canonico CASCADE` elimina y recrea también `lab_dq_medicion_v1`, `v_lab_dq_capturas_faltantes`, `v_oraculo_canonico` (subárbol verificado; sin nivel-2).
+- Antes de usarlo, re-verificar (P5) que las defs vivas siguen == las capturadas; si hubo cambios ajenos, regenerar el rollback + recalcular SHA.
 
 ---
 
-## 11. GATE DE AUTORIZACIÓN (checklist previo al GO)
+## 10. NO HACER
 
-- [ ] `FREEZE`: `CURRENT_SHA == REVIEWED_SHA` (§3)
-- [ ] `PRECONDITION`: P1 (NONE) · P2 (0 waiters) · P3 (0 idle-in-tx) · P4 (43 cols) · P5 (defs capturadas) (§4)
-- [ ] `deploy_wrapped.sql` listo con `\i` al artefacto SHA-verificado + POST-VERIFY embebido (§5–6)
-- [ ] `ROLLBACK` preparado desde P5, orden inverso (§9)
-- [ ] Smoke frontend `ba828acc` confirmado por el auditor (§8 S4)
-- [ ] **GO explícito del auditor** → recién entonces ejecutar §3→§7, luego §8
+❌ Autorizar modelos · ❌ recalibrar MLB · ❌ tocar P/EV/calibración/EXP_OFF · ❌ ejecutar la Parte 3
+❌ abrir ISS-007 · ❌ tocar NFL/NHL/NBA/Tennis · ❌ refactors · ❌ re-desplegar frontend
+❌ reintento automático tras lock/timeout · ❌ editar el artefacto en caliente · ❌ fabricar `stake=$0`
+❌ `execute_sql`/paste manual de los 36 KB (transporte BLOCKED — lo corre el usuario por psql/editor)
 
-**Estado:** `DEPLOY_RUNBOOK_READY = READY` · `DEPLOY_AUTHORIZATION = PENDING` · **NO DEPLOY.**
+---
+
+## 11. AUDITORÍA ESTÁTICA DE BYPASS (tarea 5) — read-only, `GLOBAL_BYPASS_SWEEP = PASS (MLB)`
+
+Barrido de todas las vistas + funciones de `public` por: `calibracion_confiable`, `COALESCE(confiable, true)`, `PICK SUGERIDO`, `FUERTE`, `ELITE`, `APOSTAR`, `economically_eligible`, `es_pick`, `es_pick_reason`, `eligibility_reason_code`.
+
+Clasificación (superficies relevantes a gobernanza MLB):
+
+| Objeto | Token | Clase | Nota |
+|--------|-------|-------|------|
+| `v_pick_canonico` | es_pick, `economic_eligibility_v1`, calib | **CANONICAL_GATED** | fuente del gate; post-deploy 1 llamada + es_pick_reason |
+| `v_mejores_picks_mlb` | `COALESCE(confiable,true)` HOY | **CANONICAL_GATED (post-deploy)** | la Parte 2 lo pasa a `false` + gate por `economic_eligibility_v1` |
+| `decision_pick_v1` | `economic_eligibility_v1`, ee | **CANONICAL_GATED** | autoridad de decisión |
+| `mejor_oportunidad_hoy(_v2)` | es_pick, ee | **CANONICAL_GATED** | filtra por es_pick; `kelly_pct>0`=0 bajo NONE (verif.) |
+| `reto_picks_hoy__base` | es_pick | **CANONICAL_GATED** | `monto_autorizado>0`=0 / `puede_apostar`=0 (verif. 4 usuarios) |
+| `rongol_veto__base` | es_pick | **CANONICAL_GATED** | veto consume es_pick |
+| `filtro_pick` | es_pick | **CANONICAL_GATED** | helper del gate |
+| `v_oraculo_canonico` | es_pick, calib | **CANONICAL_GATED** | dependiente de v_pick_canonico (consume es_pick) |
+| `analisis_completo(text)` | "PICK SUGERIDO"/ee (post) | **INFORMATIONAL_ONLY** | backend propaga flag; el wording accionable lo decide el frontend fail-closed |
+| `favoritos_bien_pagados` | ee | **INFORMATIONAL/OUT-OF-SCOPE** | no depende de objetos del deploy; `fraccion` por su propio path |
+| `v_super_pick` | (APOSTAR/ELITE txt) | **OUT-OF-SCOPE** | no depende de v_pick_canonico/v_mejores_picks_mlb |
+| `picks_recomendados_hoy(_raw)` | (recomendación) | **OUT-OF-SCOPE (fútbol legacy)** | joins ligamx/API-Football; 0 MLB; ver #201/#202/#204 |
+| `picks_premium` | (nivel/ELITE) | **OUT-OF-SCOPE (fútbol legacy)** | fixture_id/ligamx; sin `deporte`; 0 MLB |
+| `futbol_que_falta_por_caer` | `COALESCE(confiable,true)` | **OUT-OF-SCOPE (fútbol)** | fail-open de calibración **de fútbol**; no MLB; adjacente a ISS-003 pero fuera de ISS-003/009 |
+| resto (`*parlay*`,`fantasy_*`,`nfl_*`,`kelly_*`,`track_*`,…) | "APOSTAR"/"ELITE" texto | **INFORMATIONAL/MANUAL_ONLY** | texto UI / builders manuales; sin gate MLB automático |
+
+**Resultado: 0 `BYPASS_OPEN` para MLB.** Ninguna superficie presenta MLB como PICK/ELITE/APOSTAR con dinero automático sin pasar por `es_pick`/`economic_eligibility_v1`. Observación adjacente (NO bloqueante, fuera de ISS-003/009): las superficies **de fútbol** `picks_recomendados_hoy`, `picks_premium`, `futbol_que_falta_por_caer` recomiendan por su propio motor (no por la autoridad económica) — es la brecha de gobernanza de fútbol ya rastreada (#201/#202/#204/#206), no un bypass MLB.
+
+---
+
+## 12. GATE DE AUTORIZACIÓN
+
+- [x] `FINAL_DEPLOY_ARTIFACT` congelado; `REVIEWED_SHA` revalidado (freeze intacto)
+- [x] `ROLLBACK_ARTIFACT` real, ejecutable, orden correcto, SHA calculado, no vacío
+- [x] `SAFE_SQL_TRANSPORT` probado → **BLOCKED** (lo ejecuta el usuario por psql/editor)
+- [x] POST-VERIFY con asserts reales de contrato, NONE, **dinero** y **paridad P/EV**
+- [x] `analisis_completo` con overload guard (ABORT si ≠1) + firma exacta (sin LIMIT 1)
+- [x] `GLOBAL_BYPASS_SWEEP = PASS (MLB)`
+- [ ] `VISUAL_FRONTEND_SMOKE` = **PENDING_USER** (dossier MLB)
+- [ ] **GO explícito del auditor** → recién entonces ejecutar §3→§8
+
+**Estado:** `DEPLOY_RUNBOOK_EXECUTABLE = READY` · `DEPLOY_AUTHORIZATION = PENDING_USER` · **NO DEPLOY.**
