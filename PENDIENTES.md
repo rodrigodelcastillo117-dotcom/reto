@@ -5406,3 +5406,87 @@ Insumo: mlb_stats_cache (última fila fetch_success por evento). v_as_of = game_
   - MLB8 split temporal real 3 vías (DISCOVERY/VALIDATION/FINAL sellado) antes de challengers/selección.
   - MLB7 challengers estructurales (incl. varianza independiente por-equipo, señalado por el propio motor).
   - MLB9 skill gate por mercado ; MLB10 P_FAIR ; MLB11 market-data/eligibility (CORE universal, evidencia MLB-specific).
+
+
+## 7-sep-2026 — MLB CANDADOS (2.1/2.2/5/6/8) + split sellado + MLB4 ablaciones limpias + matriz supervivientes
+Todo SHADOW. Producción MLB intacta. Soccer congelado ~96%. FINAL TEST NO abierto. No dinero/Kelly/Beta/Wilson.
+
+### MLB2.1 — AS-OF REAL DEL CACHE (decision_time := primer pitcheo = historico.fecha)
+  N=1056 ; con timestamp 1056 ; nulls 0.
+  cached_at <= decision_time: 1053 VALID. cached_at > decision_time: 3 TEMPORALLY_INVALID (max 1.93h después).
+  lag p50 = 11.75h antes, p95 = 14.75h antes. => cache es PREGAME real con margen cómodo.
+  ACCION: 3 filas marcadas temporal_valid=false y EXCLUIDAS. Universo autoritativo = 1053.
+
+### MLB5 — STARTING PITCHER PROVENANCE
+  Por MLB2.1 el pitcher del cache se escribió ~12h ANTES del juego -> NO puede ser el actual post-juego.
+  => PITCHER_IDENTITY_ASOF = PROVEN_PREGAME (por timestamp).
+  Verificación vs abridor real (mlb_pitcheo_juego.es_abridor), cobertura boxscore 379/1053 (36%):
+    home_match 337 / away_match 340 ; mismatch 7+7 (~2%, cota superior de cambios tardíos por formato de nombre).
+    130 juegos con pitcher NULL en cache -> el motor cae a LIGA_ERA 4.20.
+  VEREDICTO: pitcher = ANUNCIADO/CONFIRMED pregame (match ~98% donde verificable). Usable, con nota: match sólo
+    verificable en 36%; 130 nulls usan fallback. NO es el actual retrospectivo.
+
+### MLB2.2 — WEATHER
+  mlb_clima_hora: hora_utc (hora a la que aplica), temp_f, viento, humedad, lluvia. SIN cargado_at/captured_at.
+  => No hay provenance temporal que pruebe forecast-pregame vs observado/post-evento.
+  VEREDICTO: WEATHER = TEMPORALLY_UNPROVEN -> EXCLUIDO de challengers.
+
+### MLB6 — LINEUP
+  mlb_alineacion tiene cargado_at. Cobertura sobre 1053: 19 juegos (1.8%). Pre-decision: 0. Post-decision: 19
+  (p50 = 91h DESPUES del juego). => LINEUP_NOT_AVAILABLE_AT_DECISION, retrospectivo, inusable históricamente.
+  Confirma mantener PESO_ALINEACION=0. No usar lineup final retrospectiva (candado).
+
+### MLB8 — SPLIT TEMPORAL SELLADO (lab_mlb_split_seal)
+  Sobre 1053 válidos: DISCOVERY <= 2026-07-19 (519) ; VALIDATION (07-19, 08-08] (260) ; FINAL > 2026-08-08 (274) SELLADO.
+  FINAL no participa en EXP_OFF/PITCHER/DEF/bullpen/park/platoon/NB-r/calibración/feature-selection. EXP_OFF=0.50 congelado.
+
+### MLB3.1 — BASELINE TEMPORAL
+  Las ablaciones MLB4 usan comparación PAREADA modelo_con vs modelo_sin (no requieren baseline). Para el SKILL GATE
+  (MLB9, posterior) el naive será as-of (tasa local acumulada rows<t), NO el base-rate global de las 1053. Registrado.
+
+### MLB3.2 — CALIBRACION LEGACY (in-sample)
+  Los coef a=-0.0389 b=1.0665 se reprodujeron EXACTO por regresión sobre este mismo universo -> LEGACY_CALIBRATION_IN_SAMPLE.
+  NO se usan para demostrar skill/calibración OOS. P_RAW se evalúa SIN esa ventaja (el baseline 0.24732 es P_RAW crudo).
+
+### MLB3.3 — TOTALS / LINEA REAL
+  Líneas reales existen (radar_odds_snapshots.over_line*), pero cobertura 138/1053 (13%). Sobre las 138 (132 sin push):
+    NB r=5 vs LINEA REAL: Brier 0.25607 (~volado) ; NB vs 8.5 FIJA en mismas: 0.24300.
+  => El triunfo NB (0.24494 vs Poisson 0.25198) es ESTRUCTURAL (forma de la curva), NO edge de mercado.
+  Contra la línea real (eficiente, ~8.36) NB no muestra ventaja. OU_MARKET_VALIDATION = PARTIAL
+    (cobertura 13%, sin edge demostrado vs líneas reales). NO exagerar el PASS.
+
+### MLB4 — ABLACIONES LIMPIAS (DISCOVERY+VALIDATION, n=779; ΔBrier pareado modelo-sin vs modelo-completo; IC cluster/semana)
+  (signo: dbrier_quitar>0 => quitar empeora => la feature APORTA)
+  feature (ML)        dbrier_quitar   IC_cluster_wk   veredicto
+  RECENT_FORM last10  +0.00033        ±0.00024        APORTA_OOS (única que excluye 0; pequeña)
+  TEAM_DEFENSE_RA     +0.00165        ±0.00167        INCONCLUSO (mayor magnitud; IC toca 0)
+  STARTER (pitcher)   +0.00042        ±0.00213        INCONCLUSO
+  TEAM_OFFENSE        -0.00040        ±0.00148        INCONCLUSO (leve inclinación a dañina)
+  PARK                +0.00003        ±0.00006        INCONCLUSO (despreciable en ML; afecta totales, no ganador)
+  PLATOON             n/a             n/a             TEMPORALLY_UNAUDITABLE en este harness (splits pregame; falta materializar)
+  BULLPEN             n/a (EXP=0)     n/a             re-verificación pendiente (fatiga no materializada; prod ya lo midió DAÑINO)
+  WEATHER             excluida        —               TEMPORALLY_UNPROVEN (MLB2.2)
+  LINEUP              excluida        —               LINEUP_NOT_AVAILABLE_AT_DECISION (MLB6)
+  O/U (estructura): NB r=5 APORTA_OOS vs Poisson (0.24494 vs 0.25198 en 8.5 fija) PERO OU_MARKET_VALIDATION=PARTIAL (MLB3.3).
+
+### MATRIZ DE FEATURES SUPERVIVIENTES (para challengers MLB7, sólo lo temporalmente auditable)
+  MANTENER núcleo: base de liga + carreras (offense/RA) + pitcher + park -> generan el P_RAW actual (skill ML MODESTO y difuso).
+  SEÑAL medible: RECENT_FORM (last10) única APORTA_OOS en ML; TEAM_DEFENSE_RA la más fuerte pero borderline.
+  ESTRUCTURA OU: NB r=5 (forma) confirmada; mercado NO batido.
+  FUERA por candado temporal: WEATHER (unproven), LINEUP (post-decision).
+  PENDIENTE harness: PLATOON, BULLPEN (materializar splits/fatiga as-of para ablar limpio).
+  HALLAZGO CENTRAL: en split limpio con IC cluster, la señal de ML es MUY débil y difusa (ninguna feature clara salvo
+    recent_form, marginal). Consistente con baseball casi eficiente/alta varianza. Hay que ser despiadados en MLB9.
+
+### CANDADOS
+  Soccer congelado. Producción MLB intacta. No Kelly/risk/stake. No Beta/Wilson. No calibración cross-sport. No promoción.
+  FINAL TEST (274) NO abierto. lab_mlb_wf/lab_mlb_split_seal/lab_poisson_phome/lab_nb_pover son SHADOW.
+
+### OBJETOS SHADOW (este bloque)
+  lab_mlb_wf (+temporal_valid,slice,lam_h/a,p_loc_full,p_over_full) ; lab_mlb_split_seal ; lab_poisson_phome ; lab_nb_pover.
+
+### PENDIENTE (siguiente, sin abrir FINAL)
+  - MLB4 completar PLATOON y BULLPEN (materializar splits/fatiga as-of desde cache pregame).
+  - MLB7 challengers: C0 actual ; C1 núcleo (liga+offense/RA) ; C2 +recent_form explícito ; variantes según sobreviva.
+  - MLB9 skill gate ML y O/U por separado vs naive as-of (IC robusto) -> PASS/FAIL/INSUFFICIENT.
+  - Recuperar cobertura de líneas reales O/U (mapping radar espn) antes de validar mercado O/U.
