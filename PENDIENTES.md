@@ -5766,3 +5766,20 @@ Todo SHADOW. Producción intacta. Soccer congelado ~96%.
 ### OBJETOS SHADOW (este bloque)
   lab_mlb_forward (+decision_id/immutability/idempotencia/available_at_decision/closing_timestamp) ;
   lab_mlb_fwd_capturar() ; lab_mlb_fwd_resultado() ; triggers trg_mlbfwd_freeze/no_backdate. Producción intacta.
+
+
+## 7-sep-2026 — FIX OPERATIVO: pantalla RETO 13M "No se pudo cargar" (dos RPCs rotos por firma)
+SINTOMA: la pantalla RETO 13M no cargaba ("No se pudo cargar / Reintentar"). Frontend en Lovable; la falla era backend.
+CAUSA RAIZ (dos llamadas con firma desactualizada tras refactores previos):
+  1. reto_picks_hoy -> kelly_stake(text,numeric,numeric,unknown,text) [5 args] NO EXISTE. El refactor "autoridad unica
+     de sizing" (#207) agrego un 6o parametro p_techo_custom a kelly_stake y el caller quedo con 5 args -> EXCEPTION.
+  2. reto_13m_estado__base -> reto_probabilidad_meta(p_apodo) [1 arg]; la funcion ahora exige (text,numeric,numeric)
+     (piso_pct, apuestas_semana). El __base ya traia defaults 0.10/7, pero el WRAPPER publico no -> EXCEPTION.
+FIX (minimo, sin cambiar logica de dinero; solo compatibilidad de firma):
+  - kelly_stake: recreado el wrapper con p_techo_custom numeric DEFAULT NULL. Llamadas de 6 args intactas; la de 5
+    resuelve con techo_custom=NULL (= sin techo custom = comportamiento pre-#207). kelly_stake__base sin tocar.
+  - reto_probabilidad_meta: recreado el wrapper con p_piso_pct DEFAULT 0.10, p_apuestas_semana DEFAULT 7 (= los mismos
+    defaults del __base). Llamadas de 3 args intactas; la de 1 arg vuelve a resolver. __base sin tocar.
+VERIFICACION: reto_13m_estado y reto_picks_hoy -> OK con apodo 'test' y 'rodelcast'. Pantalla vuelve a cargar.
+CANDADO: no se toco kelly_stake__base ni la logica de sizing; solo se restauro la compatibilidad de firma que un
+  refactor rompio. Soccer/MLB congelados sin cambios.
