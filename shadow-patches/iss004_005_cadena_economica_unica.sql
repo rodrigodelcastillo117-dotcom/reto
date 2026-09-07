@@ -183,19 +183,20 @@ GRANT EXECUTE ON FUNCTION public.decision_pick_v1(text,text,text,text,numeric,nu
 -- probabilidad Y de sizing.
 -- DESPUÉS: se convierte en un WRAPPER delgado que delega la probabilidad que
 -- decide a decision_economica_v1. Ya no tiene su propia matemática de recorte.
--- Se mantiene la firma para no romper llamadores; se le añaden deporte/mercado
--- para poder pedir el prob_decide correcto. Los llamadores nuevos deben usar
--- decision_pick_v1 directo; este wrapper es la red de seguridad.
+-- Se mantiene la firma EXACTA de 5 args (CREATE OR REPLACE no puede cambiar la
+-- lista de argumentos sin crear una sobrecarga que dejaría viva la vieja). Los
+-- llamadores nuevos deben usar decision_pick_v1 directo (con mercado); este
+-- wrapper es solo la red de seguridad para llamadores sueltos.
 -- NOTA: pasa a STABLE (lee zonas_confiables vía decision_economica_v1) — deja
--- de ser IMMUTABLE a propósito.
+-- de ser IMMUTABLE a propósito. Sin mercado, decision_economica_v1 usa el prior
+-- n=30 (tramo sin medir): más conservador, nunca el tope plano 0.52.
 -- ----------------------------------------------------------------------------
 CREATE OR REPLACE FUNCTION public.kelly_fraccion_pct(
   p_prob_pct   numeric,
   p_momio      numeric,
   p_push_pct   numeric DEFAULT 0,
   p_techo_pct  numeric DEFAULT 5.0,
-  p_fraccion   numeric DEFAULT 0.25,
-  p_mercado    text    DEFAULT NULL   -- NUEVO: para pedir el prob_decide correcto
+  p_fraccion   numeric DEFAULT 0.25
 )
 RETURNS jsonb
 LANGUAGE plpgsql
@@ -211,8 +212,8 @@ BEGIN
   END IF;
 
   -- CAMBIO ISS-004/005: la probabilidad que dimensiona es prob_decide, no la
-  -- cruda topada a 0.52. Se delega al núcleo canónico.
-  v_de := public.decision_economica_v1(p_prob_pct, p_momio, p_mercado);
+  -- cruda topada a 0.52. Se delega al núcleo canónico (mercado NULL = prior n=30).
+  v_de := public.decision_economica_v1(p_prob_pct, p_momio, NULL);
   IF NOT COALESCE((v_de->>'ok')::boolean, false) THEN
     RETURN jsonb_build_object('pct', 0, 'motivo', v_de->>'error');
   END IF;

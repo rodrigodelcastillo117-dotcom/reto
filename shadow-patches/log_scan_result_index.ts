@@ -65,6 +65,10 @@ serve(async (req) => {
   try {
     const body = await req.json();
     const { picks, casa, image_url, scan_duration_ms } = body;
+    // image_url se ALMACENA como dato, nunca se fetch-ea server-side. Guarda básica
+    // de formato/longitud: solo https y <=2048 chars, si no -> null.
+    const img = (typeof image_url === "string" && image_url.length <= 2048 && /^https:\/\//i.test(image_url))
+      ? image_url : null;
     const supabase = createClient(url, svc);
     const arr = picks || [];
     const matched = arr.filter((p: any) => p.espn_event_id).length;
@@ -78,7 +82,7 @@ serve(async (req) => {
       apodo: apodoResuelto,                 // <- del JWT, no del body
       picks_matching: pm, total_picks: arr.length, matched_picks: matched,
       failed_picks: failed, match_rate: rate, casa: casa || null,
-      image_url: image_url || null, scan_duration_ms: scan_duration_ms || null,
+      image_url: img, scan_duration_ms: scan_duration_ms || null,
       error: body.error || null,
     });
     return new Response(JSON.stringify({ logged: true, match_rate: rate, matched, failed }),
