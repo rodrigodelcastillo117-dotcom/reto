@@ -5303,3 +5303,106 @@ DIAGNOSTICO ; NO puede decidir dinero. Era meter una regla arbitraria por la pue
 ### OBJETOS SHADOW (S4.6)
   lab_elegibilidad_shadow_v4 (gate corregido, MODEL_EVIDENCE diagnostico) ; v3 DEPRECATED ;
   lab_champion_soccer.Moneyline nota/calibration actualizadas. Produccion intacta.
+
+
+## 7-sep-2026 — M-MLB0..MLB3 INVENTARIO FORENSE + P_RAW + INTEGRIDAD TEMPORAL + BASELINE AUTORITATIVO
+Todo SHADOW. No dinero/Kelly/risk. Producción MLB intacta. Soccer congelado ~96%. Primer checkpoint cuantitativo.
+
+### MLB0 — INVENTARIO (clasificado)
+FUENTES/TABLAS (35): 
+  DATOS RESULTADO: historico_partidos_espn (baseball/mlb) = verdad de resultados (walk-forward). mlb_juego_final, mlb_linescore.
+  SNAPSHOT MODELO: mlb_stats_cache (1250 ev, 1 fila/evento, PREGAME) = insumo directo del motor. MODEL_ACTIVE.
+  PITCHERS: mlb_pitcher_temporada, mlb_pitcheo_juego -> alimentan FIP/ERA en cache. MODEL_ACTIVE (vía cache).
+  BATEO: mlb_bateador_temporada, mlb_batter_platoon_splits, mlb_batazos -> splits vs LHP/RHP en cache. MODEL_ACTIVE(platoon).
+  BULLPEN: mlb_bullpen_apariciones, v_bullpen_calidad, bt_bullpen -> AVAILABLE_NOT_USED (EXP_BULLPEN=0, medido dañino).
+  LINEUP: mlb_alineacion, mlb_lineup_pendiente + fuerza_alineacion() -> AVAILABLE_NOT_USED (PESO_ALINEACION=0, sin historia).
+  PARK: mlb_estadios, park_factor_runs (cache) -> MODEL_ACTIVE.
+  CLIMA: mlb_clima_hora, clima_partido_mlb() -> MODEL_ACTIVE (temp; viento excluido). Riesgo temporal (ver MLB2).
+  UMPIRE: umpires_mlb, mlb_umpire_juego, v_juego_umpire -> CONTEXT_ONLY (medido sin señal, no cableado).
+  SABER: mlb_saber_equipo, v_mlb_saber (wRC+/xFIP) -> AVAILABLE_NOT_USED / CONTEXT_ONLY (no entra al lambda).
+  FORMA: mlb_forma_temporada (VIEW, temporada completa SIN corte) -> LEGACY/TEMPORALLY_UNSAFE si se usa directo;
+     el motor la EVITA vía mlb_forma_hasta() (walk-forward). La vista cruda queda LEGACY.
+  SHADOW: mlb_shadow_predicciones, mlb_shadow_generar(), mlb_prob_snapshot, mlb_modelo_snapshot -> shadow.
+  COLAS ingesta (_pendiente, _pedir/_recoger): plumbing ETL. CONTEXT_ONLY.
+FUNCIONES MODELO: predecir_mlb() [P_RAW], motor_mlb() [alt], bt_predecir_mlb()/bt_mlb2()/backtest_mlb() [backtests],
+  contraer_media/matriz_poisson/totales_nb/ajuste_platoon/fuerza_alineacion/clima_partido_mlb [componentes].
+VISTAS PICKS: v_picks_mlb_modelo, v_mejores_picks_mlb, v_radar_mlb, v_favorito_mlb -> consumo/EV.
+MERCADOS PRODUCIDOS por predecir_mlb: SOLO Moneyline + Over/Under (Totals). Run Line y Team Total NO existen -> NOT_IMPLEMENTED.
+
+### MLB1 — VERDAD DE P_RAW (ecuación real; ninguna herencia entre mercados)
+Insumo: mlb_stats_cache (última fila fetch_success por evento). v_as_of = game_date (candado 5-sep, 0/1224 nulos).
+  lam_home = liga_rpg
+     * (off_home_ajust / liga_rpg)^0.50            [EXP_OFF; off = 85% temporada + 15% últimos10, contraído k=14]
+     * (FIP_away_contra / 4.20)^0.30                [EXP_PITCHER; FIP o ERA, contraído n=8 k=5]
+     * (RA_away_contra / liga_rpg)^0.50             [EXP_DEF; carreras permitidas rival, contraído k=14]
+     * bullpen_away^0.00                            [EXP_BULLPEN=0 -> APAGADO]
+     * park_factor * platoon_home * 1.018(vent.local) * factor_clima * (1+0*(alineacion-1))
+  lam_away = simétrico / 1.018.  Ambos acotados [2.6, 7.0].
+  MONEYLINE: matriz_poisson(lam_h,lam_a) -> P(local); luego AMORTIGUA: p_loc = 52.8 + 0.70*(P_poisson-52.8), [5,95].
+     (amortigua corrige varianza mal especificada: var margen real 22.09 vs Poisson 9.15; sqrt-ratio 0.645 ~ 0.70.) => P_RAW ML.
+  OVER/UNDER: totales_nb(lam_h+lam_a, r=5) -> NO Poisson (Poisson sobredice Over). Líneas .5 y enteras (push aparte). => P_RAW OU.
+  CALIBRACION (solo para EV, NO es P_RAW): calibrar_prob_motor lineal a=-0.0389 b=1.0665, rango [43.2%,62.2%];
+     fuera de rango -> EV null (no inventa). Derivada del propio backtest del motor.
+  EV: v_momios_confiables + devig_1x2; brecha>8pp -> alerta "no apostar" (mercado casi siempre tiene razón).
+
+### MLB2 — INTEGRIDAD TEMPORAL (matriz de features)
+  mlb_stats_cache: 1250 ev, cached_at PROMEDIO 0.5 días ANTES del juego, 0 filas cacheadas >2d después -> SNAPSHOT PREGAME real.
+  feature            fuente            as_of?                         veredicto
+  offense rpg        historico (WF)    reconstruido rows<fecha        SAFE (walk-forward estricto)
+  runs allowed       historico (WF)    reconstruido rows<fecha        SAFE
+  liga_rpg           historico (WF)    acumulado por día < fecha       SAFE
+  pitcher FIP/ERA    cache pregame     capturado ~0.5d antes           APROX_ASOF (pregame; no reconstruido) -> PROVISIONAL
+  last10             cache pregame     pregame                         APROX_ASOF
+  park_factor        cache/estadios    cuasi-estático                  SAFE
+  platoon splits     cache pregame     pregame                         APROX_ASOF (no en backtest bt_)
+  bullpen_fatigue    cache             (apagado)                       N/A (EXP=0)
+  lineup             cache pregame     prendido hoy, 0 historia        AVAILABLE_NOT_USED / no auditable aún
+  clima (temp)       clima_hora        ¿pronóstico as-of u observado?  TEMPORALLY_UNPROVEN (verificar forecast<decision)
+  umpire             mlb_umpire_juego  se conoce ~pregame              CONTEXT_ONLY (no cableado)
+  CANDADO MLB5 (pitcher): el cache es pregame -> abridor es el ANUNCIADO/proyectado, no el post-juego. Falta clasificar
+     PROJECTED/CONFIRMED/LATE_CHANGE/UNKNOWN explícitamente (pendiente auditoría dedicada).
+  CANDADO MLB6 (lineup): PESO_ALINEACION=0; no entra. Si se prende exige lineup_as_of<=decision_time (hoy 0 historia).
+
+### MLB3 — BASELINE AUTORITATIVO (walk-forward, n=1056, 2026-05-20..08-30; harness lab_mlb_wf)
+  Reconstrucción: offense/def/liga_rpg walk-forward desde historico; pitcher/park/last10 desde cache pregame. min_prev=30.
+  MONEYLINE (Poisson+amortigua, params producción):
+     N=1056 ; base_rate local 0.5189 ; Brier 0.24732 ; LogLoss 0.68774 ; bias +0.0041 ;
+     calibration slope 1.0665 / intercept -0.0389 (= exactamente los coef de calibrar_prob_motor -> confirmado derivan de aquí).
+     Naive "siempre base rate" Brier = 0.24964. => skill ML sobre naive ~ -0.00232 (MODESTO pero presente). REPRODUCE el P0 conocido 0.24732.
+  OVER/UNDER (línea 8.5):
+     over_real 47.5% ; Poisson dice 55.9% Brier 0.25198 (PEOR que naive 0.24943) ; NB r=5 dice 48.8% Brier 0.24494 (mejor).
+     => NB r=5 supera claramente a Poisson (primera ablación estructural, confirma producción). NB skill sobre naive ~ -0.0045.
+
+### MLB4 — PRIMERAS ABLACIONES (parcial)
+  1) OU: Poisson vs NB r=5 -> NB APORTA_OOS claro (Brier 0.24494 vs 0.25198; calibración de la tasa 48.8% vs real 47.5%). CONFIRMADO.
+  (Nota: los exponentes EXP_OFF/PITCHER/DEF y EXP_BULLPEN=0 YA fueron barridos OOS por trabajo previo — documentado en
+   predecir_mlb con números medidos. MLB4 completo = RE-VERIFICAR esos en split temporal limpio + IC cluster, pendiente
+   tras este checkpoint. No se re-tunearon.)
+
+### LEAKAGE ENCONTRADO
+  1. mlb_forma_temporada (vista temporada completa sin corte) es TEMPORALLY_UNSAFE; el motor ya la EVITA con mlb_forma_hasta.
+     Riesgo latente si algún consumidor lee la vista cruda. (Documentar; no tocar aún.)
+  2. clima: usar temperatura OBSERVADA en históricos sería lookahead; falta probar que es PRONÓSTICO as-of. TEMPORALLY_UNPROVEN.
+  3. pitcher/splits/last10 vía cache pregame: APROX_ASOF (pregame real) pero NO reconstruido -> PROVISIONAL hasta candado MLB5.
+  4. bt_predecir_mlb mide O/U con POISSON, no con la NB de producción -> sus brier_over NO reflejan producción (usar lab_mlb_wf).
+
+### MLB12 — SALIDA DEL PRIMER BLOQUE
+  1. Inventario: completo (arriba, 35 tablas/12 vistas/funciones clasificadas).
+  2. Diagrama P_RAW: ecuación real arriba (ML=Poisson+amortigua; OU=NB r=5; calibración solo-EV).
+  3. Matriz temporal de features: arriba (SAFE / APROX_ASOF / TEMPORALLY_UNPROVEN).
+  4. Baseline autoritativo: ML Brier 0.24732 (n=1056); OU-NB Brier 0.24494. Reproduce P0 conocido.
+  5. Primeras ablaciones: NB>>Poisson en OU (APORTA_OOS). Exponentes previos NO re-tuneados (re-verificar en split limpio).
+  6. Leakage: 4 hallazgos (arriba). Ninguno activo en el motor productivo hoy; 2 son riesgos latentes + 2 provisionales.
+  7. Mercados con suficiente evidencia (estructura): Moneyline (skill modesto medido) y Over/Under-NB. Run Line / Team Total NO_IMPLEMENTED.
+  8. Mercados bloqueados: Run Line / Team Total (no existen). Clima/lineup/bullpen = no cableados/provisionales. Skill gate y
+     market-data/CLV forward (MLB9/MLB11) pendientes; misma dependencia de exact_decision_price forward que Soccer.
+
+### OBJETOS SHADOW (MLB0)
+  lab_mlb_wf (harness walk-forward: reconstrucción as-of + lambdas + outcomes, n=1056). NADA de producción tocado.
+
+### PENDIENTE (siguiente bloque MLB, tras checkpoint)
+  - MLB4 completo: re-verificar EXP_OFF/PITCHER/DEF y bullpen/platoon/park/clima con ΔBrier pareado + IC cluster en split temporal.
+  - MLB5 candado pitcher (PROJECTED/CONFIRMED/LATE_CHANGE/UNKNOWN). MLB6 lineup as-of.
+  - MLB8 split temporal real 3 vías (DISCOVERY/VALIDATION/FINAL sellado) antes de challengers/selección.
+  - MLB7 challengers estructurales (incl. varianza independiente por-equipo, señalado por el propio motor).
+  - MLB9 skill gate por mercado ; MLB10 P_FAIR ; MLB11 market-data/eligibility (CORE universal, evidencia MLB-specific).
