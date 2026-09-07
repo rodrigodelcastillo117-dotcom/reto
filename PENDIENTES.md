@@ -6328,3 +6328,83 @@ Todo SHADOW en modelos. 2026 outcomes NO usados para tuning. No ML avanzado. NO 
   PENDIENTE (no bloquea Waivers, si la validacion final): FORWARD_PREDICTIVE_VALIDATION (0 semanas 2026 jugadas) ;
   kicker_logs sin espn_player_id (mapear para forward K) ; poblar rosters reales de usuarios via FANTASY HELPER.
   NO iniciado: Waivers/Trades/Draft (siguiente bloque, con tu GO).
+
+
+## 7-sep-2026 — FF12 ownership truth + FF13 Waivers V1 + FF14 UI. NO Trades/Draft. NO FAAB. NO ML avanzado.
+Todo SHADOW. 2026 outcomes NO usados para tuning. Modelos de produccion intactos. Soccer/MLB congelados.
+
+### FF12 — LEAGUE OWNERSHIP TRUTH (auditoria)
+  Tablas fantasy existentes: fantasy_liga_config (settings), fantasy_roster_semanal (roster del usuario, VACIA),
+  fantasy_start_sit (LLM legacy), nfl_adp/fantasy_adp (draft). NO existe tabla de: equipos de la liga, rosters
+  ajenos, free agents, waivers, FAAB, priority.
+  => LEAGUE_OWNERSHIP_DATA = MISSING ; LEAGUE_SYNC_ARCHITECTURE = PENDING (no hay integracion Yahoo).
+  CANDADO: NO se declara ningun jugador como free agent desde "ALL - MY_ROSTER". Waivers V1 corre SOLO sobre un
+  snapshot de ownership EXPLICITO. Sin ese snapshot, no hay pool.
+
+### FF12.1 — FANTASY HELPER (que puede importar)
+  El asistente por screenshot (tarea #41) puede capturar el ROSTER del usuario (y, si el usuario aporta capturas,
+  la lista de FA/waivers). NO puede leer automaticamente todos los equipos/rosters/FA/waivers de Yahoo (sin API).
+  => LEAGUE_SYNC_ARCHITECTURE = PENDING; hasta conectarlo, FF13 usa un pool CONTROLADO/SINTETICO (flagged).
+
+### FF12.2 — PLAYER IDENTITY  (lab_ff_resolver_identidad / lab_ff_resolver_nombre)
+  provider_id/nombre -> espn_player_id canonico. Estados RESOLVED / AMBIGUOUS / UNRESOLVED. Un ambiguo NO entra
+  automaticamente a Waivers. nfl_jugador_alias esta vacia; se resuelve por nombre_norm (0 homonimos en pool activo
+  QB/RB/WR/TE). Si algun dia hay yahoo id, se mapea antes del nombre.
+
+### FF12.3 — OWNERSHIP SNAPSHOT (lab_ff_ownership, append-only)
+  Columnas: league_id, fantasy_team_id, team_name, owner, espn_player_id, provider_player_id, identity_status,
+  ownership_status (MY_ROSTER/ROSTERED_OTHER/FREE_AGENT/WAIVERS/UNKNOWN), roster_slot, acquisition_type,
+  waiver_release_time, faab_balance, waiver_priority, temporada, semana, source, captured_at. Trigger
+  trg_ff_own_ro: UPDATE/DELETE prohibidos (append-only). REVOKE publico.
+  REGLA: la recomendacion NUNCA trata UNKNOWN ni ROSTERED_OTHER como disponible.
+
+### FF13 — WAIVERS V1 (capa de decision one-week; NO recalcula projected_mean)
+  lab_ff_lineup_total(pids,season,week) = suma de titulares skill del optimizer.
+  lab_ff_waivers_v1(league,season,week): MY_ROSTER + candidatos (SOLO FREE_AGENT/WAIVERS, identity RESOLVED) ->
+   por candidato:
+    A. STARTER_DELTA = lineup_total(my||cand) - lineup_total(my)  (immediate lineup gain, reoptimizando).
+    B. DROP = peor banca (menor proj, no-titular, del roster) tras anadir cand -> add/drop mantiene el lineup
+       optimo y el roster valido (drop de no-titular; exacto, no greedy que falle).
+    C. availability (OUT/QUESTIONABLE/...) separada de projection (no altera puntos).
+    D. add_type FREE_AGENT_ADD vs WAIVER_CLAIM (FF13.3). FAAB_BIDDING_POLICY = NOT_VALIDATED (no se sugiere monto).
+   FF13.4 one-week: NO rest-of-season / dynasty / playoff / keeper.
+   FF13.5 clasificacion: STARTER_UPGRADE (delta>0.05) / BENCH_UPGRADE (proj>peor banca, no titular) /
+     NO_PROJECTED_UPGRADE. Sin ponderacion inventada starter-vs-bench.
+   FF13.7 K/DST: pueden entrar con champions simples (K=media pos as-of, DST=media liga as-of) pero
+     K_PREDICTIVE_VALIDATION=PENDING, DST_PREDICTIVE_VALIDATION=PENDING; baja diferenciacion reflejada (ruido).
+   FF13.8 el LLM explica, NO cambia projections/ownership/availability/FAAB ni el optimizer.
+
+### FF14 — UI (lab_ff_waivers_ui)
+  Tarjetas: "ADD X / DROP Y -> mejor lineup +N pts", rol, availability, estado (FREE AGENT / WAIVER CLAIM),
+  clasificacion; STASH para BENCH_UPGRADE; y fallback explicito "No haria ningun movimiento esta semana" si ningun
+  candidato es STARTER_UPGRADE. El sistema NO esta obligado a recomendar transaccion.
+
+### E2E (liga sintetica controlada 'E2E_LEAGUE', source=SYNTHETIC_CONTROLLED, flagged)
+  MY_ROSTER 12 (mid-tier) + FREE_AGENT (QB elite, RB elite, RB/WR flojos, WR banca) + ROSTERED_OTHER (RB rival) +
+  WAIVERS (WR elite) + UNKNOWN (TE elite). Resultado lab_ff_waivers_ui:
+    1 ADD Puka Nacua / DROP Tyler Warren +8.90 (WR, QUESTIONABLE, WAIVER CLAIM, STARTER_UPGRADE)
+    2 ADD C.McCaffrey / DROP Tyler Warren +8.00 (RB, QUESTIONABLE, FREE AGENT, STARTER_UPGRADE)
+    3 ADD Josh Allen / DROP Tyler Warren +3.11 (QB, ACTIVE, FREE AGENT, STARTER_UPGRADE)
+    4 STASH Jameson Williams (WR, BENCH_UPGRADE, 12.94 > peor banca 11.09)
+  ROSTERED_OTHER (RB rival) y UNKNOWN (TE) NO aparecieron. QUESTIONABLE mostrado, proyeccion intacta.
+
+### REGRESIONES WAIVERS (12/12)
+  1 rostered por rival -> jamas disponible (ROSTERED_OTHER excluido). 2 UNKNOWN -> jamas free agent (excluido).
+  3 FA que mejora lineup -> STARTER_UPGRADE (Nacua/McCaffrey/Allen). 4 solo mejora banca -> BENCH_UPGRADE (J.Williams).
+  5 peor que roster -> NO_PROJECTED_UPGRADE (Bam Knight 9.49, Sarratt 6.36). 6 add/drop mantiene roster valido
+  (drop = peor banca no-titular). 7 nunca rostered y free-agent a la vez (ownership por fila unica de estado).
+  8 WAIVERS != FREE_AGENT (WAIVER_CLAIM vs FREE_AGENT_ADD). 9 OUT/QUESTIONABLE availability separada de projection.
+  10 LLM no modifica projections/ownership (capa UI descriptiva; funciones no lo permiten). 11 BYE -> sin snapshot
+  official -> no candidato. 12 K/DST sin falsa precision (validation=PENDING; media pos/liga).
+
+### OBJETOS (este bloque)
+  lab_ff_ownership (+trg_ff_own_ro) ; lab_ff_resolver_identidad() ; lab_ff_lineup_total() ; lab_ff_waivers_v1() ;
+  lab_ff_waivers_ui(). Datos: ownership sintetico 'E2E_LEAGUE' (flagged, aislado; no es liga real).
+
+### ESTADO / BLOCKERS ANTES DE TRADES
+  LISTO: ownership truth (snapshot append-only con 5 estados), identidad, waiver engine V1 (add/drop exacto,
+  clasificacion, one-week), UI con no-move. 
+  BLOCKERS: (a) LEAGUE_OWNERSHIP_DATA=MISSING / LEAGUE_SYNC=PENDING -> falta ingestar la liga real (todos los
+  equipos/FA/waivers) via Fantasy Helper/Yahoo; hoy el pool es sintetico. (b) FAAB_BIDDING_POLICY=NOT_VALIDATED.
+  (c) K/DST predictive=PENDING. (d) FORWARD_PREDICTIVE_VALIDATION=PENDING (0 semanas 2026). 
+  NO iniciado: Trades / Draft (siguiente, con tu GO).
