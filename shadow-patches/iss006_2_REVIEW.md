@@ -37,8 +37,10 @@ Fail-closed. **NULL = FALSE** por gate (todos envueltos en COALESCE(...,false)).
 ## EXACT_DECISION_PRICE (no es "momio_mercado IS NOT NULL")
 `exact_decision_price()` exige, en `radar_odds_snapshots ⋈ agenda_espn`: bookmaker real · identidad exacta de evento
 (join por espn_event_id) · market/side exactos (home/away/draw/over/under presentes según el pick) · snapshot
-**pre-kickoff** (`snapshot_at < agenda.fecha`, ⇒ no live) · ts válido (≤ 3 días) · overround sano `1.0–1.25`
-(no fantasma/interpolado). Medido en vivo: **40** filas ML tienen EXACT_DECISION_PRICE=true (gate discriminante, no trivial).
+**pre-kickoff** (`snapshot_at < agenda.fecha`, ⇒ no live) · ts válido (≤ 3 días) · no fantasma vía `r.confiable`
+(POLÍTICA EXISTENTE de ingerir_odds_espn). **Nota:** el umbral de overround `1.0–1.25` era INVENTED y se RETIRÓ
+(ver PRE-GO FINAL); no se congela política de overround aquí. Medido en vivo: **40** filas ML con
+EXACT_DECISION_PRICE=true (gate discriminante, no trivial; el conteo no cambió al quitar 1.25 → `confiable` era la señal real).
 
 ## GATE_BY_GATE_TESTS (12/12 PASS, controlado)
 Con registry ALLOW para (TEST,Moneyline,motor_test,c1) y contexto que pasa TODO:
@@ -63,8 +65,9 @@ La función lee `p_ctx->>'model_version'` (lo que la superficie pone desde la fi
 2. `economic_model_authorized()` (ALLOW exige version exacta).
 3. `exact_decision_price()` (gate real multi-condición).
 4. `economic_eligibility_v1()` (decisión canónica, 8 gates, reason_code, NULL=FALSE).
-5. 5 cabezas → consumen la decisión canónica: `v_pick_canonico.es_pick`, `mejor_oportunidad_hoy` (usa es_pick),
-   `favoritos_bien_pagados` (engine/motor_cache), `v_super_pick` (engine/motor_picks), `tg_filtrar_pick_del_dia` (engine).
+5. 6 cabezas → consumen la decisión canónica: `v_pick_canonico.es_pick`, `mejor_oportunidad_hoy` (usa es_pick),
+   `mejor_oportunidad_hoy_v2__base` (usa es_pick; bypass hallado en PRE-GO), `favoritos_bien_pagados` (engine/motor_cache),
+   `v_super_pick` (engine/motor_picks), `tg_filtrar_pick_del_dia` (engine).
 6. POST-VERIFY en la transacción: total económico debe ser 0 bajo 0-ALLOW, si no ROLLBACK.
 `model_version=NULL` en todas las cabezas (MISSING) hasta que las fuentes expongan provenance real.
 
@@ -86,3 +89,61 @@ restaurar las 5 definiciones desde el DEPLOY_ROLLBACK_SNAPSHOT (pg_get_*def capt
 ## PREDEPLOY_ISS006_GATE = **PASS**
 engine 12/12 · versión-inheritance real (c1→elegible, c2→$0) · exact_decision_price real (40 true) ·
 5 cabezas por la decisión canónica → ALL_ZERO · provenance MISSING honrado (sin inventar version). **NO DEPLOY.**
+
+---
+
+## PRE-GO FINAL (candados de la autoridad) — validado READ-ONLY (BEGIN…ROLLBACK)
+
+### REGISTRY_ACL_TESTS = PASS (5/5)
+`economic_model_authority`: RLS **ENABLED sin policies** (deny-all salvo owner/definer) + REVOKE INSERT/UPDATE/DELETE a
+anon/authenticated/PUBLIC + GRANT SELECT (lectura) a authenticated/service_role. Única ruta de escritura:
+`economic_model_authorize()` (SECURITY DEFINER, GRANT EXECUTE **solo service_role**; `authorized_at`/`authorized_by`
+derivados server-side, no del cliente).
+
+| # | test | resultado |
+|---|---|---|
+| 1 | authenticated UPDATE C1 false→true | **DENIED_OK** |
+| 2 | authenticated INSERT motor_nuevo=true | **DENIED_OK** |
+| 3 | authenticated llama economic_model_authorize() | **DENIED_OK** |
+| 4 | anon UPDATE/INSERT | **DENIED_OK** |
+| 5 | service_role vía economic_model_authorize() | **OK**, authorized_at/by server-derived, fila queda authorized=true |
+
+El cliente no puede escribir la tabla ni suministrar authorized_at/authorized_by.
+
+### OVERROUND_POLICY_PROVENANCE = **INVENTED → RETIRADO**
+El umbral `overround BETWEEN 1.0 AND 1.25` que yo había puesto **no** corresponde a ninguna política existente
+(las únicas refs a `1.25` están en auditar_coherencia_partido / recalcular_aprendizaje_segmentos / arbitro_partido,
+no de elegibilidad). Se **retiró** de `exact_decision_price`. La señal de "no fantasma" pasa a ser
+`radar_odds_snapshots.confiable` (**POLÍTICA EXISTENTE**, seteada por `ingerir_odds_espn`); la identidad/temporalidad
+del precio (evento, mercado/lado, bookmaker, pre-kickoff, ts válido, no live) se mantiene.
+Medido: exact_decision_price sigue discriminando (**40** ML con precio exacto, igual que con 1.25 → confiable era la señal real).
+Política de calidad de mercado/overround = gate SEPARADO futuro, sólo si hay política/evidencia aprobada. No se inventa aquí.
+
+### SIZING_BYPASS_MAP
+| superficie | clasificación | estado |
+|---|---|---|
+| reto_picks_hoy__base (stake RETO) | MODEL_DERIVED_AUTOMATIC | GATED (WHERE v.es_pick) |
+| mejor_oportunidad_hoy | MODEL_DERIVED_AUTOMATIC | GATED (→ v.es_pick) |
+| **mejor_oportunidad_hoy_v2__base** (wrapper auth-callable) | MODEL_DERIVED_AUTOMATIC | **BYPASS HALLADO → GATED en este patch** (reconstruía elegibilidad a mano) |
+| favoritos_bien_pagados (RETO) | MODEL_DERIVED_AUTOMATIC | GATED (engine, motor_cache) |
+| v_super_pick (DESTACADOS) | MODEL_DERIVED_AUTOMATIC | GATED (engine, motor_picks) |
+| tg_filtrar_pick_del_dia | MODEL_DERIVED_AUTOMATIC | GATED (engine) |
+| kelly_stake / kelly_stake__base / kelly_fraccion_pct | PRIMITIVE (recibe prob por arg) | Sólo alcanzables vía cabezas gateadas |
+| tamano_apuesta / tamano_apuesta__base (CalculadoraMonto.tsx) | MANUAL_CALCULATOR_ONLY (prob del cliente) | ISS-005, separado de recomendación automática |
+| kelly_usuario (#262 USER_PATH) | MANUAL_CALCULATOR_ONLY (0 callers server) | ISS-005 |
+| revisar_apuesta / revisar_apuesta__base | MANUAL guardrail (pick/prob/stake del cliente; sólo AÑADE bloqueos) | ISS-005; nunca empuja rec automática |
+| revisar_tamano_apuesta__base | MANUAL (revisa monto del usuario) | ISS-005 |
+| decision_economica_v1 / ev_decision_v1__base / devils_advocate | PRIMITIVE/ADVISORY (recibe prob) | no leen fuente de modelo |
+| decision_canonica_v2__base / kelly_sombra / lab_stake_shadow_ml | SHADOW/LAB | no ruta de dinero viva |
+| Frontend Kelly JS | MODEL_DERIVED_AUTOMATIC (cliente) | #170/#207 movieron sizing a servidor; consume las RPC ahora gateadas — **verificación en navegador pendiente** (proxy 403), se marca como follow-up, no se declara cerrado |
+
+Regla honrada: todo MODEL_DERIVED_AUTOMATIC queda detrás de `economic_eligibility_v1`. Los MANUAL calculators quedan
+para ISS-005, claramente separados (reciben prob/monto del cliente, no empujan una recomendación automática de modelo).
+
+### VALIDACIÓN FINAL (dry-run, rolled back)
+6 cabezas (incl. mejor_oportunidad_hoy_v2) → **ALL_ZERO** (es_pick=0, fbp=0, moh=0, mohv2=0, super=0).
+exact_decision_price sin 1.25 → 40 ML con precio exacto (discriminante).
+
+### PREDEPLOY_ISS006_GATE = **PASS**
+Registry ACL 5/5 · overround INVENTED retirado (confiable = política existente) · bypass v2 gateado ·
+6 cabezas ALL_ZERO · engine 12/12 · versión-inheritance real · CURRENT_AUTHORIZED_MODELS=NONE. **NO DEPLOY.**

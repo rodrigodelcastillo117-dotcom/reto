@@ -37,10 +37,33 @@ CREATE TABLE IF NOT EXISTS public.economic_model_authority (
   reason text NOT NULL, authorized_at timestamptz, authorized_by text,
   actualizado_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (deporte, mercado, fuente, model_version));
+ALTER TABLE public.economic_model_authority ENABLE ROW LEVEL SECURITY;   -- sin policies => deny all salvo owner/definer
 REVOKE ALL ON public.economic_model_authority FROM anon, authenticated, PUBLIC;
-GRANT SELECT ON public.economic_model_authority TO authenticated, service_role;
--- Sin filas ALLOW: nada autorizado. (Un ALLOW futuro debe nombrar la versión REAL, p.ej.
---  INSERT (...,'soccer','Moneyline','motor_futbol_calibrado','<hash/version real>',true,'AUTHORIZED_AFTER_VALIDATION',now(),'<quien>'))
+GRANT SELECT ON public.economic_model_authority TO authenticated, service_role;  -- lectura sí; escritura NO
+-- Sin filas ALLOW: nada autorizado. La ÚNICA ruta de escritura es economic_model_authorize() (abajo).
+
+-- (1b) Ruta administrativa server-side: única forma de autorizar. service_role/admin only.
+--      authorized_at y authorized_by se DERIVAN server-side (no se confía en el cliente).
+CREATE OR REPLACE FUNCTION public.economic_model_authorize(
+  p_deporte text, p_mercado text, p_fuente text, p_model_version text, p_authorize boolean, p_reason text DEFAULT NULL)
+RETURNS jsonb LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $fn$
+DECLARE v_role text := current_setting('request.jwt.claims', true)::jsonb->>'role';
+BEGIN
+  IF COALESCE(v_role,'') <> 'service_role' AND current_user NOT IN ('postgres','service_role') THEN
+    RAISE EXCEPTION 'ECONOMIC_AUTHORIZE_DENIED: solo service_role/admin';
+  END IF;
+  INSERT INTO public.economic_model_authority(deporte,mercado,fuente,model_version,economic_authorized,reason,authorized_at,authorized_by)
+  VALUES (p_deporte,p_mercado,p_fuente,p_model_version,p_authorize,
+          COALESCE(p_reason, CASE WHEN p_authorize THEN 'AUTHORIZED_AFTER_VALIDATION' ELSE 'DEAUTHORIZED' END),
+          now(),                                                                   -- server-side
+          COALESCE(current_setting('request.jwt.claims',true)::jsonb->>'sub', current_user))  -- server-side
+  ON CONFLICT (deporte,mercado,fuente,model_version) DO UPDATE
+    SET economic_authorized=EXCLUDED.economic_authorized, reason=EXCLUDED.reason,
+        authorized_at=now(), authorized_by=EXCLUDED.authorized_by, actualizado_at=now();
+  RETURN jsonb_build_object('ok',true,'authorized_at',now());
+END $fn$;
+REVOKE ALL ON FUNCTION public.economic_model_authorize(text,text,text,text,boolean,text) FROM anon, authenticated, PUBLIC;
+GRANT EXECUTE ON FUNCTION public.economic_model_authorize(text,text,text,text,boolean,text) TO service_role;
 
 -- (2) authority lookup (ALLOW exige match exacto de version; sin herencia).
 CREATE OR REPLACE FUNCTION public.economic_model_authorized(p_deporte text,p_mercado text,p_fuente text,p_model_version text)
@@ -56,8 +79,11 @@ CREATE OR REPLACE FUNCTION public.deporte_registry(p_dep text) RETURNS text LANG
               when p_dep ilike 'football%' or p_dep='NFL' then 'football' else 'soccer' end;
 $fn$;
 
--- (3) EXACT_DECISION_PRICE real: bookmaker + identidad de evento + market/side +
---     snapshot pre-kickoff + ts reciente + overround sano (no fantasma). No live.
+-- (3) EXACT_DECISION_PRICE real: SOLO identidad/temporalidad del precio —
+--     bookmaker real + identidad exacta de evento + market/side + snapshot pre-kickoff (no live) + ts válido +
+--     no fantasma (usa r.confiable, la POLÍTICA EXISTENTE de ingerir_odds_espn).
+--     NO se congela ninguna política de overround aquí (el umbral 1.25 era INVENTED y se retiró;
+--     una política de calidad de mercado sería un gate aparte, sólo si existe evidencia/política aprobada).
 CREATE OR REPLACE FUNCTION public.exact_decision_price(p_event text,p_mercado text,p_pick text,p_home text,p_away text)
 RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public' AS $fn$
   SELECT EXISTS (
@@ -65,8 +91,7 @@ RETURNS boolean LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
     JOIN public.agenda_espn a ON a.espn_event_id = r.espn_event_id           -- identidad exacta de evento + kickoff
     WHERE r.espn_event_id = p_event
       AND r.bookmaker IS NOT NULL                                            -- bookmaker real
-      AND r.confiable IS TRUE                                                -- no fantasma
-      AND r.overround IS NOT NULL AND r.overround BETWEEN 1.0 AND 1.25       -- overround sano (no interpolado)
+      AND r.confiable IS TRUE                                                -- no fantasma (POLÍTICA EXISTENTE: flag de ingerir_odds_espn)
       AND r.snapshot_at > now() - interval '3 days'                          -- ts de decisión válido
       AND r.snapshot_at < a.fecha                                           -- pre-kickoff (no live)
       AND ( (p_mercado='Moneyline' AND (
@@ -129,6 +154,12 @@ BEGIN
   s2 := replace(s,'and (coalesce(v.calibracion_confiable, true) or v.mercado = ''Moneyline'')','and v.es_pick');
   IF s2=s THEN RAISE EXCEPTION 'SUBSTR_NOT_FOUND: mejor_oportunidad_hoy'; END IF; EXECUTE s2;
 
+  -- 5b') mejor_oportunidad_hoy_v2__base: BYPASS hallado (SIZING_BYPASS_MAP) — reconstruía elegibilidad a mano
+  --      (auth-callable vía wrapper mejor_oportunidad_hoy_v2). Se enruta a la decisión canónica (es_pick).
+  s := pg_get_functiondef('public.mejor_oportunidad_hoy_v2__base(integer,text)'::regprocedure);
+  s2 := replace(s,'and (coalesce(v.calibracion_confiable, true) or v.mercado = ''Moneyline'')','and v.es_pick');
+  IF s2=s THEN RAISE EXCEPTION 'SUBSTR_NOT_FOUND: mejor_oportunidad_hoy_v2__base'; END IF; EXECUTE s2;
+
   -- 5c) favoritos_bien_pagados (RETO): engine para fuente motor_cache.
   s := pg_get_functiondef('public.favoritos_bien_pagados(numeric,numeric,numeric)'::regprocedure);
   s2 := replace(s,'(p.dato_clave_ok and not p.fuera_de_rango and (p.pu - 1/p.m) <= 0.12)',
@@ -161,6 +192,7 @@ BEGIN
   SELECT (SELECT count(*) FROM public.v_pick_canonico WHERE es_pick)
        + (SELECT count(*) FROM public.favoritos_bien_pagados(1.01,15.0,0.01) WHERE info_completa)
        + (SELECT count(*) FROM public.mejor_oportunidad_hoy(50))
+       + (SELECT count(*) FROM public.mejor_oportunidad_hoy_v2__base(50, NULL))
        + (SELECT count(*) FROM public.v_super_pick WHERE apto_para_mostrar) INTO n;
   IF n <> 0 THEN RAISE EXCEPTION 'POST_VERIFY_FAIL total_economico=%', n; END IF;
 END $verify$;
