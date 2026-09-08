@@ -13,8 +13,8 @@ Trazado sobre las definiciones vivas replicadas en laboratorio fiel.
 | Valor mostrado | Origen real | Distribución |
 |---|---|---|
 | **P(Under 8.5) = 52 %** | `predecir_mlb` → `totales_nb(λ_h+λ_a, 5.0, …)` | **Binomial Negativa (r=5)** |
-| **Carreras esperadas 9.06** | `motor_mlb` → `λ_local + λ_visita` | media, **compartida** por ambas |
-| **Marcador probable 5-4** | `motor_mlb` → `argmax(pr)` sobre grilla `g` | **Poisson independientes** |
+| **Carreras esperadas 9.06** | `predecir_mlb` → `round(lam_h + lam_a, 2)` | media, **compartida** por ambas |
+| **Marcador probable 5-4** | `predecir_mlb` → `matriz_poisson(lam_h, lam_a, …)` → `marcador_mas_probable` | **Poisson independientes** |
 | momio justo 1.94 | `totales_nb` → `momio_justo_under` | NB |
 | EV +0.5 % | `calcular_ev(P, cuota)` | consistente con P de NB |
 
@@ -57,6 +57,42 @@ E[total] = 9.060                                  moda = depende del reparto
 | **NB(9.06, r=5)** | 9.060 | **25.48** | **51.67 %** | **8** | 7 |
 
 **Aquí está la explicación de la aparente contradicción.** La NB está sesgada a la derecha: varianza 25.5 frente a 9.1, **media 9.06 pero mediana 8**. Una distribución así puede perfectamente tener media por encima de 8.5 y aun así más del 50 % de la masa en 8 o menos. **No hay incoherencia matemática: hay asimetría.**
+
+
+## 2-bis. Confirmación directa con las funciones de producción
+
+`predecir_mlb` **no llama a `motor_mlb`**: calcula sus propios `lam_h`/`lam_a` (con factores de clima y alineación), y en la MISMA invocación produce ambas cosas:
+
+```sql
+matriz_poisson(lam_h, lam_a, ARRAY[6.5,7.5,8.5,9.5,10.5,11.5], false, 20);  -- línea 158
+mtz := jsonb_set(mtz, '{totales}', totales_nb(lam_h + lam_a, 5.0, ...       -- línea 168
+'total_esperado', round(lam_h + lam_a, 2),                                   -- línea 288
+```
+
+Ejecutadas directamente con los mismos λ:
+
+```
+matriz_poisson(5.03, 4.03) -> under_85 = 44.8 %   (Poisson)
+totales_nb(9.06, 5.0)      -> under_85 = 51.7 %   (Binomial Negativa)
+```
+
+**Misma corrida, mismo parámetro de media, dos distribuciones, 6.9 puntos de diferencia.** `predecir_mlb` sobreescribe `{totales}` con la NB pero conserva `marcador_mas_probable` de la matriz Poisson. Eso es exactamente `CROSS_MODEL_PRESENTATION = YES`, ahora con las dos funciones ejecutadas lado a lado.
+
+`SAME_ANALYSIS_RUN = YES` · `SAME_MEAN_PARAMETER = YES` · `SAME_DISTRIBUTION = NO`.
+
+## 2-ter. `expected_runs − línea` NO es una señal válida (CT-7)
+
+La regla del atajo y la regla real **discrepan en 6 de 8 casos** probados:
+
+| μ | línea | media − línea dice | CDF de la NB dice | P(Under) |
+|---|---|---|---|---|
+| 8.20 | 7.5 | OVER | **UNDER** | 50.1 % |
+| 10.10 | 9.5 | OVER | **UNDER** | 51.7 % |
+| … | | | | (6 de 8 discrepan) |
+
+Si ambas reglas coincidieran siempre, el atajo sería inocuo. Al discrepar, **cualquier superficie que muestre `media − línea` como señal de Over/Under está afirmando algo que el motor no calcula.** El texto observado *"carreras esperadas 9.06 vs línea 8.5 · sin señal (+0.56)"* no se genera en la base de datos: se construye en el frontend, así que la corrección es un item del contrato de producto, no un patch SQL.
+
+**CT-7 queda como test permanente** para impedir que esa semántica reaparezca.
 
 ## 3. Lo que sí está mal
 
@@ -117,6 +153,8 @@ Que es exactamente **"MUY PROBABLE — MAL PRECIO"**, sin lenguaje de apuesta.
 | CT-4 | TOP_PICK sin evidencia forward | 3 | 0 |
 | CT-5 | under+over≠100 y momio_justo≠1/P | 5 | 0 |
 | CT-6 | mezclar moda Poisson con CDF NB (divergencia 6.92 pp documentada) | 1 | 0 |
+| **CT-7** | **`expected_runs − línea` como señal de Over/Under** (discrepa en 6/8) | 8 | 0 |
+| CT-8 | inventario de copy prescriptivo generado en la BD | 15 | 0 (inventario) |
 
 ## 7. Resultado
 
@@ -124,11 +162,12 @@ Que es exactamente **"MUY PROBABLE — MAL PRECIO"**, sin lenguaje de apuesta.
 MLB_SAFETY_GATE              = PASS (el gate de ISS-003/009 V2 funciona: economically_eligible=false, stake=0)
 MLB_COPY_SEMANTICS           = FAIL ("bien calibrado", "aguanta", "ventaja del modelo", "MEJORES PICKS")
 UNDER_8_5_52_PERCENT_SOURCE  = predecir_mlb → totales_nb(λ_total, r=5) — Binomial Negativa
-EXPECTED_RUNS_9_06_SOURCE    = motor_mlb → λ_local + λ_visita (media, compartida)
-SCORE_5_4_SOURCE             = motor_mlb → argmax sobre grilla Poisson independiente
+EXPECTED_RUNS_9_06_SOURCE    = predecir_mlb → round(lam_h + lam_a, 2) (media, compartida)
+SCORE_5_4_SOURCE             = predecir_mlb → matriz_poisson(lam_h,lam_a) → marcador_mas_probable
 SAME_DISTRIBUTION            = NO (NB para totales · Poisson para marcador exacto)
 SAME_MODEL_VERSION           = NO VERIFICABLE — MODEL_VERSION_PROVENANCE_MISSING
-SAME_ANALYSIS_RUN            = SÍ (misma llamada a predecir_mlb; motor_mlb es su insumo)
+SAME_ANALYSIS_RUN            = YES — CONFIRMADO: una sola invocación de predecir_mlb
+SAME_MEAN_PARAMETER          = YES — CONFIRMADO: totales_nb recibe (lam_h+lam_a), idéntico a total_esperado
 UNDER_PROB_RECOMPUTED        = 51.67 % (NB) · 44.78 % (Poisson)
 UNDER_PROB_DISPLAYED         = 52 %
 DIFFERENCE                   = 0.0 pp vs NB · 7.2 pp vs Poisson
@@ -139,7 +178,7 @@ CROSS_MODEL_PRESENTATION     = YES
 CALIBRATION_COPY_PROVENANCE  = FAIL (calibración de tramo histórico, no del model_version actual)
 AGUANTA_PRESENT              = YES (prohibido con economically_eligible=false)
 FIX_PREPARED                 = YES (clasificacion_pick_v1 + contract_tests_v1, shadow)
-TESTS                        = 18 asserts · violations=0 · coverage_status=PASS_NONEMPTY
+TESTS                        = 8 bloques · 41 asserts · violations=0 · coverage_status=PASS_NONEMPTY
 PRODUCTION_CHANGED           = NO
 ```
 

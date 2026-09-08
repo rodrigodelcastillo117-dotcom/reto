@@ -110,6 +110,58 @@ BEGIN
     END IF;
   END;
 
+  ---------------------------------------------------------------- CT-7
+  -- PROHIBIDO usar (expected_runs - total_line) como señal de Over/Under.
+  -- Se demuestra que las dos reglas DISCREPAN: si coincidieran siempre, el atajo
+  -- sería inocuo. Al discrepar, cualquier UI que lo use afirma algo que el motor
+  -- no calcula. La decisión real la toma la CDF de totales_nb.
+  DECLARE n_disc int := 0; n_tot int := 0; mu double precision; ln numeric;
+          p_under numeric; regla_media text; regla_cdf text;
+  BEGIN
+    FOR mu, ln IN SELECT * FROM (VALUES
+        (8.60::double precision, 8.5::numeric), (8.80,8.5), (9.06,8.5),
+        (9.30,8.5), (7.80,7.5), (8.20,7.5), (10.10,9.5), (10.40,9.5)) v(a,b) LOOP
+      n_tot := n_tot + 1;
+      p_under := (public.totales_nb(mu, 5.0, ARRAY[ln])->(ln::text)->>'under_pct')::numeric;
+      regla_media := CASE WHEN mu > ln::double precision THEN 'OVER' ELSE 'UNDER' END;
+      regla_cdf   := CASE WHEN p_under > 50 THEN 'UNDER' ELSE 'OVER' END;
+      IF regla_media <> regla_cdf THEN
+        n_disc := n_disc + 1;
+        RAISE NOTICE '  CT-7 discrepan en mu=% linea=%: media dice % / CDF dice % (P_under=%)',
+          mu, ln, regla_media, regla_cdf, p_under;
+      END IF;
+    END LOOP;
+    IF n_disc = 0 THEN
+      n_fail := n_fail + 1;
+      RAISE WARNING 'FAIL CT-7 no se detectó discrepancia; revisar el rango de prueba';
+    ELSE
+      RAISE NOTICE 'PASS_NONEMPTY CT-7 (expected_runs - linea) NO es señal válida: discrepa de la CDF en % de % casos · evaluated_rows=% violations=0',
+        n_disc, n_tot, n_tot;
+    END IF;
+  END;
+
+  ---------------------------------------------------------------- CT-8
+  -- Escaneo de copy PRESCRIPTIVO generado en la BD para superficies MLB.
+  -- No falla el build (es un inventario), pero deja constancia permanente.
+  DECLARE n_hits int := 0; rec record;
+  BEGIN
+    FOR rec IN
+      SELECT p.proname, w.palabra
+        FROM pg_proc p
+        JOIN pg_namespace n ON n.oid = p.pronamespace
+        JOIN pg_language l ON l.oid = p.prolang
+        CROSS JOIN unnest(ARRAY['aguanta','apostar','apuestas en vivo','argumento fuerte',
+                                'pick sugerido','recomendado','premium']) AS w(palabra)
+       WHERE n.nspname='public' AND p.prokind='f' AND l.lanname IN ('sql','plpgsql')
+         AND (p.proname ~ 'mlb|dossier|analisis')
+         AND pg_get_functiondef(p.oid) ILIKE '%'||w.palabra||'%'
+    LOOP
+      n_hits := n_hits + 1;
+      RAISE NOTICE '  CT-8 copy prescriptivo en %(): "%"', rec.proname, rec.palabra;
+    END LOOP;
+    RAISE NOTICE 'PASS_NONEMPTY CT-8 inventario de copy prescriptivo en BD · evaluated_rows=% violations=0 (inventario, no bloqueante)', n_hits;
+  END;
+
   ---------------------------------------------------------------- resumen
   IF n_fail > 0 THEN RAISE EXCEPTION 'CONTRACT TESTS: % bloques con violaciones', n_fail; END IF;
   RAISE NOTICE '=== CONTRACT TESTS V1: TODOS PASS ===';
