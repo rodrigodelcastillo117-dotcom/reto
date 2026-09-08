@@ -1,0 +1,5 @@
+-- ISS-015 — MATRIZ CANÓNICA DE PREDICCIÓN (fútbol). APLICADA (aditiva, read-only).
+-- Primer ladrillo del cerebro único: probability-first, P_RETO de 1X2 + BTTS (Poisson)
+-- + Over/Under en la línea REAL. NO inventa, NO EV. model_status=NO_VALIDADO.
+-- Definición viva en la BD: CREATE VIEW public.v_prediccion_reto_futbol (ver migración
+-- iss015_matriz_prediccion_reto_futbol). ROLLBACK: DROP VIEW public.v_prediccion_reto_futbol;
