@@ -148,3 +148,104 @@ Tres superficies separadas, todas fail-closed respecto a gobernanza (nada aquí 
 - Walk-forward temporal (no random split); el mes final se dejó como está (no se tuneó).
 - No se declara PASS sin N: BTTS queda CANDIDATE por N insuficiente, no PASS.
 - Resultado reportado tal cual: `INSUFFICIENT_EVIDENCE`.
+
+---
+# FASE 1.5 — CANONICAL HISTORICAL RECONSTRUCTION (2026-09-08, read-only)
+
+El estudio previo queda re-etiquetado: **`LEGACY_TRACKER_P_RANKING = FAIL`** (no veredicto final). Aquí se evalúa si el histórico se puede reconstruir desde otras fuentes.
+
+## 0. HISTORICAL_COHORT_INTEGRITY = RESOLVED
+SQL canónico del cohort:
+```sql
+SELECT * FROM public.oraculo_picks_tracking
+WHERE resultado IN ('ganado','perdido')       -- graded
+  AND match_date IS NOT NULL AND created_at < match_date;  -- temporal
+```
+| métrica | valor |
+|---|---|
+| N_TOTAL | 3563 |
+| N_TEMPORAL_VALID (created_at<match_date) | 3241 |
+| N_GRADED (win/loss) | 3248 |
+| **N_TEMPORAL_AND_GRADED (cohort canónico)** | **2971** (1663 eventos) |
+| N_WIN (cohort) | 1408 |
+| N_LOSS (cohort) | 1563 |
+| N_PUSH_NULL | 161 |
+| N_PENDING | 154 |
+| N_RESULTADO_NULL | 0 |
+La discrepancia previa (3238 vs 3248) era mezclar el filtro temporal con el graded. **Cohort canónico único = 2971**; toda métrica posterior lo usa.
+
+## 1. MATCH_DATE_SEMANTICS + TEMPORAL_INTEGRITY_STRICT
+- `match_date`: `timestamp with time zone` (UTC). **97.4% con hora real** (3421 real vs 90 medianoche-UTC; 52 NULL). Media decisión→evento = **16.4 h**. Es inicio real, no fecha-a-medianoche.
+- Kickoff autoritativo independiente (radar `provider_kickoff` / momios_cierre `saque` / predicciones_modelo `kickoff`): disponible en **416/1663 eventos (688/2971 filas)**.
+- Donde existe: **688/688 filas consistentes** (|match_date − kickoff| < 6h) **y** `created_at < kickoff`.
+```
+TEMPORAL_INTEGRITY_STRICT = PARTIAL
+  verificado_independiente = 688 filas (23%)  -> PASS
+  resto ~2283 filas -> TEMPORAL_EVENT_START_UNKNOWN (solo match_date auto-reportado, 97% con hora real)
+```
+
+## 2. LEGACY_P_PROVENANCE = UNKNOWN
+`oraculo_picks_tracking` **no** tiene `model_version` ni provenance de calibración; `features_json`/`features_input_json` = 100% NULL. `probabilidad_real` no puede mapearse a `P_RAW`/`P_UI`/`P_DECISION` canónicos por fila. Se mantiene:
+```
+PROBABILITY_PROVENANCE = UNKNOWN   → etiqueta: LEGACY_RECORDED_P (no "P_DECISION histórica")
+```
+(fuente dominante `ai_pro` 3382; `pick_tipo` valor/probabilidad; ninguna es versión de modelo trazable.)
+
+## 3. HISTORICAL_FEATURE_SOURCE_MAP
+| SOURCE | approx_rows | EVENT_KEY | SNAPSHOT_TS | KICKOFF/START | DEPORTE | HIST_DEPTH | NOTES |
+|---|---|---|---|---|---|---|---|
+| radar_odds_snapshots | 90 038 | espn_event_id | `snapshot_at` | `provider_kickoff` | no | alta (reciente) | odds as-of; cubre 324/1663 eventos |
+| alineaciones_espn | 11 917 | espn_event_id | `capturado_at` | `fecha_partido` | sí | media | lineups; **0 as-of pre-decisión** |
+| marcadores_archivo | 4 368 | espn_event_id | `archivado_at` | `game_date` | sí | media | resultado/deporte (post-evento) |
+| motor_snapshot | 4 188 | espn_event_id | `capturado_at`,`resuelto_at` | `match_date` | sí | media | snapshot motor; 93 eventos |
+| live_scores | 2 140 | espn_event_id | `updated_at` | `game_date` | sí | baja (transitoria) | 94 eventos |
+| predicciones_modelo | 1 628 | espn_event_id | `capturado_at`,`calificado_at` | `kickoff` | sí | media | model outputs; 408 eventos |
+| momios_cierre_espn | 263 | espn_event_id | `capturado_at` | `saque` | sí | baja | **closing (LEAKY)** |
+| agenda_espn | 660 | espn_event_id | `actualizado_at` | `fecha` | sí | efímera (retiene 2) | schedule no persistente |
+
+## 4. ASOF_RECONSTRUCTION_MATRIX (join `snapshot_ts <= decision_ts`)
+| FEATURE | SOURCE | COBERTURA cohort | CLASE |
+|---|---|---|---|
+| odds @ decisión | radar_odds_snapshots | 438/2971 filas (14.7%) | RECOVERABLE_TEMPORALLY (parcial) |
+| lineup status | alineaciones_espn | **0/2971 as-of** | NOT_RECOVERABLE (captura post-decisión) |
+| closing odds | momios_cierre_espn | 118 eventos | LEAKY (post-decisión, no usar como feature) |
+| model output snapshot | predicciones_modelo | 408 eventos (≤24%) | AMBIGUOUS (capturado_at parcial; sub-cuarto de cohort) |
+| injuries/availability/form/rest/xG/SP/bullpen/park/venue/data_readiness | — | 0 | NOT_RECOVERABLE (nunca persistido por pick a T-decisión) |
+| resultado/score | marcadores_archivo + oraculo | alto | post-evento (y, no feature) |
+
+## 5. SPORT_MAPPING_COVERAGE
+Unión de todas las fuentes con `deporte` (alineaciones, marcadores, motor_snapshot, live_scores, predicciones_modelo):
+```
+SPORT_MAPPING_COVERAGE_PCT = 562/1663 eventos = 33.8%
+```
+66% del cohort permanece sin deporte determinístico. No se infiere deporte de texto libre ambiguo. → análisis por-deporte robusto NO factible en el histórico.
+
+## 6. HISTORICAL_DATASET_V2_FEASIBILITY = INFEASIBLE (contextual) / usable solo P·EV·odds·market
+- Recuperable por fila: `LEGACY_RECORDED_P`, `ev_estimado`, `odds_apertura`, `mercado`, `resultado`, `created_at`, `match_date` (+ odds as-of en 15%, deporte en 34%).
+- NO recuperable: features contextuales/lineup/data-readiness/signal-agreement (0–≤24% y con leakage/ausencia). Ausencia se mantiene como ausencia (no se imputa).
+- Un `historical_top_pick_dataset_v2` con contexto **no** se puede construir a escala; solo el dataset P·EV·odds·market ya analizado (que falló como ranker).
+
+## RECOVERABLE / NONRECOVERABLE
+```
+RECOVERABLE_FEATURE_COUNT    = 1 parcial (odds@decisión, 15%)  [+ deporte 34%, kickoff-verif 23% como metadata]
+NONRECOVERABLE_FEATURE_COUNT = >=10 (lineup, injuries, availability, form, rest, xG, SP, bullpen, park, venue, data_readiness, signal_agreement)
+```
+
+## 8. FINAL_TEST_CONTAMINATION_BOUNDARY = 2026-09-08
+El período ≤ 2026-09-08 ya fue inspeccionado; NO puede volver a usarse como holdout virgen. Cualquier holdout realmente untouched debe empezar DESPUÉS del freeze de este estudio.
+
+## DATA_GAPS (con captura forward mínima)
+1. features contextuales por pick a T-decisión → persistir `features_input_json` al crear el pick. IMPACT: sin esto no hay signal-agreement/data-readiness ni V2 contextual.
+2. `data_completeness_pct` (readiness) → poblar el campo existente forward.
+3. `deporte` por pick → escribir al crear (o snapshot de agenda/live_scores histórico).
+4. `model_version` + P calibrada (P_DECISION) por pick → registrar provenance + P calibrada, re-medir calibración forward.
+5. odds as-of universal → radar_odds_snapshots ya crece; asegurar snapshot pre-decisión por cada pick.
+
+## VEREDICTO FASE 1.5
+```
+TOP_PICK_ACCURACY_V1_DATA = PARTIAL
+```
+- SUFICIENTE para investigar accuracy sobre **P·EV·odds·market** (ya hecho → LEGACY ranker por P = FAIL; miscalibrado, no monótono, ROI del cuartil-alto negativo).
+- INSUFICIENTE para la visión contextual/signal-agreement/por-deporte: as-of no reconstruible (lineups 0%, odds 15%, deporte 34%, sin provenance de P). No se puede construir el dataset V2 rico ni un selector con evidencia contextual desde el histórico.
+- Camino real: **captura forward** (DATA_GAPS 1–5) + acumular un holdout virgen post-`2026-09-08`, luego reintentar.
+Sin DDL, sin deploy, sin cambios de motor, sin autorizar modelos; ISS-003/009 intacto.
