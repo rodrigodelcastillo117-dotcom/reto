@@ -98,12 +98,24 @@ psql "$DATABASE_URL" -f shadow-patches/deploy/smoke_post_commit.sql
 
 ## ROLLBACK COMMAND (solo ante fallo crítico POST-COMMIT)
 
+**PRIMARIO — SEMANTIC (NO CASCADE), preserva disponibilidad:**
 ```bash
 DATABASE_URL='postgresql://<user>:<pass>@<host>:5432/postgres' \
   bash shadow-patches/deploy/run_rollback.sh
 ```
-- Verifica `ROLLBACK_ARTIFACT_SHA` y restaura las defs PRE-DEPLOY en orden: `analisis_completo` → `v_mejores_picks_mlb` → `v_pick_canonico` (+ subárbol `lab_dq_medicion_v1`, `v_lab_dq_capturas_faltantes`, `v_oraculo_canonico`) + owners/reloptions/grants.
-- Un fallo dentro del deploy ya revierte solo (no requiere este comando). Úsalo solo si un smoke post-COMMIT revela regresión real.
+- Verifica `SEMANTIC_ROLLBACK_SHA` y restaura el **comportamiento** pre-deploy vía `CREATE OR REPLACE` (sin DROP): `analisis_completo` → def previa; `v_mejores_picks_mlb`/`v_pick_canonico` → lógica previa envuelta, conservando las columnas aditivas como inertes (NULL). **No dropea nada** → las 3 vistas dependientes, grants y owners quedan intactos.
+
+**SECUNDARIO — STRUCTURAL (DROP CASCADE), solo offline:**
+```bash
+DATABASE_URL='...' bash shadow-patches/deploy/run_rollback.sh --structural
+```
+- Verifica `ROLLBACK_ARTIFACT_SHA` y restaura el esquema bit-a-bit (43/22 cols) con `DROP … CASCADE` + recrear subárbol + owners/reloptions/grants. Cascade auditado exhaustivo: `CASCADE_DROPPED_SET == ROLLBACK_RECREATED_SET` (3 vistas), `FULL_STRUCTURAL_ROLLBACK=SAFE`. Úsalo solo en ventana controlada.
+- Un fallo dentro del deploy ya revierte solo (no requiere ningún rollback). Usa el rollback solo si un smoke post-COMMIT revela regresión real.
+
+```
+SEMANTIC_ROLLBACK_SHA   = ef3de33f42258fbf0b63074418f2a5560006352e3a58db6cc6089166052fac0b
+STRUCTURAL_ROLLBACK_SHA = 32656fb3560261c6f2eae1bf5a25e5bd2eb4b34e93844d82531f978ff0aa3530
+```
 
 ---
 

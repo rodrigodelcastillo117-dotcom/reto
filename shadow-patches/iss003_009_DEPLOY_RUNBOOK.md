@@ -291,7 +291,22 @@ SELECT count(*) authorized_models FROM public.economic_model_authority WHERE eco
 
 ---
 
-## 9. FASE 6 — ROLLBACK REAL (preparado; NO ejecutar salvo fallo crítico POST-COMMIT)
+## 9. FASE 6 — ROLLBACK (preparado; NO ejecutar salvo fallo crítico POST-COMMIT)
+
+> **ROLLBACK PRIMARIO = SEMANTIC, NO CASCADE** (`shadow-patches/rollback/iss003_009_semantic_rollback.sql`,
+> SHA `ef3de33f42258fbf0b63074418f2a5560006352e3a58db6cc6089166052fac0b`, `bash run_rollback.sh`).
+> Restaura el COMPORTAMIENTO pre-deploy vía `CREATE OR REPLACE` (sin DROP): `analisis_completo`→def previa;
+> `v_mejores_picks_mlb`/`v_pick_canonico`→lógica previa envuelta, conservando las columnas aditivas como
+> inertes (NULL). **No dropea nada** → las 3 vistas dependientes, grants y owners quedan intactos
+> (`RESTORE_BEHAVIOR + PRESERVE_AVAILABILITY + NO_CASCADE`). Cuerpos validados read-only (parse/plan OK).
+>
+> **ROLLBACK SECUNDARIO = STRUCTURAL, DROP CASCADE** (`iss003_009_rollback.sql`, SHA `32656fb3…3530`,
+> `bash run_rollback.sh --structural`, solo offline). **Auditoría de cascada (catálogo, read-only):**
+> `CASCADE_DEPENDENCY_COUNT=3` = {`lab_dq_medicion_v1`, `v_lab_dq_capturas_faltantes`, `v_oraculo_canonico`}
+> (depth 1, sin nivel-2/matviews/tablas). `CASCADE_DROPPED_SET == ROLLBACK_RECREATED_SET` ⇒
+> `FULL_STRUCTURAL_ROLLBACK = SAFE`. Aun así, por disponibilidad el primario es el semántico.
+
+### (secundario) restauración estructural bit-a-bit
 
 Archivo: `shadow-patches/rollback/iss003_009_rollback.sql` (69 940 bytes, SHA `32656fb3…3530`). Generado DB-side desde las defs vivas PRE-DEPLOY. **Ejecutable en orden correcto** (código, no solo nota):
 

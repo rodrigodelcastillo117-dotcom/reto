@@ -527,3 +527,37 @@ Estado correcto:
 
 **FREEZE:** SQL_ARTIFACT_SHA=57b7a4077247e5e814aa9e4ce7e0ad369dc11975a8bff7ea28083c3ffedd4cad, SHA_DRIFT=NO.
 `READY_FOR_EXECUTION=YES`, `SAFE_SQL_TRANSPORT=BLOCKED`, `DEPLOY_AUTHORIZATION=PENDING_USER`. NO DEPLOY.
+
+---
+
+## REV 5 — HARDENING ROLLBACK (SEMANTIC primario, NO CASCADE) + claim Athletics — 2026-09-08
+
+**1. Claim Athletics corregido:** `ATHLETICS_EV_DRIFT_ROOT_CAUSE = DIFFERENT_ROW + LIVE_ODDS_CHANGE/DATA_REFRESH`;
+`LOGIC_DRIFT_EVIDENCE = NONE_OBSERVED` (NO se declara LOGIC_DRIFT "excluido matemáticamente": no hay snapshot
+histórico completo de cada observación). No bloquea. Invariante de deploy único: `P_BEFORE==P_AFTER`,
+`EV_BEFORE==EV_AFTER` dentro del mismo REPEATABLE READ (F1/F2). El runbook no depende de EV≈+25.07.
+
+**2. Auditoría de cascada (catálogo pg_depend, read-only):**
+`CASCADE_DEPENDENCY_COUNT = 3` · `CASCADE_DEPENDENCY_LIST = {lab_dq_medicion_v1, v_lab_dq_capturas_faltantes, v_oraculo_canonico}`
+(depth 1; sin nivel-2, matviews ni tablas). El rollback estructural recrea exactamente esos 3 + v_pick_canonico ⇒
+`CASCADE_DROPPED_SET == ROLLBACK_RECREATED_SET` ⇒ `FULL_STRUCTURAL_ROLLBACK = SAFE`.
+
+**3. SEMANTIC ROLLBACK (nuevo, PRIMARIO, NO CASCADE):**
+`shadow-patches/rollback/iss003_009_semantic_rollback.sql` (55 884 B,
+`SEMANTIC_ROLLBACK_SHA = ef3de33f42258fbf0b63074418f2a5560006352e3a58db6cc6089166052fac0b`).
+Generado DB-side desde las defs vivas pre-deploy. Solo `CREATE OR REPLACE` (verificado: 0 DROP, 0 CASCADE — las
+únicas apariciones de esas palabras están en comentarios). `analisis_completo`→def previa; `v_mejores_picks_mlb`
+y `v_pick_canonico`→lógica previa envuelta en subquery + columnas aditivas inertes (NULL) para cumplir el
+contrato de columnas del estado desplegado sin dropear. Preserva 3 vistas dependientes, grants y owners.
+`ROLLBACK_PRIMARY_MODE = NO_CASCADE`.
+
+**4. Test estático (read-only, sin aplicar DDL):** EXPLAIN de ambos cuerpos envueltos contra el esquema actual
+(que es el pre-deploy) → `SEMANTIC_WRAP_PARSE_PLAN_OK` (parse/plan/resolución de columnas OK). `SEMANTIC_ROLLBACK = PASS`.
+**Limitación documentada:** el ciclo completo `deploy → semantic rollback` end-to-end NO se puede ejecutar sin
+transporte SQL (SAFE_SQL_TRANSPORT=BLOCKED); no se reconstruye el branch de 1105 objetos por límite de entorno.
+
+**5. run_rollback.sh:** primario semantic (default), secundario `--structural` (DROP CASCADE, offline). bash -n OK.
+
+**FREEZE:** SQL_ARTIFACT_SHA=57b7a4077247e5e814aa9e4ce7e0ad369dc11975a8bff7ea28083c3ffedd4cad, SHA_DRIFT=NO.
+`SEMANTIC_ROLLBACK=PASS`, `STRUCTURAL_ROLLBACK_CASCADE_AUDIT=PASS`, `READY_FOR_EXECUTION=YES`,
+`SAFE_SQL_TRANSPORT=BLOCKED`, `DEPLOY_AUTHORIZATION=PENDING_USER`. NO DEPLOY.

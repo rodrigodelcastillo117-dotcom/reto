@@ -1,29 +1,39 @@
 #!/usr/bin/env bash
 # ============================================================================
-# RUNNER TURNKEY — ROLLBACK ISS-003/009/009B (verifica SHA -> restaura defs PRE-DEPLOY)
-# Uso (desde la raíz del repo, con DATABASE_URL exportado a PROD):
-#   bash shadow-patches/deploy/run_rollback.sh
-# Solo ante fallo crítico POST-COMMIT. Usa el artefacto de rollback congelado.
+# RUNNER TURNKEY — ROLLBACK ISS-003/009/009B
+# PRIMARIO  : SEMANTIC (NO CASCADE) — restaura comportamiento, preserva disponibilidad.
+# SECUNDARIO: STRUCTURAL (DROP CASCADE) — solo offline, con --structural. Cascade auditado
+#             exhaustivo: CASCADE_DROPPED_SET == ROLLBACK_RECREATED_SET (3 vistas), FULL_STRUCTURAL_ROLLBACK=SAFE.
+# Uso (desde la raíz del repo, con DATABASE_URL a PROD):
+#   bash shadow-patches/deploy/run_rollback.sh              # semantic (recomendado)
+#   bash shadow-patches/deploy/run_rollback.sh --structural # structural cascade (offline)
+# Solo ante fallo crítico POST-COMMIT. Un fallo DENTRO del deploy ya revierte solo.
 # ============================================================================
 set -euo pipefail
 
-ROLLBACK_SHA="32656fb3560261c6f2eae1bf5a25e5bd2eb4b34e93844d82531f978ff0aa3530"
-RB="shadow-patches/rollback/iss003_009_rollback.sql"
+SEMANTIC_SHA="ef3de33f42258fbf0b63074418f2a5560006352e3a58db6cc6089166052fac0b"
+STRUCTURAL_SHA="32656fb3560261c6f2eae1bf5a25e5bd2eb4b34e93844d82531f978ff0aa3530"
+SEMANTIC="shadow-patches/rollback/iss003_009_semantic_rollback.sql"
+STRUCTURAL="shadow-patches/rollback/iss003_009_rollback.sql"
+
+MODE="semantic"; FILE="$SEMANTIC"; EXPECT="$SEMANTIC_SHA"
+if [ "${1:-}" = "--structural" ]; then MODE="structural"; FILE="$STRUCTURAL"; EXPECT="$STRUCTURAL_SHA"; fi
 
 : "${DATABASE_URL:?ABORT: exporta DATABASE_URL (conexión a PROD) antes de correr}"
-[ -f "$RB" ] || { echo "ABORT: falta $RB"; exit 1; }
+[ -f "$FILE" ] || { echo "ABORT: falta $FILE"; exit 1; }
 
-cur="$(sha256sum "$RB" | awk '{print $1}')"
-if [ "$cur" != "$ROLLBACK_SHA" ]; then
-  echo "ROLLBACK SHA_DRIFT=YES  actual=$cur  esperado=$ROLLBACK_SHA"
+cur="$(sha256sum "$FILE" | awk '{print $1}')"
+if [ "$cur" != "$EXPECT" ]; then
+  echo "ROLLBACK SHA_DRIFT=YES  ($MODE) actual=$cur esperado=$EXPECT"
   echo "ABORT: artefacto de rollback no verificable."; exit 2
 fi
-echo "ROLLBACK SHA OK. Restaurando defs PRE-DEPLOY (una transacción)..."
+echo "ROLLBACK MODE=$MODE  SHA OK. Restaurando (una transacción)..."
 
-if psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$RB"; then
-  echo "ROLLBACK=APPLIED  (analisis_completo -> v_mejores_picks_mlb -> v_pick_canonico + subárbol + grants)"
+if psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$FILE"; then
+  echo "ROLLBACK=APPLIED  mode=$MODE"
+  [ "$MODE" = "semantic" ] && echo "  (comportamiento previo restaurado; cols aditivas quedan inertes; sin DROP/CASCADE; disponibilidad preservada)"
   exit 0
 else
-  echo "ROLLBACK=FAILED  (revisa el error; producción puede requerir intervención manual)"
+  echo "ROLLBACK=FAILED  mode=$MODE  (revisa el error; puede requerir intervención manual)"
   exit 3
 fi
