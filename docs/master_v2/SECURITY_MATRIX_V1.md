@@ -44,7 +44,28 @@ Dos correcciones:
 
 Rollback probado: aplica → revierte → re-aplica limpio.
 
-⚠️ **Antes de desplegar:** confirmar quién es el productor legítimo en producción. Si NO es el owner (`postgres`) sino un rol de servicio, hay que concederle `EXECUTE` explícitamente en el patch. El `SEC03_CONSUMER_MAP` no pudo completarse: los `cron.job` no revelan qué rol ejecuta cada comando.
+### `SEC03_CONSUMER_MAP` — RESUELTO
+
+Era el bloqueante declarado para desplegar. La cadena de evidencia está completa:
+
+| Eslabón | Evidencia |
+|---|---|
+| ¿Quién invoca `lab_mlb_fwd_capturar`/`_resultado`? | **Ningún cron directamente.** Una sola función en BD: `lab_mlb_drain_forward` |
+| ¿Quién invoca `lab_mlb_drain_forward`? | job `lab_mlb_drain_forward`, `*/10 * * * *`, **activo** |
+| ¿Con qué rol corre ese job? | **`postgres`** (los 247 jobs de `cron.job` corren como `postgres`) |
+| ¿Quién es owner de las funciones del ledger? | **`postgres`** |
+
+**El productor legítimo es el job `lab_mlb_drain_forward` corriendo como `postgres`, que es el owner.** En PostgreSQL el owner nunca pierde `EXECUTE` por un `REVOKE`.
+
+⇒ **El patch es seguro de desplegar tal cual.** No hace falta conceder `EXECUTE` a ningún rol de servicio adicional.
+
+```
+BLOCKED_ON_PRODUCER_IDENTITY = RESUELTO
+PRODUCTOR_LEGITIMO           = cron job lab_mlb_drain_forward, rol postgres (owner)
+PATCH_LISTO_PARA_GO          = SÍ
+```
+
+⚠️ Observación aparte: `lab_mlb_drain_forward` **también** es `SECURITY DEFINER` y ejecutable por `anon`. Un anónimo puede disparar el drenado. No fabrica evidencia falsa (solo drena una cola), pero pertenece al conjunto de SEC-05 y merece el mismo tratamiento.
 
 ---
 
@@ -119,7 +140,7 @@ Subconjunto con cero consumidores en BD y ningún propósito de producto — **r
 ```
 SEC-01 = ABIERTO (HIGH)   · patch parcial preparado, requiere consumer map
 SEC-02 = PREPARADO (MED)  · en sec_hardening_v1.sql, probado
-SEC-03 = PREPARADO (HIGH) · reproducido 3/3, cerrado 5/5 en lab, rollback probado
+SEC-03 = LISTO PARA GO (HIGH) · reproducido 3/3, cerrado 5/5, rollback probado, productor identificado
 SEC-05 = ABIERTO (CRIT)   · 127 funciones, documentado, sin patch masivo por diseño
 SECRETOS EN REPO = 0
 FORWARD_CAPTURE_AUTHORIZED = FALSE  (bloqueado hasta desplegar SEC-03)
