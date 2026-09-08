@@ -253,7 +253,7 @@ Mapa de criterios del auditor → asserts:
 - **C1/C2**: `v_mejores_picks_mlb` con `economically_eligible`+`reason_code`.
 - **D1/D2/D3**: NONE → 0 es_pick, 0 nivel ojo/fuerte, 0 economically_eligible.
 - **E1/E2/E3 (dinero real, no "por construcción")**: `mejor_oportunidad_hoy(500).kelly_pct>0=0`; `reto_picks_hoy(apodo).monto_autorizado>0=0` y `puede_apostar=0` sobre TODOS los usuarios reales. *(Hoy verificado =0; son invariantes bajo NONE.)*
-- **F1/F2 (paridad P/EV)**: `EXCEPT ALL` bidireccional BEFORE↔AFTER bajo `REPEATABLE READ` ⇒ `P_VALUE_DIFF=0`, `EV_VALUE_DIFF=0`. Cubre Athletics (EV máx observado hoy **+28.79**; el ML ~+25.07): su `ev_pct` debe quedar idéntico (la paridad lo exige, no un número fijo).
+- **F1/F2 (paridad P/EV)**: `EXCEPT ALL` bidireccional BEFORE↔AFTER bajo `REPEATABLE READ` ⇒ `P_VALUE_DIFF=0`, `EV_VALUE_DIFF=0`. **El invariante es temporal dentro del mismo snapshot: `EV_BEFORE_DEPLOY == EV_AFTER_DEPLOY` y `P_BEFORE_DEPLOY == P_AFTER_DEPLOY`.** NO depende de ningún valor absoluto de EV (Athletics u otro): `ev_pct` es determinista `f(prob, momio)` y el momio de mercado se recaptura en vivo (`momio_capturado_at`), por lo que su valor absoluto varía entre observaciones/días (LIVE_ODDS_CHANGE / DIFFERENT_ROW) — eso NO es del deploy. La paridad exige que el deploy no cambie P/EV de NINGUNA fila en el instante del deploy, sea cual sea su valor.
 
 Superficies de dinero **fuera de alcance** (no dependen de los objetos que cambian → el deploy no puede alterarlas; no se asertan aquí): `v_super_pick.kelly_pct_sugerido`, `favoritos_bien_pagados.fraccion`. Ver §11.
 

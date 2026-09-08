@@ -498,3 +498,32 @@ Paquete turnkey listo para que el usuario (o CI con `DATABASE_URL`) ejecute:
 `bash shadow-patches/deploy/run_deploy.sh` (SHA guard → deploy atómico → asserts A–G) ·
 smoke `smoke_post_commit.sql` · rollback `run_rollback.sh`.
 `VISUAL_FRONTEND_SMOKE_PRE/POST = PENDING_USER` (sin navegador). `LOCAL_TSGO=NOT_APPLICABLE` · `LOVABLE_FRONTEND_BUILD=PASS @ ba828acc`.
+
+---
+
+## REV 4 — CORRECCIÓN DE CLAIMS + ROOT CAUSE EV ATHLETICS + EXECUTION_PACKAGE (NO DEPLOY) — 2026-09-08
+
+**Corrección de nomenclatura (obligatoria):** las verificaciones read-only NO demuestran los asserts A–G.
+Estado correcto:
+- `PRE_DEPLOY_INVARIANTS = PASS` (read-only: NONE, es_pick=0, kelly=0, reto monto/puede=0, 43 cols, 1 overload, reason esperado).
+- `POST_DEPLOY_ASSERTS = NOT_RUN` — A–G solo pueden ser PASS DESPUÉS de ejecutar el artefacto en la transacción. Queda anulada cualquier afirmación previa de que "el pre-estado prueba que A–G pasarán".
+
+**ATHLETICS_EV_DRIFT_ROOT_CAUSE (diagnóstico read-only, 2026-09-08):**
+- Athletics vs Toronto es una **serie** de 3 juegos hoy: event_ids 401816851 / 401816866 / 401816881 (distintos de los de días previos).
+- Top actual: 401816851 ML Athletics, prob 45.9%, momio_mercado 2.78, **ev_pct 29.25**, momio_capturado_at 2026-09-08 03:12 UTC, odds_source=motor_mlb_cuantitativo, **es_pick=false**.
+- El drift 25.07 (original) → 28.79 (2026-09-07) → 29.25 (2026-09-08) se clasifica como:
+  **DIFFERENT_ROW** (otro espn_event_id/otro día) + **LIVE_ODDS_CHANGE / DATA_REFRESH** (momio_mercado recapturado intradía; ev_pct = f(prob, momio) se mueve con el momio).
+  **NO LOGIC_DRIFT**: el deploy no está aplicado, probabilidad_pct y la fórmula de ev_pct intactas, es_pick=false.
+- No es posible diff exacto contra un valor pasado no-snapshotteado; el mecanismo es determinista y excluye LOGIC_DRIFT.
+- **El runbook ya NO depende de EV≈+25.07.** Invariante correcto (F1/F2, en el mismo REPEATABLE READ):
+  `EV_BEFORE_DEPLOY == EV_AFTER_DEPLOY` y `P_BEFORE_DEPLOY == P_AFTER_DEPLOY`, sea cual sea el valor absoluto.
+
+**Auditoría de runners (bash -n OK; shellcheck no disponible en entorno):**
+- run_deploy.sh: SHA guard antes de conectar (exit 2 en drift); DATABASE_URL requerido (exit antes de conectar); psql -v ON_ERROR_STOP=1; sin retry; una transacción; POST-VERIFY antes de COMMIT; error→rollback; no imprime credenciales (solo el literal \$DATABASE_URL); no ejecuta Parte 3; no autoriza modelos.
+- rollback: orden real en archivo analisis_completo(L12) → v_mejores_picks_mlb(L423-424) → v_pick_canonico CASCADE(L565-566) → subárbol → COMMIT(L1304); completo (termina en COMMIT, 6 objetos presentes).
+- ROLLBACK_ARTIFACT_SHA256 = 32656fb3560261c6f2eae1bf5a25e5bd2eb4b34e93844d82531f978ff0aa3530 (sin cambio).
+
+**EXECUTION_PACKAGE.md** creado (PRECHECK / EXACT COMMAND / EXPECTED OUTPUT / SUCCESS / FAILURE / POST-SMOKE / ROLLBACK COMMAND).
+
+**FREEZE:** SQL_ARTIFACT_SHA=57b7a4077247e5e814aa9e4ce7e0ad369dc11975a8bff7ea28083c3ffedd4cad, SHA_DRIFT=NO.
+`READY_FOR_EXECUTION=YES`, `SAFE_SQL_TRANSPORT=BLOCKED`, `DEPLOY_AUTHORIZATION=PENDING_USER`. NO DEPLOY.
