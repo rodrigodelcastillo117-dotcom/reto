@@ -183,6 +183,10 @@ COMMENT ON FUNCTION public.resolver_evento_canonico(text) IS
   'ISS-010: resuelve id de entrada (ESPN|af_<n>|futmap:...) a espn_event_id canonico. '
   'Fail-closed: >1 candidato -> IDENTITY_AMBIGUOUS; 0 -> ANALYSIS_UNAVAILABLE. STABLE/read-only.';
 
+-- OWNER explícito = mismo owner del contrato original (postgres). Preserva la
+-- identidad de SECURITY DEFINER; no amplía privilegios.
+ALTER FUNCTION public.resolver_evento_canonico(text) OWNER TO postgres;
+
 -- ----------------------------------------------------------------------------
 -- 2) Renombrar la función actual y crear el envoltorio delgado.
 --    El cuerpo real queda intacto en analisis_completo_core (byte-idéntico);
@@ -215,6 +219,12 @@ BEGIN
   RETURN public.analisis_completo_core(v_canon);
 END;
 $function$;
+
+-- OWNER preservado explícitamente (contrato original: owner=postgres, SECURITY
+-- DEFINER). El envoltorio conserva el owner; el core lo hereda del RENAME pero se
+-- reafirma por seguridad. No se amplían privilegios ni EXECUTE grants.
+ALTER FUNCTION public.analisis_completo(text)      OWNER TO postgres;
+ALTER FUNCTION public.analisis_completo_core(text) OWNER TO postgres;
 
 COMMIT;
 

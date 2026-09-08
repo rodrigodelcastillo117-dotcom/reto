@@ -24,12 +24,14 @@ Commit: **308a844** — `fix(FUT PRO): canonical event+competition identity`
 | `src/test/matchFeedVisual.test.tsx` | **NUEVO.** Regresión visual (jsdom) de los dos casos humanos. |
 
 ### Backend — repo `rodrigodelcastillo117-dotcom/reto`, branch `claude/reto-13m-espn-matches-3uknie`
-Commit: **07df3d8** — `prepare(iss-010): analisis_completo resuelve identidad AF↔ESPN`
+Patch endurecido con OWNER explícito (owner=postgres) para las 3 funciones.
 
-| Archivo | Cambio |
-|---|---|
-| `shadow-patches/prepared/iss010_analisis_completo_af_identity.sql` | **NUEVO (PREPARED).** `resolver_evento_canonico()` + rename `analisis_completo`→`_core` + envoltorio `analisis_completo`. |
-| `shadow-patches/rollback/iss010_analisis_completo_af_identity_rollback.sql` | **NUEVO.** Rollback: drop envoltorio + rename-back (restaura la función original byte-idéntica) + drop resolver. |
+| Archivo | Cambio | SHA256 |
+|---|---|---|
+| `shadow-patches/prepared/iss010_analisis_completo_af_identity.sql` | `resolver_evento_canonico()` + rename `analisis_completo`→`_core` + envoltorio `analisis_completo` + `ALTER FUNCTION … OWNER TO postgres` (resolver, wrapper, core). | `fa90cdc7b2f5c0f1ed695192081d9ca09fd852509649cddb34a23ce88fa41589` |
+| `shadow-patches/rollback/iss010_analisis_completo_af_identity_rollback.sql` | Rollback: drop envoltorio + rename-back (restaura la función original byte-idéntica) + drop resolver. | `1c3b6af21dd61e4b892787b4f5283a003bcda995e6d948d61635aa9d1182a5ba` |
+
+Contrato verificado en lab (txn revertida): owner=postgres (wrapper+resolver+core), signature `text→jsonb`, SECURITY DEFINER, STABLE, search_path=public, ACL idéntica (`anon/authenticated/service_role` sin cambio), overloads=1. Sin nueva capacidad anon.
 
 **Orden de deploy:** backend primero (habilita `analisis_completo(af_*)`), luego el
 frontend ya empareja identidades y propaga el id; son independientes y ninguno
