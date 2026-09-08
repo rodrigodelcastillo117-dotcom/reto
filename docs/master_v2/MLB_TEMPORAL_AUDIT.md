@@ -66,6 +66,56 @@ SELECT * INTO v_odds FROM v_momios_confiables o
 
 Esta distinción importa: no es "el motor tiene leakage", es "el motor es seguro hacia delante y no es utilizable para backtest sin una variante as-of".
 
+
+## 3-bis. CUANTIFICACIÓN — el leak es estructural pero LATENTE
+
+Medido read-only contra producción. **Corrige a la baja lo que afirmé en la primera versión de este documento.**
+
+### `mlb_stats_cache`
+
+| Métrica | Valor |
+|---|---|
+| Filas totales (`fetch_success`) | **1 225** |
+| Eventos distintos | **1 225** |
+| Eventos con **más de un** snapshot | **0** |
+| Filas con `cached_at` **posterior** a `game_date` | **0** |
+| Filas con `cached_at` en o antes de `game_date` | **1 225** |
+| `game_date` nulo | 0 |
+
+Hay **exactamente una fila por evento**. Con una sola fila, `ORDER BY cached_at DESC LIMIT 1` no puede elegir un snapshot posterior: no existe. Y las 1 225 se escribieron en o antes del día del partido.
+
+### `v_momios_confiables` (odds)
+
+De los 15 eventos MLB unibles a la agenda, **0** tienen el último snapshot posterior al inicio del partido.
+
+### Lectura corregida
+
+```
+LEAK_CONDITION   = consulta sin cota `<= decision_time`  (presente en el código)
+AFFECTED_ROWS    = 0 de 1 225
+AFFECTED_GAMES   = 0
+SEVERITY         = LATENTE, no activa
+RECONSTRUCTABLE  = sí (game_date está en la propia tabla)
+```
+
+**Retiro la afirmación** de que *"ninguna métrica histórica obtenida re-corriendo el motor sirve como evidencia"* por la vía del caché. Empíricamente, un rerun de MLB leería los mismos datos pre-partido que había en su momento, porque no existe ningún snapshot posterior que pudiera contaminarlo.
+
+Lo que **sigue en pie**: la consulta no tiene cota, así que el leak se activaría el día que el caché guarde más de un snapshot por evento o se re-consulte tras un partido. Es deuda estructural real, con impacto cero hoy. La corrección propuesta (parámetro `p_as_of` opcional) sigue siendo la adecuada, pero baja de prioridad.
+
+### Lo que NO se retira: `modelo_backtest_v2`
+
+Ese hallazgo es independiente y **se mantiene íntegro**. Es un rerun generado en **una sola fecha**, con mediana de **857 días** tras el partido, sobre 61 321 filas. Su problema no es el caché: es que reconstruye retroactivamente predicciones que nunca se emitieron en su momento, y por tanto no puede presentarse como histórico forward.
+
+### Confianza por fuente
+
+```
+MLB_RECORDED_PREDICTIONS_TRUST = ALTA   (v_picks_medibles: 98% pre-partido, 109 fechas de creación)
+MLB_RERUN_BACKTEST_TRUST       = NULA   (modelo_backtest_v2: lote único, 857 días de retraso)
+MLB_CALIBRATION_TRUST          = MEDIA  (doble cota temporal correcta; rango medido [43.2%, 62.2%])
+MLB_BRIER_TRUST                = ALTA sobre predicciones registradas · NULA sobre rerun
+MLB_ROI_TRUST                  = NO EVALUADO (requiere precio de decisión sellado)
+```
+
 ## 4. Corrección propuesta — NO implementada
 
 La corrección correcta **no** es cambiar `predecir_mlb`: eso alteraría el comportamiento en vivo de un motor en producción para arreglar un problema que solo existe en backtest. La corrección es **añadir un parámetro opcional de as-of** que, cuando se pasa, acota ambas consultas:
@@ -103,9 +153,9 @@ read-only y viable, pero requiere una ventana de cómputo no trivial y un GO.
 
 ```
 MLB_TEMPORAL_INTEGRITY_FORWARD    = SAFE (features con cota as-of verificada)
-MLB_TEMPORAL_INTEGRITY_BACKTEST   = CONDITIONAL_LEAK (caché y odds sin cota)
-MLB_LEAK_IMPACT_MEASURED          = NO  (test diseñado, NOT_RUN, BLOCKED por datos)
+MLB_TEMPORAL_INTEGRITY_BACKTEST   = LEAK LATENTE (sin cota en el código; 0 de 1225 filas afectadas hoy)
+MLB_LEAK_IMPACT_MEASURED          = SÍ · AFFECTED_ROWS = 0 de 1225 · AFFECTED_GAMES = 0
 MLB_MODEL_CHANGED                 = NO
 ```
 
-**Ninguna métrica histórica de MLB debe presentarse como evidencia de skill hasta ejecutar el test de §5 y, si procede, la variante as-of.**
+**Las métricas sobre predicciones registradas (`v_picks_medibles`) sí son utilizables; las derivadas de `modelo_backtest_v2` no.** Ver `EMPIRICAL_SUFFICIENCY_V1.md` para el resultado sobre las confiables.
