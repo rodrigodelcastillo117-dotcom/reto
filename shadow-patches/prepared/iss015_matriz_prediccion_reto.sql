@@ -1,5 +1,25 @@
 -- ISS-015 — MATRIZ CANÓNICA DE PREDICCIÓN (fútbol). APLICADA (aditiva, read-only).
--- Primer ladrillo del cerebro único: probability-first, P_RETO de 1X2 + BTTS (Poisson)
--- + Over/Under en la línea REAL. NO inventa, NO EV. model_status=NO_VALIDADO.
--- Definición viva en la BD: CREATE VIEW public.v_prediccion_reto_futbol (ver migración
--- iss015_matriz_prediccion_reto_futbol). ROLLBACK: DROP VIEW public.v_prediccion_reto_futbol;
+-- Primer ladrillo del cerebro único: probability-first, P_RETO de 1X2 + Over/Under
+-- en la línea REAL. NO inventa, NO EV. model_status=NO_VALIDADO.
+--
+-- ISS-015b (corrección de honestidad, APLICADA):
+--  (1) BTTS: el 1X2 canónico es dixon_coles_determinista, que corrige las celdas
+--      0-0/1-0/0-1/1-1 con un parámetro de correlación (rho). Ese rho NO está
+--      persistido en analisis_json, así que P(BTTS) por Poisson independiente NO
+--      proviene de la MISMA distribución conjunta que el modelo canónico. En vez
+--      de mostrar una probabilidad incoherente se marca btts_status=NO_DISPONIBLE_MODELO
+--      y p_btts_yes/p_btts_no = NULL (no se inventa probabilidad).
+--      Para reactivar BTTS canónico hay que persistir la matriz de marcadores
+--      (o rho) desde el motor Dixon-Coles y derivar BTTS de esa conjunta.
+--  (2) reto_score = mejor_1x2_pct * (0.6 + 0.4*calidad) es un ORDENADOR provisional
+--      SIN calibrar => score_version='v0_provisional'. NO es P_RETO. P_RETO es la
+--      probabilidad (mejor_1x2_pct / p_over / p_under); reto_score sólo rankea.
+--
+-- Definición viva en la BD: CREATE OR REPLACE VIEW public.v_prediccion_reto_futbol
+-- (migraciones iss015_matriz_prediccion_reto_futbol + iss015b_matriz_btts_honesto_scorev0).
+-- Columnas: canonical_event_id, sport, home_nombre, away_nombre, liga_nombre,
+--   scheduled_at, p_local_gana, p_empate, p_visita_gana, lo_mas_probable_1x2,
+--   mejor_1x2_pct, p_btts_yes(NULL), p_btts_no(NULL), linea_ou, p_over, p_under,
+--   prob_source, model_status, calidad, reto_score, btts_status, score_version.
+-- Consumidor: frontend hook src/hooks/useMatrizReto.ts (rama claude/unified-truth-v1).
+-- ROLLBACK: DROP VIEW public.v_prediccion_reto_futbol;
