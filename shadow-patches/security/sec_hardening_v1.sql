@@ -32,13 +32,23 @@ SET LOCAL statement_timeout = '60s';
 
 -- ---- SEC-03: quitar la capacidad de escritura anónima al ledger forward ----
 -- El productor legítimo corre como servicio (cron/edge con rol propio), no como anon.
+--
+-- OJO — ESTO ES LO QUE HACE FALTA DE VERDAD: PostgreSQL concede EXECUTE a PUBLIC
+-- por defecto en toda función nueva. Revocar solo de anon/authenticated NO cierra
+-- nada, porque anon sigue heredando el privilegio vía PUBLIC. El test adversarial
+-- lo demostró: tras revocar de anon/authenticated, anon SEGUÍA escribiendo.
+-- Hay que revocar de PUBLIC y luego conceder explícitamente a quien deba tenerlo.
 REVOKE EXECUTE ON FUNCTION public.lab_mlb_fwd_capturar(
   text, timestamptz, text, numeric, text, text, timestamptz, text, numeric, text, text, text
-) FROM anon, authenticated;
+) FROM PUBLIC, anon, authenticated;
 
 REVOKE EXECUTE ON FUNCTION public.lab_mlb_fwd_resultado(
   text, integer, numeric, timestamptz
-) FROM anon, authenticated;
+) FROM PUBLIC, anon, authenticated;
+
+-- El productor legítimo es el owner (postgres) o el rol de servicio que ejecuta
+-- los cron jobs. Si en producción el productor NO es el owner, hay que conceder
+-- EXECUTE explícitamente a ese rol aquí. Ver SEC03_CONSUMER_MAP antes de aplicar.
 
 -- ---- SEC-02: fijar search_path en las 8 SECURITY DEFINER ----
 ALTER FUNCTION public.lab_ff_capturar_semana(integer, integer)            SET search_path = public, pg_temp;
@@ -71,13 +81,19 @@ BEGIN
   IF n_sin_sp <> 0 THEN RAISE EXCEPTION 'FAIL S1 quedan % SECDEF sin search_path', n_sin_sp; END IF;
   RAISE NOTICE 'PASS_NONEMPTY S1 las 8 SECURITY DEFINER tienen search_path fijado (evaluated_rows=8 violations=0)';
 
+  -- S2 usa has_function_privilege, NO el ACL explícito. El ACL no ve el privilegio
+  -- heredado de PUBLIC, y por eso la primera versión de este assert daba PASS
+  -- mientras anon seguía pudiendo escribir. has_function_privilege sí lo ve.
   SELECT count(*) INTO n_anon_exec
-    FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace
-    CROSS JOIN LATERAL aclexplode(COALESCE(p.proacl, acldefault('f',p.proowner))) x
-   WHERE n.nspname='public' AND p.proname IN ('lab_mlb_fwd_capturar','lab_mlb_fwd_resultado')
-     AND x.privilege_type='EXECUTE' AND pg_get_userbyid(x.grantee) IN ('anon','authenticated');
-  IF n_anon_exec <> 0 THEN RAISE EXCEPTION 'FAIL S2 anon/authenticated aun pueden ejecutar el ledger (%)', n_anon_exec; END IF;
-  RAISE NOTICE 'PASS_NONEMPTY S2 escritura anónima al ledger forward revocada (evaluated_rows=2 violations=0)';
+    FROM (VALUES
+      ('public.lab_mlb_fwd_capturar(text,timestamptz,text,numeric,text,text,timestamptz,text,numeric,text,text,text)'),
+      ('public.lab_mlb_fwd_resultado(text,integer,numeric,timestamptz)')) f(sig),
+      (VALUES ('anon'),('authenticated')) r(rol)
+   WHERE has_function_privilege(r.rol, f.sig, 'EXECUTE');
+  IF n_anon_exec <> 0 THEN
+    RAISE EXCEPTION 'FAIL S2 anon/authenticated AUN pueden ejecutar el ledger (% combinaciones). Revisar REVOKE FROM PUBLIC.', n_anon_exec;
+  END IF;
+  RAISE NOTICE 'PASS_NONEMPTY S2 escritura anónima al ledger revocada, verificado con has_function_privilege (evaluated_rows=4 violations=0)';
 
   RAISE NOTICE '==== SEC HARDENING V1 OK -> COMMIT permitido ====';
 END $v$;
