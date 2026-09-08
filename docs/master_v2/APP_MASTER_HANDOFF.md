@@ -25,7 +25,9 @@ UNIFIED_PICK_TOTAL         = 46
 UNIFIED_PICK_MIGRATED      = 4/46  (sin cambio esta sesión; bloqueado hasta conocer consumidores reales — ahora conocidos los money/pick)
 DANGEROUS_REMAINING        = NFL PICKS PREMIUM, MLB QUÉ-HARÍA, MEJORES PICKS MLB (3 surfaces con lenguaje de recomendación sin gate económico)
 
-MLB_VISUAL_SEMANTICS       = FAIL  (PronosticoMlbModelo CTA "QUÉ HARÍA" sin gate económico; señal total = esperado−línea)
+MLB_VISUAL_SEMANTICS       = MIXED  (ISS-009B banner AnalisisCompletoModal/BannerPickCanonico = PASS fail-closed;
+                                     FAIL en PronosticoMlbModelo "QUÉ HARÍA" sin gate económico + señal total esperado−línea;
+                                     FAIL copy en AnalisisCompletoModal/FilaMercadoResumen ("aguanta"/"calibrado") sin gate)
 MEJORES_PICKS_SEMANTICS    = FAIL  (v_mejores_picks_mlb ordenado EV DESC, rotulado "MEJORES PICKS" = PRODUCT_SEMANTIC_BUG CONFIRMED)
 
 NFL_NF01                   = CRITICAL_OPEN  (NflPremiumPicks: nfl_picks_premium presentado como "PICKS PREMIUM/SEÑAL"; sin gate MARKET_NO_VIG→informativo)
@@ -82,6 +84,12 @@ NEXT_EXACT_ACTION         = Decidir mecanismo de edición de reto13 (agente Lova
 - Total: **eliminar** "señal hacia OVER/UNDER (+d)" derivado de `total_esperado - lineaTotal`. Reemplazar por P(Over)/P(Under) desde distribución (Neg. Binomial CDF) del backend; si no hay esa P, mostrar solo "carreras esperadas X" sin señal direccional.
 - No afirmar "bien calibrado/confiable" salvo linkage de model-version probado (hoy `MODEL_VERSION_PROVENANCE_MISSING`).
 - No cambiar P ni EV ni el modelo estadístico.
+
+### FIX-ANALISIS-RESUMEN-COPY — `src/components/partido/AnalisisCompletoModal.tsx` (ALTO, verificado)
+- El **banner** (`BannerPickCanonico`, L461-510) ya es correcto/fail-closed (ISS-009B `ba828acc`) — **no tocar**.
+- Bug en **`FilaMercadoResumen`** (sección "EL RESUMEN"): muestra "…: **aguanta.**" (L454) y "**calibrado** con N casos" (L432) sin gate de elegibilidad.
+- Fix: gatear ese lenguaje por `m.economically_eligible === true`. Si no elegible: reemplazar "aguanta." por descripción neutra ("con lo medido, el mínimo justo es X; la casa paga Y") **sin** veredicto de acción; reemplazar "calibrado con N casos" por "N casos en la muestra" (dato, no juicio de confianza) salvo linkage de model-version probado.
+- No cambiar P/EV.
 
 ### FIX-MEJORES-PICKS-NAMING — `src/components/mlb/MejoresPicksMlb.tsx` (ALTO)
 - Renombrar "⭐ MEJORES PICKS MLB DE HOY" → **"💰 VALOR MLB — dónde la casa paga de más"** (el subtítulo ya lo dice; el título debe coincidir).

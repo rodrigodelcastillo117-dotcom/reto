@@ -34,12 +34,22 @@ QUERY `v_mejores_picks_mlb` + `v_favorito_mlb`, **ORDER BY EV DESC** · P=`prob_
 ### Value fut/global — `src/components/MotorValueSection.tsx` ✅ naming correcto
 QUERY `v_motor_valor_proximos`, EV DESC · COPY **"🎯 Motor · Value EV+"**. Referencia de taxonomía correcta.
 
+### ISS-009B dossier — `src/components/partido/AnalisisCompletoModal.tsx` (1613 líneas)
+QUERY RPC **`analisis_completo(p_event)`** (+ `v_futbol_clima_partido`). Dos renderers:
+- **`BannerPickCanonico`** (L461-510) = **CORRECTO / fail-closed**: `recomendados = m.economically_eligible === true`; `informativos = !== true` → **"🎯 PICK SUGERIDO POR EL MOTOR UNIFICADO"** vs **"ANÁLISIS INFORMATIVO — NO APUESTA AUTORIZADA"** + "Motivo: {eligibility_reason_code}". false/null/undefined → informativo. Gobernanza NO recomputada en cliente. Este es el deploy `ba828acc`. **VISUAL_SEMANTICS del banner = PASS.**
+- **`FilaMercadoResumen`** (L418-460, sección "EL RESUMEN") = **COPY LEAK**: renderiza `m.zona.veredicto` + "…: **aguanta.**"/"no alcanza." (L454) y "**calibrado** con {muestra} casos" (L432) para **todo** mercado, sin gate `economically_eligible`. Muestra lenguaje de recomendación/confianza en mercados no elegibles ⇒ viola PRIORIDAD 3. (Es el "aguanta"/"bien calibrado" del smoke humano.)
+
 ## A.2 Inventariados (sin deep-read; método: `mcp__Lovable__read_file`)
 ISS-009B: `partido/AnalisisCompletoModal.tsx`. Picks/valor: `AnalizarPartido/PicksSeguroValorCards.tsx`, `fut/PremiumPicksSection.tsx`, `fut/PicksFutbolLimpio.tsx`, `reto/MejorPickHoy.tsx`, `reto/PickDelDiaCard.tsx`, `reto/OraculoRecomendados.tsx`, `reto/AccionDelDia.tsx`, `reto/PicksProbabilidadFavoritos.tsx`. Dinero: `ApostarButton`, `StakeButton`, `reto/CalculadoraMonto`, `reto/StakeGateModal`, `reto/EVBadge`. MLB extra: `AnalizarPartido/MLBDeepStatsSection.tsx` (posible "bien calibrado"/"aguanta"/"Ventaja del modelo" — no hallado en los 4 deep-read). App ≈ 200+ archivos.
 `FRONTEND_CONSUMER_MAP = PARTIAL/PASS`
 
-## A.3 Copy del smoke humano
-"9.06 vs 8.5 · sin señal (+0.56)" → `PronosticoMlbModelo.tsx` (señal total = esperado−línea) ✅. "Ventaja del modelo"/"aguanta"/"bien calibrado" → no en los 4 deep-read; probable `MLBDeepStatsSection.tsx`/`AnalisisCompletoModal.tsx` ⏳.
+## A.3 Copy del smoke humano — localizada
+| Copy | Archivo:línea | Estado |
+|---|---|---|
+| "9.06 vs 8.5 · sin señal (+0.56)" | `PronosticoMlbModelo.tsx` (señal total = esperado−línea) | ✅ |
+| "aguanta." / "no alcanza." | `AnalisisCompletoModal.tsx:454` (FilaMercadoResumen) | ✅ |
+| "calibrado con N casos" | `AnalisisCompletoModal.tsx:432` | ✅ |
+| "Ventaja del modelo" | no en 5 deep-read; probable `MLBDeepStatsSection.tsx` | ⏳ |
 
 ## A.4 Restricción de entrega
 `reto13` es Lovable: sin repo git local; editar = **agente Lovable** (gasta credits + **publica a prod** reto13.lovable.app). Bajo **NO production deploy**, las correcciones P2/P3/P4 se entregan como PREPARE_FOR_DEPLOY (ver APP_MASTER_HANDOFF.md). Decisión del usuario: (a) autorizar agente Lovable (=deploy) o (b) conectar reto13 a GitHub.
