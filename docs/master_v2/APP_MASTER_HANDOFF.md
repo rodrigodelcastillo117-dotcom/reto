@@ -1,5 +1,14 @@
 # APP_MASTER_HANDOFF — RETO 13M (2026-09-08)
 
+> **Alcance de este documento:** aporta la capa que faltaba — **descubrimiento y auditoría
+> del frontend real** (PRIORITY 1). Para backend/SEC/unified/MLB-temporal, la fuente
+> autoritativa es el trabajo overnight paralelo en este mismo `docs/master_v2/`:
+> `OVERNIGHT_MASTER_HANDOFF.md`, `UNIFIED_CONSUMER_MAP.md`, `UNIFIED_PICK_CONTRACT_V1.md`,
+> `MLB_VISUAL_PROBABILITY_AUDIT.md`, `NFL_BETTING_STATUS.md`, `SEC05_CLASSIFICATION.md`,
+> `SECURITY_MATRIX_V1.md`, `SOCCER_CHAMPIONS_STATUS.md`, `EMPIRICAL_SUFFICIENCY_V1.md`,
+> `MLB_TEMPORAL_AUDIT.md`. Las líneas de estado no-frontend de abajo se citan de ese estado
+> heredado, no re-verificadas en esta ronda.
+
 ## REPORTE
 
 ```
