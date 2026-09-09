@@ -61,3 +61,20 @@ la columna para no confundir gobernanza. No bloquea.
 - DAG incluye iss037 (paso 2b). Runbook y DAG mutuamente consistentes en orden y rollback.
 - Todos los artefactos citados en el closure existen en shadow-patches/ (iss027..iss037,
   iss023; tests; reports). Sin referencias colgantes.
+
+## PASS — Early payout / pago anticipado (§27) · EARLY_PAYOUT_GATE = PASS
+Verificado read-only sobre las funciones PA de prod (pg_get_functiondef):
+| función | escribe 'perdido' | escribe 'ganado' | pa_score_snapshot | pa_activado_at |
+|---|---|---|---|---|
+| dispatch_pa_para_pick        | NO | SÍ | SÍ | SÍ |
+| dispatch_pa_para_pierna_parlay | NO | SÍ | SÍ | SÍ |
+| protect_pa_picks             | NO | SÍ | — | — |
+| sweep_pa_picks               | NO | NO (router) | — | — |
+| trigger_pa_on_score_update   | NO | NO (router) | — | — |
+- **Ninguna ruta PA escribe 'perdido'** → PA sólo puede crear WIN_EARLY, nunca LOSS_EARLY (§27).
+- Los dos graders reales exigen evidencia: `pa_score_snapshot` + `pa_activado_at` (+ iss028
+  `guard_pa_evidencia_obligatoria` que la hace obligatoria y autosella activado_at).
+- Columnas PA presentes: picks(early_graded, early_grade_score/minute, pago_anticipado,
+  pa_activado, pa_activado_at, pa_score_snapshot); parlays(pago_anticipado,
+  pa_piernas_activadas, pa_total_piernas_activado). No hay PA huérfano sin evidencia por diseño.
+`EARLY_PAYOUT_GATE = PASS` (read-only). Sin mutación.

@@ -51,7 +51,7 @@ NO se declara SOCCER cerrado (§56: los gates de frontend los controla ChatGPT).
 | ANALYSIS_NO_LEGACY_GATE | PASS (soccer hot path) | 0 fuentes de P en competencia |
 | DAILY_NO_FIXED_LINE_GATE | STAGED_ONLY | iss036 O/U a línea real; sin 2.5 |
 | GRADING_FINAL_ONLY_GATE | PASS | guard universal is_truly_final |
-| EARLY_PAYOUT_GATE | STAGED_ONLY | iss028 PA evidencia obligatoria |
+| EARLY_PAYOUT_GATE | PASS | PA solo WIN_EARLY (0 rutas escriben perdido) + evidencia; iss028 la exige |
 | PARLAY_EARLY_LOSS_GATE | PASS | guard + iss034 |
 | BANKROLL_IDEMPOTENCE_GATE | PASS | SUM state-based idempotente |
 | BACKEND_TEST_GATE | STAGED_ONLY | tests en shadow-patches/tests |
