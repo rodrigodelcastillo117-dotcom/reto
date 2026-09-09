@@ -135,6 +135,12 @@ Barras de estado de pick en vivo: verde (gana / pago anticipado / FT) · aqua (c
 
 ---
 
+## 4b. Estado de ejecución (vivo)
+
+- **Vehículo creado:** remix de `00f8f06b` → proyecto Lovable **`d243f279-2db6-4f18-a269-029cf284267f`** ("RETO 13M V2"). Stack `vite_react_shadcn_ts`. Preview: `https://id-preview--d243f279-2db6-4f18-a269-029cf284267f.lovable.app`. Editor: `https://lovable.dev/projects/d243f279-2db6-4f18-a269-029cf284267f`. Copia byte-a-byte del frontend completo, ya cableado a `wpiztubmmmzclhlprgpd`.
+- **Guardrails:** project knowledge cargado (backend único, P_RETO como producto, fail-closed, contratos V2, un-deporte-una-pestaña, lenguaje visual, scan/auth/UX a conservar).
+- **En curso:** reestructura de bottom nav a un-deporte-una-pestaña + consolidación de FUT PRO como única superficie de fútbol (lee `v_futpro_v2` + `v_analisis_v2`).
+
 ## 5. Orden de ejecución
 
 1. **[hecho]** Auditoría legacy 100% + arquitectura destino + vehículo (este documento).
