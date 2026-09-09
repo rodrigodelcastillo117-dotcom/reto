@@ -77,3 +77,16 @@ NEXT_TASK: verificar que aterricen los 3 builds de Lovable (top-3 marcador, nav 
 - useNavigate: el log del agente confirma que el CÓDIGO FUENTE YA TENÍA EL IMPORT; el crash era un bundle viejo servido en caché (de ahí el re-envío del error con timestamp idéntico). Endurecido: quitada la dependencia del componente de entrada. No es regresión de código.
 - nav 3·(+)·3 (confirmado por screenshot del usuario) + pestaña RETO 13M portada (confirmado) + build top-3 marcador corrido.
 - RETO 13M criterio restringido a ML/BTTS/Over2.5 aplicado en backend (ciclo 3c) — el frontend lo hereda vía v_reto13m_daily.
+
+## Ciclo 3e — análisis rico: xG + H2H + tendencias en v_analisis_v2 (factual, fail-closed)
+- Usuario ("SIGUE CON TODO"): faltaban H2H, xG y tendencias que había pedido.
+- Fuente limpia: v_equipo_partido_espn_xg (per-match por team_id) + puente escudos_partido (espn_event_id→home_id/away_id). equipo/rival son team_id (no nombre), así que el join es por id (limpio, no por nombre frágil).
+- Añadidos 3 bloques a public.v_analisis_v2 (columnas nuevas al final, CREATE OR REPLACE):
+  * xg: xG a favor/contra + gf/gc prom, últimos 8, por equipo. temporal_safe (fecha<kickoff).
+  * tendencias: over25%/btts%/gana%/empata%/portería-cero%, últimos 8, por equipo.
+  * h2h: enfrentamientos directos previos (hasta 10): gana local/empate/gana visita %, over25%, btts%, goles prom.
+  * Todos con source/temporal_safe/disponible/missing_reason. FAIL-CLOSED: sin cobertura → disponible:false + razón, nunca inventa.
+- Cobertura (639 eventos): forma 525 (82%, base amplia vía v_fuerza_equipo), tendencias 135 (21%), xG 38 (6%), H2H 20 (3%). xG/H2H solo en ligas con cobertura xG (europeas); resto fail-closed honesto.
+- Verificado: St Johnstone-Celtic xG home 1.11/1.29 (m8) vs Celtic 1.79/0.83 (m5), H2H 1 previo. Coherente.
+- Enviado build a Lovable para renderizar los 3 bloques en el sheet (colapsables, fail-closed, sin conclusiones).
+- Migración: v_analisis_v2_add_xg_h2h_tendencias. NO toca motor/predicción; es análisis factual aditivo.
