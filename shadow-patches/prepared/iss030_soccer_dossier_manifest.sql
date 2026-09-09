@@ -111,17 +111,18 @@ begin
       null::timestamptz,'CONTEXT','referencia estática sin versión/as_of -> no se usa como fuente temporal', false
     union all select 'tendencias','externa','tendencias_externas', false,
       null::timestamptz,'CONTEXT','no keyeada por espn_event_id de forma fiable', false
-    -- ── MARKET (nunca altera P_RETO) — última captura <= decision ──
-    union all select 'total_line','libro','momios_mercado.total_linea',
-      exists(select 1 from momios_mercado m where m.espn_event_id=p_event_id and m.total_linea is not null and m.actualizado<=v_dec),
-      (select max(actualizado) from momios_mercado m where m.espn_event_id=p_event_id and m.total_linea is not null and m.actualizado<=v_dec),
+    -- ── MARKET (nunca altera P_RETO) — línea REAL del proveedor (v_momios_confiables) ──
+    -- Fuente canónica de la línea = la misma que consume v_futpro_v2 (line_source).
+    union all select 'total_line','libro (v_momios_confiables.bookmaker)','v_momios_confiables',
+      exists(select 1 from v_momios_confiables mc where mc.espn_event_id=p_event_id and mc.confiable and mc.over_line is not null and mc.snapshot_at<=v_dec),
+      (select max(snapshot_at) from v_momios_confiables mc where mc.espn_event_id=p_event_id and mc.confiable and mc.over_line is not null and mc.snapshot_at<=v_dec),
       'MARKET',
-      case when not exists(select 1 from momios_mercado m where m.espn_event_id=p_event_id and m.total_linea is not null and m.actualizado<=v_dec) then 'sin línea real <= decision' end,
-      exists(select 1 from momios_mercado m where m.espn_event_id=p_event_id and m.actualizado>v_dec)
-    union all select 'odds_mercado','libro','momios_mercado',
-      exists(select 1 from momios_mercado m where m.espn_event_id=p_event_id and m.actualizado<=v_dec),
-      (select max(actualizado) from momios_mercado m where m.espn_event_id=p_event_id and m.actualizado<=v_dec),
-      'MARKET', null, exists(select 1 from momios_mercado m where m.espn_event_id=p_event_id and m.actualizado>v_dec)
+      case when not exists(select 1 from v_momios_confiables mc where mc.espn_event_id=p_event_id and mc.confiable and mc.over_line is not null and mc.snapshot_at<=v_dec) then 'sin línea real confiable <= decision -> O/U fail-closed' end,
+      exists(select 1 from v_momios_confiables mc where mc.espn_event_id=p_event_id and mc.snapshot_at>v_dec)
+    union all select 'odds_mercado','libro','v_momios_confiables',
+      exists(select 1 from v_momios_confiables mc where mc.espn_event_id=p_event_id and mc.snapshot_at<=v_dec),
+      (select max(snapshot_at) from v_momios_confiables mc where mc.espn_event_id=p_event_id and mc.snapshot_at<=v_dec),
+      'MARKET', null, exists(select 1 from v_momios_confiables mc where mc.espn_event_id=p_event_id and mc.snapshot_at>v_dec)
     union all select 'odds_pro','Pinnacle+','odds_pro_snapshots',
       exists(select 1 from odds_pro_snapshots o where o.espn_event_id=p_event_id and o.created_at<=v_dec),
       (select max(created_at) from odds_pro_snapshots o where o.espn_event_id=p_event_id and o.created_at<=v_dec),
