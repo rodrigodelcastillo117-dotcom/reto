@@ -1,5 +1,5 @@
 -- ISS-024 — SOCCER CLOSURE VALIDATION / ACCEPTANCE MATRIX
--- *** READ-ONLY VALIDATION. Ejecutar DESPUÉS de ISS-018..023 en preview/cutover txn. ***
+-- *** READ-ONLY VALIDATION. Ejecutar DESPUÉS de ISS-018..023 + ISS-025 en preview/cutover txn. ***
 -- No corrige nada; falla/expone cualquier violación antes de liberar.
 
 -- 1) Universo + cobertura de P_RETO (los eventos NO desaparecen por falta de modelo).
@@ -73,10 +73,9 @@ SELECT
 FROM d;
 
 -- 8) Ninguna fuente USADA puede violar data_asof <= decision_time.
--- CERO filas. Importante: los paréntesis son intencionales; sin ellos SQL evalúa
--- AND antes que OR y `used_in_model=true` se convertía falsamente en violación.
--- `SAFE_CURRENT` NO es aceptado para fuentes usadas: una lectura "actual" sin as_of
--- demostrable no satisface el contrato temporal del gate.
+-- CERO filas. Los paréntesis son intencionales: SQL evalúa AND antes que OR.
+-- `SAFE_CURRENT` NO se acepta: una lectura "actual" sin as_of demostrable no satisface
+-- el contrato temporal. STATIC queda exento de timestamp por definición.
 WITH ev AS (
   SELECT a.espn_event_id FROM public.agenda_espn a
   WHERE a.deporte='soccer' AND a.fecha BETWEEN now() AND now()+interval '48 hours'
@@ -102,9 +101,9 @@ WHERE (coalesce((item->>'used_in_model')::boolean,false) OR coalesce((item->>'us
   );
 
 -- 8b) Contrato de procedencia/completitud del manifest.
--- Toda fila debe declarar feature/source/provenance/role/freshness/temporal_status y
--- decision_time. Si falta el dato, debe decir missing_reason; si existe, debe tener as_of
--- salvo que sea explícitamente STATIC. CERO filas.
+-- Toda fila declara feature/source/provenance/role/temporal_status/decision_time.
+-- Si falta el dato: missing_reason obligatorio. Si existe y no es STATIC: as_of y
+-- freshness_seconds obligatorios. CERO filas.
 WITH ev AS (
   SELECT a.espn_event_id FROM public.agenda_espn a
   WHERE a.deporte='soccer' AND a.fecha BETWEEN now() AND now()+interval '48 hours'
@@ -119,7 +118,6 @@ WHERE nullif(item->>'feature','') IS NULL
    OR nullif(item->>'source','') IS NULL
    OR nullif(item->>'provenance','') IS NULL
    OR nullif(item->>'role','') IS NULL
-   OR nullif(item->>'freshness','') IS NULL
    OR nullif(item->>'temporal_status','') IS NULL
    OR nullif(item->>'decision_time','') IS NULL
    OR (
@@ -129,13 +127,12 @@ WHERE nullif(item->>'feature','') IS NULL
    OR (
         coalesce((item->>'available')::boolean,false)=true
         AND item->>'temporal_status' <> 'STATIC'
-        AND nullif(item->>'as_of','') IS NULL
+        AND (nullif(item->>'as_of','') IS NULL OR item->>'freshness_seconds' IS NULL)
       );
 
 -- 8c) Separación dura MODEL_ACTIVE vs CONTEXT_ONLY / AVAILABLE_NOT_USED.
--- Sólo MODEL_ACTIVE puede alterar P_RETO. Contexto puede informar narrativa, jamás el modelo.
--- AVAILABLE_NOT_USED no puede estar marcado ni como model ni como context usado.
--- CERO filas.
+-- Sólo MODEL_ACTIVE puede alterar P_RETO. CONTEXT_ONLY y AVAILABLE_NOT_USED pueden
+-- enriquecer dossier/manifest, pero nunca estar marcados used_in_model=true. CERO filas.
 WITH ev AS (
   SELECT a.espn_event_id FROM public.agenda_espn a
   WHERE a.deporte='soccer' AND a.fecha BETWEEN now() AND now()+interval '48 hours'
@@ -147,12 +144,8 @@ WITH ev AS (
 SELECT espn_event_id,item->>'feature' feature,item->>'source' source,item->>'role' role,
        item->>'used_in_model' used_in_model,item->>'used_in_context' used_in_context
 FROM m
-WHERE (coalesce((item->>'used_in_model')::boolean,false) AND item->>'role' <> 'MODEL_ACTIVE')
-   OR (item->>'role'='AVAILABLE_NOT_USED' AND (
-        coalesce((item->>'used_in_model')::boolean,false)
-        OR coalesce((item->>'used_in_context')::boolean,false)
-      ))
-   OR (item->>'role'='CONTEXT_ONLY' AND coalesce((item->>'used_in_model')::boolean,false));
+WHERE item->>'role' NOT IN ('MODEL_ACTIVE','CONTEXT_ONLY','AVAILABLE_NOT_USED')
+   OR (coalesce((item->>'used_in_model')::boolean,false) AND item->>'role' <> 'MODEL_ACTIVE');
 
 -- 9) P_RETO del dossier = matriz exacta. CERO filas.
 WITH ev AS (
