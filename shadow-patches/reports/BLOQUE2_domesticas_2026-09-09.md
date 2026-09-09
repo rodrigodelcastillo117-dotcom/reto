@@ -21,8 +21,14 @@ leakage audit (0 filas hoy/live) · identidad competencia/proveedor (liga_id ESP
 Leakage audit: **0 filas fechadas hoy/live** en el fit de las 5 ligas.
 Gate de aprobación: mejora OOS en Brier Y LogLoss + **ECE ≤ 0.08** + n_test ≥ 60.
 
-## Verdicto
-- **APPROVABLE (3):** Bélgica, Dinamarca, Escocia — mejoran OOS y bien calibradas.
+## Verdicto (CORREGIDO tras AUDIT_NO_PASS issue #4)
+NINGUNA liga se marca `approved`. Las 3 candidatas quedan
+**`APPROVABLE_STAGED / FINAL_VALIDATION_PENDING`**: la validación actual es un solo
+split ~70/30 vs base-rate débil con ECE de 4 bins — insuficiente para `approved`.
+Falta (BLOQUE 2b): usar EXACTAMENTE el algoritmo/feature_version de PRODUCCIÓN
+(Motor B) que servirá estas ligas, walk-forward/rolling folds + bootstrap CI vs
+baseline FUERTE del mismo modelo. Hasta entonces:
+- **APPROVABLE_STAGED (3):** Bélgica, Dinamarca, Escocia — mejoran OOS y bien calibradas.
 - **NOT_APPROVABLE (2):** Noruega y Grecia — **discriminan** (buen ΔBrier) pero
   **mal calibradas** (ECE 0.12 / 0.097 = sobreconfiadas). No se aprueban a ciegas:
   requieren capa de calibración por liga (isotónica/Platt) validada OOS. Fail-close.

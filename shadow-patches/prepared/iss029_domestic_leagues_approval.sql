@@ -11,20 +11,21 @@
 -- NO va en supabase/migrations. NO aplicar bajo freeze.
 -- ============================================================================
 
--- APROBABLES (mejoran OOS y bien calibradas): Bélgica, Dinamarca, Escocia.
--- insert into v2.model_registry (sport,model_name,model_version,liga_id,liga_nombre,approved,notes,approved_at) values
---   ('FUT','dixon_coles','v2_futpro',144,'Jupiler Pro League', true,
---     'BLOQUE2 OOS: Brier 0.622 vs base 0.660 (Δ+0.038), LogLoss Δ+0.053, ECE 0.011, n=913, estable', now()),
---   ('FUT','dixon_coles','v2_futpro',119,'Danish Superliga', true,
---     'BLOQUE2 OOS: Brier 0.638 vs base 0.656 (Δ+0.019), LogLoss Δ+0.024, ECE 0.05, n=571, estable', now()),
---   ('FUT','dixon_coles','v2_futpro',179,'Scottish Premiership', true,
---     'BLOQUE2 OOS: Brier 0.567 vs base 0.631 (Δ+0.064), LogLoss Δ+0.087, ECE 0.06, n=425', now());
-
--- NO APROBABLES todavía (discriminan pero MAL CALIBRADAS, ECE>0.08). Requieren
--- capa de calibración (isotónica/Platt por liga) validada antes de aprobar:
---   Noruega/Eliteserien (103): Brier Δ+0.054 PERO ECE 0.12 (sobreconfiado).
---   Grecia/Super League (197): Brier Δ+0.064 PERO ECE 0.097.
--- Permanecen FAIL-CLOSE. NO insertar approval hasta recalibrar y re-medir OOS.
+-- ESTADO (tras AUDIT_NO_PASS de ChatGPT, issue #4 comment 5606659045):
+-- NINGUNA liga se aprueba todavía. Belgica/Dinamarca/Escocia quedan
+-- APPROVABLE_STAGED / FINAL_VALIDATION_PENDING (NO 'approved'). El label 'approved'
+-- exige antes: (a) que el código de validación use EXACTAMENTE el algoritmo/
+-- feature_version de PRODUCCIÓN (Motor B) que servirá esas ligas — no un
+-- Dixon-Coles de laboratorio; (b) walk-forward / rolling folds + bootstrap CI
+-- contra un baseline FUERTE del MISMO modelo (no base-rate); (c) calibración fina.
+-- Ver BLOQUE2b (iss029b) para la validación endurecida.
+--
+-- APPROVABLE_STAGED (candidatas, NO insertar approved aún):
+--   144 Jupiler (Brier 0.622 vs base 0.660, ECE 0.011) — la más fuerte.
+--   119 Danish  (Brier 0.638 vs base 0.656, ECE 0.05).
+--   179 Scottish(Brier 0.567 vs base 0.631, ECE 0.06).
+-- NOT_APPROVABLE (mal calibradas, ECE>0.08): 103 Noruega (0.12), 197 Grecia (0.097).
+-- El INSERT de approval queda intencionalmente FUERA hasta pasar BLOQUE2b.
 
 -- Nota identidad competencia/proveedor: liga_id de ESPN es la clave canónica
 -- (v_futpro_v2 y historico_partidos_espn comparten liga_id). No hay ambigüedad

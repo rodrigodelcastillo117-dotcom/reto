@@ -1,127 +1,147 @@
 -- ============================================================================
--- iss030 — FULL-DATA PREMATCH DOSSIER MANIFEST (BLOQUE 3) · STAGED, NO APLICAR
+-- iss030 v2 — FULL-DATA PREMATCH DOSSIER MANIFEST (BLOQUE 3, ENDURECIDO) · STAGED
 -- ============================================================================
--- Manifiesto por evento y POR FUENTE INDIVIDUAL. Regla dura: data_asof <= decision_time.
--- Si una fuente no tiene data_asof demostrable POR FILA: NO se inventa, NO se reusa el
--- timestamp del modelo, NO puede ser MODEL_ACTIVE -> AVAILABLE_NOT_USED / missing con razón.
--- role ∈ {MODEL_ACTIVE, CONTEXT_ONLY, AVAILABLE_NOT_USED}. Sólo el modelo altera P_RETO.
--- NO va en supabase/migrations. Read-only sobre fuentes reales (inventariadas 2026-09-09).
+-- Reescrito tras AUDIT_NO_PASS (issue #4 comment 5606659045), findings 2-9:
+--  (2) el manifiesto EMITE todas las fuentes inventariadas (no sólo catálogo).
+--  (3) decision_time NO cae a kickoff: si no hay prediction_time/computed_at real
+--      -> fila única NO_DECISION_TIME (fail-closed).
+--  (4) por fuente multi-captura se usa la ÚLTIMA captura <= decision_time
+--      (max(ts) FILTER (ts<=dec)), y se marca si existen capturas post-decisión.
+--  (5) xg exige usable_pre_kickoff=true además de available_at<=decision.
+--  (6) h2h.fecha / descanso.fecha / forma / clima NO son as_of de ingesta ->
+--      NO_ASOF / AVAILABLE_NOT_USED con razón; venue = referencia estática sin
+--      versión -> AVAILABLE_NOT_USED (no se inventa as_of).
+--  (7) se EMITEN los inputs MODEL_ACTIVE del modelo (tasas de gol home/away,
+--      muestra) con su propio as_of (v_futpro_v2.data_asof = corte de datos del
+--      modelo; provenance v_goles_equipo_futbol.ultimo_partido). Sin as_of -> no MODEL_ACTIVE.
+--  (9) capturas posteriores a decision_time nunca cuentan como cobertura prematch.
+-- Regla dura: valid_prematch_source => data_asof <= decision_time.
+-- NO va en supabase/migrations. NO aplicar bajo freeze.
 -- ============================================================================
 
--- ── Catálogo REAL de fuentes de dossier de fútbol (inventario verificado) ─────
-create table if not exists v2.dossier_source_catalog (
-  source_name text primary key, provider text, provenance text,
-  tabla text, key_type text, timestamp_col text, role_class text, nota text
-);
-truncate v2.dossier_source_catalog;
-insert into v2.dossier_source_catalog values
- ('modelo_p_reto','motor Dixon-Coles','v2.build_soccer_prediction_v2','v_futpro_v2','espn_event_id','data_asof','MODEL','única fuente que altera P_RETO'),
- ('xg_forward','proveedor xG','lab_soccer_xg_forward','historico/modelo','match_id','available_at','CONTEXT','tiene usable_pre_kickoff + available_at (estándar de oro temporal)'),
- ('alineaciones','ESPN','alineaciones_espn','ESPN','espn_event_id','capturado_at','CONTEXT','capturado_at + minutos_antes; hay_alineacion'),
- ('arbitro','ESPN','futbol_arbitro_partido','ESPN','espn_event_id','cargado_at','CONTEXT','árbitro suele conocerse ~1h antes'),
- ('h2h','ESPN','bt_h2h','ESPN','espn_event_id','fecha','CONTEXT','h2h_* precomputado de partidos previos'),
- ('descanso','derivado','bt_descanso','ESPN','espn_event_id','fecha','CONTEXT','dias_descanso, conocido al kickoff'),
- ('standings','ESPN','soccer_standings','ESPN','liga_id+team_id','updated_at','CONTEXT','posición/puntos/forma de tabla'),
- ('tendencias','365Scores/externa','tendencias_externas','externa','espn_event_id?','capturado_at','CONTEXT','factual, verificado_vs_espn'),
- ('forma','derivado','bt_forma','ESPN','espn_event_id',NULL,'CONTEXT','SIN timestamp por fila -> data_asof NO demostrable'),
- ('clima','proveedor clima','futbol_clima_hora','externa','estadio+hora_utc',NULL,'CONTEXT','sin key de evento ni as_of -> no demostrable'),
- ('lesiones','—','(sólo ligamx_lesiones)','ESPN','equipo','updated_at','CONTEXT','cobertura SÓLO LigaMX; resto missing'),
- ('venue','ref estática','futbol_estadios/estadios_altitud','ESPN','estadio',NULL,'CONTEXT','referencia estática (sin riesgo temporal)'),
- ('odds_mercado','libro','momios_mercado','the_odds_api/ESPN','espn_event_id','actualizado','MARKET','probability-first: NUNCA altera P_RETO'),
- ('total_line','libro','momios_mercado.total_linea','the_odds_api','espn_event_id','actualizado','MARKET','ancla mercado O/U; no recalcula P'),
- ('odds_pro','Pinnacle+','odds_pro_snapshots','pinnacle','espn_event_id','created_at','MARKET','open/close; EV/CLV NO entran a P_RETO');
+-- (catálogo v2.dossier_source_catalog se mantiene de la versión previa; ver iss030 base)
 
--- ── Función de manifiesto por evento ─────────────────────────────────────────
--- decision_time por defecto = prediction_time ?? computed_at ?? kickoff de v_futpro_v2.
 create or replace function v2.fn_soccer_dossier_manifest(
   p_event_id text, p_decision_time timestamptz default null
 ) returns table(
   source_name text, provider text, provenance text, available boolean,
   data_asof timestamptz, decision_time timestamptz, freshness_seconds bigint,
   freshness_status text, missing_reason text, role text,
-  temporally_safe boolean, used_in_p_reto boolean
+  temporally_safe boolean, used_in_p_reto boolean, post_decision_capture boolean
 ) language plpgsql stable as $$
-declare v_dec timestamptz; v_model record;
+declare v_dec timestamptz; f record; v_model_ok boolean;
 begin
-  select f.data_asof, coalesce(f.prediction_time,f.computed_at) dec, f.kickoff, f.model_status,
-         f.p_reto_home, f.p_reto_draw, f.p_reto_away, f.temporal_safe
-    into v_model
-  from v_futpro_v2 f where f.canonical_event_id = p_event_id limit 1;
-  v_dec := coalesce(p_decision_time, v_model.dec, v_model.kickoff);
+  select coalesce(prediction_time,computed_at) dec, data_asof, kickoff, model_status,
+         p_reto_home, p_reto_draw, p_reto_away, temporal_safe,
+         home_gf_pg, home_gc_pg, away_gf_pg, away_gc_pg, sample_home, sample_away,
+         over_line, line_source, btts_yes, home_team, away_team, competition_name
+    into f
+  from v_futpro_v2 where canonical_event_id=p_event_id limit 1;
 
-  -- helper inline via VALUES: (source, available, data_asof, role_class, missing_reason)
+  -- (3) NO fallback a kickoff. Sin decision snapshot real -> fail-closed.
+  v_dec := coalesce(p_decision_time, f.dec);
+  if v_dec is null then
+    return query select 'decision_time'::text,'—','—',false,null::timestamptz,null::timestamptz,
+      null::bigint,'NO_DECISION_TIME','sin prediction_time/computed_at real: no se usa kickoff como sustituto',
+      'AVAILABLE_NOT_USED',false,false,false;
+    return;
+  end if;
+
+  v_model_ok := (f.model_status like 'READY%' and f.p_reto_home is not null
+                 and f.data_asof is not null and f.data_asof<=v_dec and coalesce(f.temporal_safe,false));
+
   return query
-  with probes as (
-    -- MODEL
-    select 'modelo_p_reto'::text sn,
-      (v_model.model_status like 'READY%' and v_model.p_reto_home is not null) as av,
-      v_model.data_asof as asof, 'MODEL'::text rc,
-      case when v_model.model_status like 'READY%' then null else 'modelo no READY: '||coalesce(v_model.model_status,'s/estado') end mr
-    union all
-    select 'xg_forward', exists(select 1 from lab_soccer_xg_forward x where x.match_id=p_event_id),
-      (select max(available_at) from lab_soccer_xg_forward x where x.match_id=p_event_id), 'CONTEXT',
-      case when exists(select 1 from lab_soccer_xg_forward x where x.match_id=p_event_id) then null else 'sin fila xG para el evento' end
-    union all
-    select 'alineaciones', exists(select 1 from alineaciones_espn a where a.espn_event_id=p_event_id and a.hay_alineacion),
-      (select max(capturado_at) from alineaciones_espn a where a.espn_event_id=p_event_id), 'CONTEXT',
-      case when exists(select 1 from alineaciones_espn a where a.espn_event_id=p_event_id) then null else 'sin alineación capturada' end
-    union all
-    select 'arbitro', exists(select 1 from futbol_arbitro_partido r where r.espn_event_id=p_event_id),
-      (select max(cargado_at) from futbol_arbitro_partido r where r.espn_event_id=p_event_id), 'CONTEXT',
-      case when exists(select 1 from futbol_arbitro_partido r where r.espn_event_id=p_event_id) then null else 'árbitro no asignado aún' end
-    union all
-    select 'h2h', exists(select 1 from bt_h2h h where h.espn_event_id=p_event_id),
-      (select max(fecha) from bt_h2h h where h.espn_event_id=p_event_id), 'CONTEXT',
-      case when exists(select 1 from bt_h2h h where h.espn_event_id=p_event_id) then null else 'sin H2H precomputado' end
-    union all
-    select 'descanso', exists(select 1 from bt_descanso d where d.espn_event_id=p_event_id),
-      (select max(fecha) from bt_descanso d where d.espn_event_id=p_event_id), 'CONTEXT',
-      case when exists(select 1 from bt_descanso d where d.espn_event_id=p_event_id) then null else 'sin dato de descanso' end
-    union all
-    select 'tendencias', exists(select 1 from tendencias_externas t where t.partido is not null and false),
-      null::timestamptz, 'CONTEXT', 'no keyeada por espn_event_id de forma fiable -> missing'
-    union all
-    -- fuentes SIN data_asof por fila demostrable: available pero as_of NO demostrable
-    select 'forma', exists(select 1 from bt_forma bf where bf.espn_event_id=p_event_id),
-      null::timestamptz, 'CONTEXT',
-      case when exists(select 1 from bt_forma bf where bf.espn_event_id=p_event_id)
-           then 'fuente sin timestamp por fila: data_asof NO demostrable' else 'sin forma' end
-    union all
-    select 'clima', false, null::timestamptz, 'CONTEXT', 'sin key de evento ni as_of: no demostrable'
-    union all
-    -- MARKET (nunca altera P_RETO)
-    select 'total_line', exists(select 1 from momios_mercado m where m.espn_event_id=p_event_id and m.total_linea is not null),
-      (select max(actualizado) from momios_mercado m where m.espn_event_id=p_event_id), 'MARKET',
-      case when exists(select 1 from momios_mercado m where m.espn_event_id=p_event_id and m.total_linea is not null) then null else 'sin línea de totales real' end
-    union all
-    select 'odds_mercado', exists(select 1 from momios_mercado m where m.espn_event_id=p_event_id),
-      (select max(actualizado) from momios_mercado m where m.espn_event_id=p_event_id), 'MARKET',
-      case when exists(select 1 from momios_mercado m where m.espn_event_id=p_event_id) then null else 'sin momios' end
+  with src as (
+    -- ── MODELO: salida P_RETO ──
+    select 'modelo_p_reto'::text sn,'motor Dixon-Coles'::text prov,'v_futpro_v2'::text prv,
+      (f.model_status like 'READY%' and f.p_reto_home is not null) av, f.data_asof asof,'MODEL'::text rc,
+      case when f.model_status like 'READY%' then null else 'modelo no READY: '||coalesce(f.model_status,'s/estado') end mr, false postd
+    -- ── MODELO: inputs (features) que ALTERAN P_RETO, con su propio as_of ──
+    union all select 'feat_goal_rate_home','v_goles_equipo_futbol','ultimo_partido<=decision',
+      (f.home_gf_pg is not null), f.data_asof,'MODEL',
+      case when f.home_gf_pg is null then 'sin tasa de gol local' end, false
+    union all select 'feat_goal_rate_away','v_goles_equipo_futbol','ultimo_partido<=decision',
+      (f.away_gf_pg is not null), f.data_asof,'MODEL',
+      case when f.away_gf_pg is null then 'sin tasa de gol visita' end, false
+    union all select 'feat_sample_counts','v_goles_equipo_futbol','conteo de partidos usados',
+      (f.sample_home is not null and f.sample_away is not null), f.data_asof,'MODEL',
+      case when f.sample_home is null then 'sin muestra' end, false
+    -- ── xG (5): usable_pre_kickoff + última captura <= decision ──
+    union all select 'xg_forward','proveedor xG','lab_soccer_xg_forward',
+      exists(select 1 from lab_soccer_xg_forward x where x.match_id=p_event_id and x.usable_pre_kickoff and x.available_at<=v_dec),
+      (select max(available_at) from lab_soccer_xg_forward x where x.match_id=p_event_id and x.usable_pre_kickoff and x.available_at<=v_dec),
+      'CONTEXT',
+      case when not exists(select 1 from lab_soccer_xg_forward x where x.match_id=p_event_id and x.usable_pre_kickoff and x.available_at<=v_dec)
+           then 'sin xG usable_pre_kickoff <= decision' end,
+      exists(select 1 from lab_soccer_xg_forward x where x.match_id=p_event_id and x.available_at>v_dec)
+    -- ── alineaciones (4): última captura <= decision ──
+    union all select 'alineaciones','ESPN','alineaciones_espn',
+      exists(select 1 from alineaciones_espn a where a.espn_event_id=p_event_id and a.hay_alineacion and a.capturado_at<=v_dec),
+      (select max(capturado_at) from alineaciones_espn a where a.espn_event_id=p_event_id and a.capturado_at<=v_dec),
+      'CONTEXT',
+      case when not exists(select 1 from alineaciones_espn a where a.espn_event_id=p_event_id and a.capturado_at<=v_dec) then 'sin alineación <= decision' end,
+      exists(select 1 from alineaciones_espn a where a.espn_event_id=p_event_id and a.capturado_at>v_dec)
+    -- ── arbitro (4) ──
+    union all select 'arbitro','ESPN','futbol_arbitro_partido',
+      exists(select 1 from futbol_arbitro_partido r where r.espn_event_id=p_event_id and r.cargado_at<=v_dec),
+      (select max(cargado_at) from futbol_arbitro_partido r where r.espn_event_id=p_event_id and r.cargado_at<=v_dec),
+      'CONTEXT',
+      case when not exists(select 1 from futbol_arbitro_partido r where r.espn_event_id=p_event_id and r.cargado_at<=v_dec) then 'árbitro no cargado <= decision' end,
+      exists(select 1 from futbol_arbitro_partido r where r.espn_event_id=p_event_id and r.cargado_at>v_dec)
+    -- ── standings (4): por liga+equipo, updated_at ──
+    union all select 'standings','ESPN','soccer_standings',
+      exists(select 1 from soccer_standings s where s.team_nombre=f.home_team and s.updated_at<=v_dec),
+      (select max(updated_at) from soccer_standings s where (s.team_nombre=f.home_team or s.team_nombre=f.away_team) and s.updated_at<=v_dec),
+      'CONTEXT',
+      case when not exists(select 1 from soccer_standings s where (s.team_nombre=f.home_team or s.team_nombre=f.away_team) and s.updated_at<=v_dec) then 'sin standings <= decision' end,
+      false
+    -- ── lesiones: sólo LigaMX tiene as_of; resto missing ──
+    union all select 'lesiones','ESPN (sólo LigaMX)','ligamx_lesiones',
+      false, null::timestamptz,'CONTEXT','cobertura de lesiones con as_of sólo LigaMX; este evento no cubierto', false
+    -- ── (6) fuentes SIN as_of de ingesta demostrable ──
+    union all select 'h2h','ESPN','bt_h2h', exists(select 1 from bt_h2h h where h.espn_event_id=p_event_id),
+      null::timestamptz,'CONTEXT','bt_h2h.fecha es fecha de partido, no as_of de ingesta -> no demostrable', false
+    union all select 'descanso','derivado','bt_descanso', exists(select 1 from bt_descanso d where d.espn_event_id=p_event_id),
+      null::timestamptz,'CONTEXT','bt_descanso.fecha es fecha de partido, no as_of de ingesta -> no demostrable', false
+    union all select 'forma','derivado','bt_forma', exists(select 1 from bt_forma b where b.espn_event_id=p_event_id),
+      null::timestamptz,'CONTEXT','bt_forma sin timestamp por fila -> as_of no demostrable', false
+    union all select 'clima','proveedor','futbol_clima_hora', false,
+      null::timestamptz,'CONTEXT','sin key de evento ni as_of -> no demostrable', false
+    union all select 'venue','ref estática','futbol_estadios', true,
+      null::timestamptz,'CONTEXT','referencia estática sin versión/as_of -> no se usa como fuente temporal', false
+    union all select 'tendencias','externa','tendencias_externas', false,
+      null::timestamptz,'CONTEXT','no keyeada por espn_event_id de forma fiable', false
+    -- ── MARKET (nunca altera P_RETO) — última captura <= decision ──
+    union all select 'total_line','libro','momios_mercado.total_linea',
+      exists(select 1 from momios_mercado m where m.espn_event_id=p_event_id and m.total_linea is not null and m.actualizado<=v_dec),
+      (select max(actualizado) from momios_mercado m where m.espn_event_id=p_event_id and m.total_linea is not null and m.actualizado<=v_dec),
+      'MARKET',
+      case when not exists(select 1 from momios_mercado m where m.espn_event_id=p_event_id and m.total_linea is not null and m.actualizado<=v_dec) then 'sin línea real <= decision' end,
+      exists(select 1 from momios_mercado m where m.espn_event_id=p_event_id and m.actualizado>v_dec)
+    union all select 'odds_mercado','libro','momios_mercado',
+      exists(select 1 from momios_mercado m where m.espn_event_id=p_event_id and m.actualizado<=v_dec),
+      (select max(actualizado) from momios_mercado m where m.espn_event_id=p_event_id and m.actualizado<=v_dec),
+      'MARKET', null, exists(select 1 from momios_mercado m where m.espn_event_id=p_event_id and m.actualizado>v_dec)
+    union all select 'odds_pro','Pinnacle+','odds_pro_snapshots',
+      exists(select 1 from odds_pro_snapshots o where o.espn_event_id=p_event_id and o.created_at<=v_dec),
+      (select max(created_at) from odds_pro_snapshots o where o.espn_event_id=p_event_id and o.created_at<=v_dec),
+      'MARKET', null, exists(select 1 from odds_pro_snapshots o where o.espn_event_id=p_event_id and o.created_at>v_dec)
   )
-  select
-    pr.sn,
-    cat.provider, cat.provenance,
-    pr.av,
-    pr.asof,
-    v_dec,
-    case when pr.asof is null then null else extract(epoch from (v_dec - pr.asof))::bigint end,
+  select s.sn, s.prov, s.prv, s.av, s.asof, v_dec,
+    case when s.asof is null then null else extract(epoch from (v_dec - s.asof))::bigint end,
+    case when s.asof is null then 'NO_ASOF'
+         when s.asof > v_dec then 'FUTURE_INVALID'   -- no debería ocurrir (ya filtramos <=dec), defensa
+         when v_dec - s.asof <= interval '48 hours' then 'FRESH' else 'STALE' end,
+    s.mr,
     case
-      when pr.asof is null then 'NO_ASOF'
-      when pr.asof > v_dec then 'FUTURE_INVALID'         -- fuga temporal
-      when v_dec - pr.asof <= interval '48 hours' then 'FRESH'
-      else 'STALE' end,
-    pr.mr,
-    -- role: MODEL_ACTIVE sólo si modelo disponible + as_of<=decision; MARKET siempre AVAILABLE_NOT_USED;
-    -- CONTEXT_ONLY sólo si available + as_of demostrable + as_of<=decision; si no -> AVAILABLE_NOT_USED
-    case
-      when pr.rc='MODEL' then case when pr.av and pr.asof is not null and pr.asof<=v_dec and v_model.temporal_safe then 'MODEL_ACTIVE' else 'AVAILABLE_NOT_USED' end
-      when pr.rc='MARKET' then 'AVAILABLE_NOT_USED'
-      else case when pr.av and pr.asof is not null and pr.asof<=v_dec then 'CONTEXT_ONLY' else 'AVAILABLE_NOT_USED' end
+      when s.rc='MODEL' then case when v_model_ok and s.av and s.asof is not null and s.asof<=v_dec then 'MODEL_ACTIVE' else 'AVAILABLE_NOT_USED' end
+      when s.rc='MARKET' then 'AVAILABLE_NOT_USED'
+      else case when s.av and s.asof is not null and s.asof<=v_dec then 'CONTEXT_ONLY' else 'AVAILABLE_NOT_USED' end
     end,
-    (pr.asof is not null and pr.asof<=v_dec),
-    (pr.rc='MODEL' and pr.av and pr.asof is not null and pr.asof<=v_dec and v_model.temporal_safe)
-  from probes pr
-  left join v2.dossier_source_catalog cat on cat.source_name=pr.sn;
+    (s.asof is not null and s.asof<=v_dec),
+    (s.rc='MODEL' and v_model_ok and s.av and s.asof is not null and s.asof<=v_dec),
+    coalesce(s.postd,false)
+  from src s;
 end $$;
 
--- Uso: select * from v2.fn_soccer_dossier_manifest('401915446');  -- Liverpool-Atlético
+-- Validar en 2 eventos reales: READY dom (401885470 Moreirense-Benfica) y fail-closed (401915446).

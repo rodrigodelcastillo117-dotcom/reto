@@ -1,53 +1,46 @@
-# BLOQUE 3 — Full-Data Prematch Dossier Manifest · EVIDENCIA (STAGED)
+# BLOQUE 3 — Full-Data Prematch Dossier Manifest · EVIDENCIA (STAGED, ENDURECIDO)
 
-Artefacto: `shadow-patches/prepared/iss030_soccer_dossier_manifest.sql`
-(`v2.dossier_source_catalog` + `v2.fn_soccer_dossier_manifest(event, decision_time)`).
-Test: `shadow-patches/tests/iss030_dossier_manifest_test.sql`. NO aplicar bajo freeze.
+Estado: implementado + validado en 2 eventos reales; pendiente correr test en branch.
+Artefacto: `shadow-patches/prepared/iss030_soccer_dossier_manifest.sql` (v2).
+Reescrito tras AUDIT_NO_PASS (issue #4 comment 5606659045), findings 2-9.
 
-## Inventario REAL de fuentes (verificado en prod, no fabricado)
-Cada fuente clasificada individualmente. `data_asof` sólo si existe POR FILA.
+## Cómo se atendió cada finding
+2. **Emite todas las fuentes** (no sólo catálogo): modelo + inputs del modelo +
+   xg + alineaciones + arbitro + standings + lesiones + h2h + descanso + forma +
+   clima + venue + tendencias + total_line + odds_mercado + odds_pro.
+3. **decision_time NO cae a kickoff**: si falta prediction_time/computed_at real →
+   fila única `NO_DECISION_TIME` fail-closed (nunca kickoff).
+4. **Última captura ≤ decision_time** por fuente (`max(ts) FILTER (ts<=dec)`), con
+   flag `post_decision_capture` cuando existen capturas posteriores (no borran la válida).
+5. **xg** exige `usable_pre_kickoff=true` AND `available_at<=decision`.
+6. **h2h.fecha / descanso.fecha / forma / clima** = NO son as_of de ingesta →
+   NO_ASOF / AVAILABLE_NOT_USED con razón explícita. **venue** = ref estática sin
+   versión → AVAILABLE_NOT_USED (no se inventa as_of).
+7. **Inputs MODEL_ACTIVE emitidos** con su propio as_of: `feat_goal_rate_home`,
+   `feat_goal_rate_away`, `feat_sample_counts` (provenance `v_goles_equipo_futbol`,
+   que tiene `ultimo_partido`; as_of = `v_futpro_v2.data_asof` = corte real de datos
+   del modelo). Sin as_of ≤ decision → no MODEL_ACTIVE.
+8. **Validado en 2 eventos reales** (abajo).
+9. Capturas post-decisión nunca cuentan como cobertura prematch (`post_decision_capture=true`,
+   role AVAILABLE_NOT_USED).
 
-| Fuente | tabla | key | timestamp (data_asof) | role_class |
-|---|---|---|---|---|
-| modelo_p_reto | v_futpro_v2 | espn_event_id | data_asof ✓ | MODEL |
-| xg_forward | lab_soccer_xg_forward | match_id | available_at ✓ (+usable_pre_kickoff) | CONTEXT |
-| alineaciones | alineaciones_espn | espn_event_id | capturado_at ✓ (+minutos_antes) | CONTEXT |
-| arbitro | futbol_arbitro_partido | espn_event_id | cargado_at ✓ | CONTEXT |
-| h2h | bt_h2h | espn_event_id | fecha (proxy) | CONTEXT |
-| descanso | bt_descanso | espn_event_id | fecha (proxy) | CONTEXT |
-| standings | soccer_standings | liga_id+team_id | updated_at ✓ | CONTEXT |
-| tendencias | tendencias_externas | (no fiable por event) | capturado_at | CONTEXT→missing |
-| forma | bt_forma | espn_event_id | **NINGUNO** → as_of NO demostrable | CONTEXT |
-| clima | futbol_clima_hora | estadio+hora | **NINGUNO** + sin key evento | CONTEXT |
-| lesiones | sólo ligamx_lesiones | equipo | updated_at (SÓLO LigaMX) | CONTEXT |
-| venue | futbol_estadios/altitud | estadio | estático | CONTEXT |
-| total_line | momios_mercado.total_linea | espn_event_id | actualizado ✓ | MARKET |
-| odds_mercado | momios_mercado | espn_event_id | actualizado ✓ | MARKET |
-| odds_pro | odds_pro_snapshots | espn_event_id | created_at ✓ | MARKET |
+## Validación (a) READY doméstico — Moreirense–Benfica (401885470), decision 09-09 18:15
+| source | role | data_asof | temporally_safe |
+|---|---|---|---|
+| modelo_p_reto | **MODEL_ACTIVE** | 2026-09-05 | true |
+| feat_goal_rate_home | **MODEL_ACTIVE** | 2026-09-05 | true |
+| feat_goal_rate_away | **MODEL_ACTIVE** | 2026-09-05 | true |
+| alineaciones | AVAILABLE_NOT_USED | NO_ASOF (sin captura ≤ decision) | false |
+| total_line | AVAILABLE_NOT_USED | NO_ASOF | false |
 
-**Hallazgos honestos:** `forma` y `clima` NO tienen data_asof por fila → jamás
-MODEL_ACTIVE, se marcan con missing_reason explícito. Lesiones/alineaciones con
-as_of confiable existen bien sólo para LigaMX; el resto queda missing.
+Prueba positiva: el modelo Y sus inputs se exponen como MODEL_ACTIVE con as_of
+propio demostrable ≤ decision_time. (Nota BLOQUE 4: la línea real de este evento
+viene de `v_momios_confiables`, no de `momios_mercado` — se cablea en BLOQUE 4.)
 
-## Manifiesto real (Liverpool–Atlético 401915446, decision_time=15:15 = computed_at)
-| source | available | data_asof | freshness | role | temporally_safe |
-|---|---|---|---|---|---|
-| modelo_p_reto | false | 2026-05-05 | STALE | AVAILABLE_NOT_USED | (fail-closed UCL) |
-| alineaciones | true | 18:07 | **FUTURE_INVALID** | AVAILABLE_NOT_USED | false |
-| arbitro | true | 15:17 | **FUTURE_INVALID** | AVAILABLE_NOT_USED | false |
-| descanso/forma/h2h/total_line/xg | false | — | NO_ASOF | AVAILABLE_NOT_USED | false |
+## Validación (b) fail-closed — Liverpool–Atlético (401915446), cross-league sin modelo
+0 MODEL_ACTIVE; alineaciones/árbitro con captura POSTERIOR a decision → FUTURE_INVALID/
+post_decision, no usadas. Cero as_of inventado, cero reuso de timestamp del modelo.
 
-El gate temporal FUNCIONA: alineaciones (18:07) y árbitro (15:17) llegaron DESPUÉS
-del decision_time (15:15) → marcados FUTURE_INVALID y **no usados**. Cero MODEL_ACTIVE
-(UCL sin modelo cruzado desplegado), cero as_of inventado, cero reuso del timestamp
-del modelo.
-
-## Test (iss030_dossier_manifest_test.sql, tx ROLLBACK) — invariantes
-INV1 role válido · INV2 nada MODEL_ACTIVE con as_of>decision o sin as_of · INV3
-used_in_p_reto sólo si MODEL_ACTIVE · INV4 temporally_safe=false ⇒ no CONTEXT/MODEL ·
-INV5 FUTURE_INVALID ⇒ no usada. Pendiente correr en Supabase branch (freeze).
-
-## Operaciones que requerirán autorización posterior
-1. Ejecutar iss030 (catálogo + función) en prod.
-2. Cablear `total_line`/`btts` explícitos en el contrato canónico (BLOQUE 4/5).
-3. Ampliar cobertura de lesiones/alineaciones fuera de LigaMX (ingesta, aparte).
+## Pendiente
+- Correr `iss030_dossier_manifest_test.sql` (ampliar a ambos eventos) en Supabase branch.
+- Emitir per-team `ultimo_partido` como as_of alterno de feature (mejora de trazabilidad).
