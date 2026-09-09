@@ -126,7 +126,10 @@ begin
   feats as (
     select m.*, f.home_gf,f.home_gc,f.away_gf,f.away_gc,f.sample_home,f.sample_away,
            f.feature_data_asof, f.max_source_event_time,
-           o.over_line,o.over_odds,o.under_odds,o.home_ml,o.draw_ml,o.away_ml,o.bookmaker,o.snapshot_at
+           -- F8: alinear al contrato REAL de iss032.fn_real_total_line
+           -- (provider_total_line/provider/line_asof); no hay moneylines en el contrato de línea.
+           o.provider_total_line as over_line, o.over_odds, o.under_odds,
+           o.provider as bookmaker, o.line_asof as snapshot_at
     from mapped m
     -- F3: excluye el evento target (m.espn_event_id) del propio cómputo de features.
     left join lateral v2.fn_soccer_features_asof(
