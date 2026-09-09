@@ -71,3 +71,9 @@ NEXT_TASK: verificar que aterricen los 3 builds de Lovable (top-3 marcador, nav 
 - v_reto13m_daily ahora computa su PROPIO mejor pick (independiente del de v_futpro_v2, que sigue rico para FUT PRO) restringido a: ML (Gana local / Gana visita = p_reto_home/p_reto_away), BTTS (Ambos anotan = btts_yes / No ambos anotan = 100-btts_yes), y Over 2.5 (markets->>'over25'). Filtro momio: prob 45-83.3% (piso confianza + momio >=1.20). Sin hándicaps, sin Under, sin Over de otras líneas, sin doble oportunidad.
 - Verificado: 116 picks, 0 mercados fuera del set permitido. Mejor del día hoy: Vancouver-LA Galaxy Over 2.5 78.8%.
 - Migración: v_reto13m_daily_restrict_markets_ml_btts_over25 (CREATE OR REPLACE; grants SELECT-only preservados; FUT PRO intacto).
+
+## Ciclo 3d — verificación de builds Lovable (check-in)
+- get_project: commit 847d4fb8 (09:08Z), status completed, error null, app monta (login OK). Los 3 builds + barrido defensivo aterrizaron sin romper.
+- useNavigate: el log del agente confirma que el CÓDIGO FUENTE YA TENÍA EL IMPORT; el crash era un bundle viejo servido en caché (de ahí el re-envío del error con timestamp idéntico). Endurecido: quitada la dependencia del componente de entrada. No es regresión de código.
+- nav 3·(+)·3 (confirmado por screenshot del usuario) + pestaña RETO 13M portada (confirmado) + build top-3 marcador corrido.
+- RETO 13M criterio restringido a ML/BTTS/Over2.5 aplicado en backend (ciclo 3c) — el frontend lo hereda vía v_reto13m_daily.
