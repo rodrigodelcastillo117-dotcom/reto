@@ -65,3 +65,9 @@ NEXT_TASK: verificar que aterricen los 3 builds de Lovable (top-3 marcador, nav 
 - **NAV + RETO 13M aterrizaron:** screenshot confirma nav en UNA fila (INICIO/FUT PRO/MLB·(+)·NFL/RETO 13M/MENÚ) y pestaña RETO 13M mostrando "HOY / FÚTBOL" con tarjetas (MEJOR PICK + Marcador probable), leyendo v_reto13m_daily. El diseño rico portado.
 - **"Doble oportunidad no es un mercado que vale" (usuario):** era el mejor_pick dominante (82.7% Portland, 81.5% Minnesota) porque cubre 2 resultados. FIX (filtro de presentación, NO altera P_RETO): quitados 'Doble oportunidad 1X' y 'X2' del LATERAL de candidatos de mejor_pick en v_futpro_v2. Ahora los picks son mercados reales: Ambos anotan, Under/Over de línea real, 1X2 (Gana X), hándicap -1.5. Verificado: 0 doble oportunidad restante. v_reto13m_daily hereda el fix (deriva mejor_pick de v_futpro_v2).
 - Migración: v_futpro_v2_drop_double_chance_from_mejor_pick (CREATE OR REPLACE, sin cambio de columnas; v_reto13m_daily intacta).
+
+## Ciclo 3c — criterio de mercados de la pestaña RETO 13M (feedback usuario)
+- Usuario: "el criterio de la pestaña reto 13m... es SOLO EL MEJOR PICK, entran ML, BTTS, O2.5 NADAMAS".
+- v_reto13m_daily ahora computa su PROPIO mejor pick (independiente del de v_futpro_v2, que sigue rico para FUT PRO) restringido a: ML (Gana local / Gana visita = p_reto_home/p_reto_away), BTTS (Ambos anotan = btts_yes / No ambos anotan = 100-btts_yes), y Over 2.5 (markets->>'over25'). Filtro momio: prob 45-83.3% (piso confianza + momio >=1.20). Sin hándicaps, sin Under, sin Over de otras líneas, sin doble oportunidad.
+- Verificado: 116 picks, 0 mercados fuera del set permitido. Mejor del día hoy: Vancouver-LA Galaxy Over 2.5 78.8%.
+- Migración: v_reto13m_daily_restrict_markets_ml_btts_over25 (CREATE OR REPLACE; grants SELECT-only preservados; FUT PRO intacto).
