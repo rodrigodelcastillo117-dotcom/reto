@@ -39,7 +39,8 @@ NO se declara SOCCER cerrado (§56: los gates de frontend los controla ChatGPT).
 | REAL_LINE_GATE | PASS | 77/77 provider real |
 | LINE_TEMPORAL_GATE | PASS | snapshot_at<=decision |
 | CROSS_LEAGUE_VALIDATION_GATE | APPROVABLE_STAGED | UCL/UEL OOS |
-| CROSS_LEAGUE_REPLAY_GATE | **FAIL** | φ (liga_fuerza) sin versión/cutoff — pendiente snapshot versionado |
+| CROSS_LEAGUE_REPLAY_GATE | STAGED_ONLY | iss037: φ versionado (phi_training_cutoff) + resolver as-of fail-closed |
+| MARKET_CONTAMINATION_GATE | PASS | fn_score_dist sin odds; cambiar línea sólo mueve O/U |
 | DOMESTIC_VALIDATION_GATE | APPROVABLE_STAGED (1/5 Grecia) | BLOQUE 2b |
 | DOSSIER_SCHEMA_GATE | STAGED_ONLY | iss030 emite todas las fuentes |
 | DOSSIER_TEMPORAL_GATE | STAGED_ONLY | as_of<=decision; NO_DECISION_TIME fail-close |
@@ -68,7 +69,8 @@ NO se declara SOCCER cerrado (§56: los gates de frontend los controla ChatGPT).
 
 ## Blockers exactos (requieren autorización)
 1. Crear Supabase branch (posible coste) → ejecutar iss027..036 + tests (BRANCH_EXECUTION_GATE).
-2. CROSS_LEAGUE_REPLAY_GATE: versionar `liga_fuerza` (phi_model_version/phi_training_cutoff).
+2. CROSS_LEAGUE_REPLAY_GATE: iss037 stagea φ versionado; falta que `fn_crossleague_p_reto`
+   reciba decision_time y lea `fn_crossleague_phi_asof` (cutover).
 3. Cutover: migrar `build_soccer_prediction_v2` a as-of + recomponer `v_futpro_v2`
    (exponer btts_no; dejar de re-unir agregado móvil).
 4. Reemplazo de funciones grading/bankroll (iss028/034/035) + approval Grecia (iss029).
