@@ -71,3 +71,13 @@ universal + is_truly_final prod), §27 early-payout, market-independence. Todos 
 ## Estado
 `FULL_DATA_SOCCER_ANALYSIS_GATE=FAIL` (correcto — falta pipeline completo + cutover).
 `SOCCER_GATE=FAIL` · `RELEASE_GATE=HOLD` · PROD intacto. NO se declara SOCCER cerrado.
+
+## Ampliación: fn_score_dist recreada en branch (pura, IMMUTABLE) + invariantes reales
+`v2.fn_score_dist` es pura (reads_tables=false, IMMUTABLE) → recreada en branch idéntica a prod.
+Ejecución real en branch:
+- **Invariantes sobre 180 vectores de features:** 1X2 max dev **0.100** (redondeo), BTTS **0.000**,
+  O/U **0.000**. → 1X2/BTTS/OU_INVARIANT_GATE **BRANCH_TESTED PASS** (idéntico a prod 383-vector).
+- **Market-independence (180 vectores):** cambiar sólo la línea 2.5→3.5 deja 1X2/BTTS/lambdas/
+  predicted_score idénticos en **180/180**, y O/U recomputa en **180/180**.
+  → MARKET_CONTAMINATION_GATE **BRANCH_TESTED PASS**.
+- Confirma btts_no y btts_yes provienen de la MISMA distribución conjunta (§16): ambos de `btts`.

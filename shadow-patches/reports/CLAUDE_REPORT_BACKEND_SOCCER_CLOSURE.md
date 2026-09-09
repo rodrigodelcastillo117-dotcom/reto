@@ -33,14 +33,14 @@ NO se declara SOCCER cerrado (§56: los gates de frontend los controla ChatGPT).
 | COMPETITION_IDENTITY_GATE | STAGED_ONLY | liga_id ESPN canónico; alias/catalog |
 | AGENDA_UNIVERSE_GATE | STAGED_ONLY (diseño PASS) | 241==241 LEFT JOIN; prod aún INNER JOIN |
 | DUPLICATE_EVENT_GATE | STAGED_ONLY | iss031 collapse por event id |
-| 1X2_INVARIANT_GATE | PASS (tol 0.1) | 383 vectores; redondeo 1 decimal |
-| BTTS_INVARIANT_GATE | PASS | yes+no=100 exacto (383) |
-| OU_INVARIANT_GATE | PASS | over+under=100 exacto (383) |
+| 1X2_INVARIANT_GATE | PASS + BRANCH_TESTED | prod 383 + branch 180 vectores; dev 0.1 (redondeo) |
+| BTTS_INVARIANT_GATE | PASS + BRANCH_TESTED | yes+no=100 (prod 383 + branch 180); misma dist conjunta |
+| OU_INVARIANT_GATE | PASS + BRANCH_TESTED | over+under=100 (prod 383 + branch 180) |
 | REAL_LINE_GATE | PASS | 77/77 provider real |
 | LINE_TEMPORAL_GATE | PASS | snapshot_at<=decision |
 | CROSS_LEAGUE_VALIDATION_GATE | APPROVABLE_STAGED | UCL/UEL OOS |
 | CROSS_LEAGUE_REPLAY_GATE | BRANCH_TESTED PASS | iss037 replay 2-cutoff + append-only en branch (φ T1=0.1000/T2=0.2000/pre-T1 fail-close) |
-| MARKET_CONTAMINATION_GATE | PASS | fn_score_dist sin odds; cambiar línea sólo mueve O/U |
+| MARKET_CONTAMINATION_GATE | PASS + BRANCH_TESTED | branch 180/180 core fijo, O/U recomputa; fn_score_dist sin odds |
 | DOMESTIC_VALIDATION_GATE | APPROVABLE_STAGED (1/5 Grecia) | BLOQUE 2b |
 | DOSSIER_SCHEMA_GATE | STAGED_ONLY | iss030 emite todas las fuentes |
 | DOSSIER_TEMPORAL_GATE | STAGED_ONLY | as_of<=decision; NO_DECISION_TIME fail-close |
