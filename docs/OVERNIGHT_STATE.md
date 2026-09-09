@@ -39,3 +39,13 @@ NEXT_TASK: (1) build frontend rico + limpieza contaminación + MENÚ + adapter; 
 - SELF-CHECK gates fútbol (última foto/evento, 116 READY): market_as_preto=0, unapproved_with_preto=0, temporal_violations=0, hardcoded_lines=0, unsafe_sample=0, crossleague_published=0. TODO PASS.
 LAST_DB_MIGRATION: v_reto13m_daily_best_pick (+ v_analisis_v2_add_forma_fuerza)
 NEXT_TASK: wire frontend RETO 13M tab (v_reto13m_daily) + forma en análisis; diseño RLS; luego esperar PASS del auditor antes de MLB.
+
+## Ciclo 2 — integración auditor + hallazgo de convergencia
+- MERGE de origin/chatgpt/soccer-full-data-closure a mi rama (commit d34cbad): integrados 12 SQL staged del auditor (gates temporales, resolver P_RETO "mi idea", full-data analysis, validaciones fail-closed) + reporte. NADA aplicado a prod; son shadow-patches/prepared.
+- Leído el diseño canónico del auditor: fuente única P_RETO = public.v_prediccion_reto_futbol (matriz) vía resolver_p_reto_futbol() (fail-closed NO_MODEL/NO_PROBABILITY/LINE_MISMATCH). Ese es el "un cerebro" que quiere el auditor.
+- HALLAZGO (verificado read-only): la matriz v_prediccion_reto_futbol EN PROD sigue contaminada — publica Barcelona–Feyenoord 53.2/24.0/22.8 y Stuttgart–Viking 43.7 (Viking, cross-liga) con model_status='NO_VALIDADO' (no fail-closed). Las correcciones del auditor (ISS-018/021) están STAGED, NO aplicadas. Además el resolver exige model_status='UNVALIDATED' (la matriz dice 'NO_VALIDADO') → hoy devolvería NO_PROBABILITY para todo.
+- DECISIÓN (anti-regresión): NO repuntar v_futpro_v2 a v_prediccion_reto_futbol todavía. Mi motor reto_dc_v2 (soccer_prediction_v2) es hoy MÁS limpio y es el único cerebro vivo (FUT PRO y RETO 13M leen de él → sin cross-screen mismatch). Convergencia planificada CUANDO el auditor aplique ISS-018/021 y la matriz quede fail-closed con vocabulario 'UNVALIDATED'.
+- COORDINACIÓN: v_prediccion_reto_futbol + su pipeline (ISS-018) son ÁREA ACTIVA DEL AUDITOR. No los edito. Cuando apliques tu hardening, avísame (o lo detecto en el próximo ciclo) y repunto v_futpro_v2 a la matriz + derivo score/handicaps con fn_score_dist anclado a la matriz (no un segundo cerebro).
+SAFE_FOR_AUDITOR_TO_INTERVENE: aplicar tu stack ISS-018/021 sobre v_prediccion_reto_futbol es TU área; yo no la toco. Tras aplicarla, la convergencia de v_futpro_v2 la hago yo.
+LAST_VERIFIED_SHA: d34cbad
+NEXT_TASK: verificar build frontend (RETO 13M + forma), diseño RLS/seguridad, y esperar hardening de la matriz para converger.
