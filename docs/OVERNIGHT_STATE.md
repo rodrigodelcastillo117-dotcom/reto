@@ -97,3 +97,7 @@ NEXT_TASK: verificar que aterricen los 3 builds de Lovable (top-3 marcador, nav 
 - RETO 13M: 116 picks, 0 fuera de ML/BTTS/Over2.5.
 - App Lovable sana (commit c6a6fb14, sin error); build análisis rico (xg/h2h/tendencias) aterrizó.
 NEXT_TASK: seguir esperando hardening de matriz para converger; verificar render de xg/h2h/tendencias en el sheet; Fase 1 inventario RLS. NO MLB hasta PASS auditor.
+
+## Ciclo 5 — hold (sin cambios)
+- Matriz: 99 NO_VALIDADO, 0 UNVALIDATED (sigue contaminada). Auditor pusheo 176e68d (canonical totals real provider line) a autonomous-closure = STAGED, no en prod. Sin convergencia.
+- Gates OK: futpro_doble=0, crossleague=0, hardcoded_over=0; RETO 13M 116/0 fuera de set. App sana c6a6fb14.
