@@ -78,3 +78,16 @@ Verificado read-only sobre las funciones PA de prod (pg_get_functiondef):
   pa_activado, pa_activado_at, pa_score_snapshot); parlays(pago_anticipado,
   pa_piernas_activadas, pa_total_piernas_activado). No hay PA huérfano sin evidencia por diseño.
 `EARLY_PAYOUT_GATE = PASS` (read-only). Sin mutación.
+
+## PASS — Competition identity / provider mapping (§20) · COMPETITION_IDENTITY_GATE = PASS (residual doc)
+Auditado `v2.liga_alias` (25 filas; columnas liga_source:text, competition_id:text):
+- `name_to_many_comp` = **none** → ningún nombre mapea a >1 competition_id (sin ambigüedad fuzzy).
+- `comp_with_multi_names` = 2 → 2 competencias con múltiples grafías de nombre (aliasing correcto).
+- PASS 3 ya verificó 0 colisiones nombre↔liga_id y 0 en el universo de agenda (n=241).
+Estado: sin colisión activa. **Residual de diseño (§20):** `liga_alias` está keyeada por
+NOMBRE (liga_source), el key más débil que el audit advierte. Mitigado porque (a) el builder
+usa además el `liga_id` NUMÉRICO de ESPN para registry/features, (b) nombres no mapeados
+fail-close a NO_MODEL. **Recomendación de cutover:** re-keyear `liga_alias` por
+`provider_competition_id` (ESPN liga_id numérico) + `mapping_version`, no por nombre, para
+congelar identidad por id de proveedor. No bloquea (0 colisiones hoy). `COMPETITION_IDENTITY_GATE=PASS`
+con residual de hardening documentado.
