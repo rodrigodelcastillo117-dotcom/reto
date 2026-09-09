@@ -58,5 +58,10 @@ NEXT_TASK: verificar build frontend (RETO 13M + forma), diseño RLS/seguridad, y
 - **NAV (pedido del usuario, despierto):** enviado build — una sola fila 3·(+)·3: INICIO/FUT PRO/MLB · (+) · NFL/RETO 13M/MENÚ; MENÚ pasa a la misma fila (ya no cuelga abajo).
 - **SEGURIDAD (zero-risk aplicado):** REVOKE write (INSERT/UPDATE/DELETE/TRUNCATE) de anon+authenticated en v_analisis_v2 y v_reto13m_daily (v_futpro_v2 ya estaba); SELECT conservado. Doc de diseño por fases: docs/ISS-025_RLS_SECURITY_HARDENING_DESIGN.md (107 tablas sin RLS, 67 vistas SECURITY DEFINER — ejecución por fases con el usuario despierto; el hueco grave es dinero/bankroll legible por anon → prioridad tras inventario Fase 1).
 - **GATES self-check (116 READY):** engine_not_goalrates=0, temporal=0, hardcoded_over=0, unsafe_sample=0, crossleague_published=0, score_incoherent=0. TODO PASS. Sin regresión.
-LAST_DB_MIGRATION: revoke_write_v_analisis_v2_v_reto13m_daily (grants); sin cambios de motor
-NEXT_TASK: verificar que aterricen los 3 builds de Lovable (top-3 marcador, nav 3·+·3); Fase 1 inventario acceso anon; seguir esperando hardening de la matriz para converger. NO MLB hasta PASS de fútbol.
+LAST_DB_MIGRATION: v_futpro_v2_drop_double_chance_from_mejor_pick (+ revoke_write grants); sin cambios de motor
+NEXT_TASK: verificar que aterricen los 3 builds de Lovable (top-3 marcador, nav 3·+·3, port RETO 13M); Fase 1 inventario acceso anon; seguir esperando hardening de la matriz para converger. NO MLB hasta PASS de fútbol.
+
+## Ciclo 3b — feedback en vivo del usuario (despierto)
+- **NAV + RETO 13M aterrizaron:** screenshot confirma nav en UNA fila (INICIO/FUT PRO/MLB·(+)·NFL/RETO 13M/MENÚ) y pestaña RETO 13M mostrando "HOY / FÚTBOL" con tarjetas (MEJOR PICK + Marcador probable), leyendo v_reto13m_daily. El diseño rico portado.
+- **"Doble oportunidad no es un mercado que vale" (usuario):** era el mejor_pick dominante (82.7% Portland, 81.5% Minnesota) porque cubre 2 resultados. FIX (filtro de presentación, NO altera P_RETO): quitados 'Doble oportunidad 1X' y 'X2' del LATERAL de candidatos de mejor_pick en v_futpro_v2. Ahora los picks son mercados reales: Ambos anotan, Under/Over de línea real, 1X2 (Gana X), hándicap -1.5. Verificado: 0 doble oportunidad restante. v_reto13m_daily hereda el fix (deriva mejor_pick de v_futpro_v2).
+- Migración: v_futpro_v2_drop_double_chance_from_mejor_pick (CREATE OR REPLACE, sin cambio de columnas; v_reto13m_daily intacta).
