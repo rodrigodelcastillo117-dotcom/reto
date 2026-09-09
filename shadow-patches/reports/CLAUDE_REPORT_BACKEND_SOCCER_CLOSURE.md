@@ -27,7 +27,7 @@ NO se declara SOCCER cerrado (§56: los gates de frontend los controla ChatGPT).
 |---|---|---|
 | TEMPORAL_LEAKAGE_GATE | PASS | as-of fecha<decision; 0 live/futuro en fit |
 | HISTORICAL_REPLAY_GATE | PASS | replay adversarial A==B 5/5; determinista |
-| FEATURE_SNAPSHOT_GATE | STAGED_ONLY | F1 corregido (snap persistido); validar en branch |
+| FEATURE_SNAPSHOT_GATE | BRANCH_TESTED PASS | F1 persistencia probada en branch (SNAPTEST home_gf 2.0 congelado) |
 | REGISTRY_GATE | STAGED_ONLY (PARCIAL) | model_config presente; literal de versión aceptable |
 | EVENT_IDENTITY_GATE | STAGED_ONLY | iss031 resolver fuerte |
 | COMPETITION_IDENTITY_GATE | STAGED_ONLY | liga_id ESPN canónico; alias/catalog |
@@ -39,7 +39,7 @@ NO se declara SOCCER cerrado (§56: los gates de frontend los controla ChatGPT).
 | REAL_LINE_GATE | PASS | 77/77 provider real |
 | LINE_TEMPORAL_GATE | PASS | snapshot_at<=decision |
 | CROSS_LEAGUE_VALIDATION_GATE | APPROVABLE_STAGED | UCL/UEL OOS |
-| CROSS_LEAGUE_REPLAY_GATE | STAGED_ONLY | iss037: φ versionado (phi_training_cutoff) + resolver as-of fail-closed |
+| CROSS_LEAGUE_REPLAY_GATE | BRANCH_TESTED PASS | iss037 replay 2-cutoff + append-only en branch (φ T1=0.1000/T2=0.2000/pre-T1 fail-close) |
 | MARKET_CONTAMINATION_GATE | PASS | fn_score_dist sin odds; cambiar línea sólo mueve O/U |
 | DOMESTIC_VALIDATION_GATE | APPROVABLE_STAGED (1/5 Grecia) | BLOQUE 2b |
 | DOSSIER_SCHEMA_GATE | STAGED_ONLY | iss030 emite todas las fuentes |
@@ -55,7 +55,7 @@ NO se declara SOCCER cerrado (§56: los gates de frontend los controla ChatGPT).
 | PARLAY_EARLY_LOSS_GATE | PASS | guard + iss034 |
 | BANKROLL_IDEMPOTENCE_GATE | PASS | SUM state-based idempotente |
 | BACKEND_TEST_GATE | STAGED_ONLY | tests en shadow-patches/tests |
-| BRANCH_EXECUTION_GATE | NOT_RUN | requiere Supabase branch (autorización/coste) |
+| BRANCH_EXECUTION_GATE | PARTIAL | branch soccer-validation: iss037/iss038/iss033-core ejecutados; pipeline completo bloqueado por MIGRATIONS_FAILED (repo migrations no reproducen prod) + sin datos |
 | CUTOVER_READINESS_GATE | STAGED_ONLY | runbook + DAG preparados |
 | FULL_DATA_SOCCER_ANALYSIS_GATE | **FAIL** | falta: branch execution + migrar builder prod a as-of |
 
