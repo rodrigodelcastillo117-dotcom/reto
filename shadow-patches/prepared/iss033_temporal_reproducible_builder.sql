@@ -35,8 +35,19 @@ on conflict (sport,model_version) do update set
 
 -- ── 2) Features AS OF decision_time (reproducible, FINAL-only, fecha<decision) ──
 -- Mirror del split de producción: local del equipo local, visitante del visitante.
+-- HARDENING (audit hostil iss033, 2026-09-09):
+--  F3: p_exclude_event_id excluye EXPLÍCITAMENTE el evento target aunque por datos
+--      defectuosos aparezca en histórico con fecha anterior (§6.C).
+--  F5: historico.fecha ES timestamptz (kickoff real) => fecha<decision es comparación
+--      de timestamp, no de día. Para PRODUCCIÓN HACIA ADELANTE, además se filtra por
+--      disponibilidad (cargado_at<=decision) cuando p_enforce_availability=true; para
+--      REPLAY histórico se deja false porque cargado_at es tiempo de backfill (bulk,
+--      posterior a decisiones históricas) y no representa la disponibilidad de época.
+--      max_source_event_time sigue siendo el kickoff (fecha) máximo usado.
 create or replace function v2.fn_soccer_features_asof(
-  p_home_id text, p_away_id text, p_liga_id int, p_decision_time timestamptz, p_window_days int default 540
+  p_home_id text, p_away_id text, p_liga_id int, p_decision_time timestamptz,
+  p_window_days int default 540, p_exclude_event_id text default null,
+  p_enforce_availability boolean default false
 ) returns table(
   home_gf numeric, home_gc numeric, away_gf numeric, away_gc numeric,
   sample_home int, sample_away int, feature_data_asof timestamptz, max_source_event_time timestamptz
@@ -46,12 +57,16 @@ create or replace function v2.fn_soccer_features_asof(
     from public.historico_partidos_espn
     where home_espn_id=p_home_id and liga_id=p_liga_id and home_score is not null
       and fecha < p_decision_time and fecha >= p_decision_time - make_interval(days=>p_window_days)
+      and espn_event_id is distinct from p_exclude_event_id                 -- F3
+      and (not p_enforce_availability or cargado_at <= p_decision_time)     -- F5
   ),
   a as (  -- partidos del VISITANTE como visitante
     select avg(away_score) gf, avg(home_score) gc, count(*) n, max(fecha) mx
     from public.historico_partidos_espn
     where away_espn_id=p_away_id and liga_id=p_liga_id and home_score is not null
       and fecha < p_decision_time and fecha >= p_decision_time - make_interval(days=>p_window_days)
+      and espn_event_id is distinct from p_exclude_event_id                 -- F3
+      and (not p_enforce_availability or cargado_at <= p_decision_time)     -- F5
   )
   select round(h.gf,4),round(h.gc,4),round(a.gf,4),round(a.gc,4),
          h.n::int, a.n::int, greatest(h.mx,a.mx), greatest(h.mx,a.mx)
@@ -66,6 +81,21 @@ create table if not exists v2.feature_snapshot (
   sample_home int, sample_away int, feature_data_asof timestamptz, max_source_event_time timestamptz,
   feature_version text, created_at timestamptz default now(),
   unique (espn_event_id, decision_time, feature_version)
+);
+
+-- ── 3b) Tabla destino del builder (F2: antes se insertaba sin crearla) ────────
+-- Contrato canónico 1 fila/evento. Sin defaults dinámicos; el builder llena todo.
+create table if not exists v2.soccer_prediction_v2_staged (
+  espn_event_id text, competition_id int, home_team text, away_team text,
+  kickoff timestamptz, decision_time timestamptz,
+  feature_data_asof timestamptz, max_source_event_time timestamptz,
+  sample_home int, sample_away int, temporal_safe boolean,
+  feature_version text, model_version text, calibration_status text,
+  p_home numeric, p_draw numeric, p_away numeric, btts_yes numeric, btts_no numeric,
+  over_line numeric, p_over numeric, p_under numeric, line_source text, line_asof timestamptz,
+  model_status text, model_status_reason text, provenance jsonb,
+  feature_snapshot_id uuid, built_at timestamptz default now(),
+  primary key (espn_event_id, decision_time, model_version)
 );
 
 -- ── 4) Builder reproducible (decision_time explícito; sin now() como autoridad) ─
@@ -98,7 +128,9 @@ begin
            f.feature_data_asof, f.max_source_event_time,
            o.over_line,o.over_odds,o.under_odds,o.home_ml,o.draw_ml,o.away_ml,o.bookmaker,o.snapshot_at
     from mapped m
-    left join lateral v2.fn_soccer_features_asof(m.home_espn_id,m.away_espn_id,m.liga_id,p_decision_time,cfg.window_days) f on true
+    -- F3: excluye el evento target (m.espn_event_id) del propio cómputo de features.
+    left join lateral v2.fn_soccer_features_asof(
+        m.home_espn_id,m.away_espn_id,m.liga_id,p_decision_time,cfg.window_days,m.espn_event_id) f on true
     left join lateral (select * from v2.fn_real_total_line(m.espn_event_id,p_decision_time)) o on true
   ),
   calc as (
@@ -108,13 +140,31 @@ begin
       v2.fn_score_dist(fe.home_gf,fe.home_gc,fe.away_gf,fe.away_gc,
                        lg.media_goles_local, lg.media_goles_visita, fe.over_line) d
     from feats fe left join public.v_liga_promedios_futbol lg on lg.liga_id=fe.liga_id
+  ),
+  -- F1: PERSISTE el snapshot de features (antes la tabla existía pero nunca se llenaba).
+  -- Data-modifying CTE: escribe una fila por evento con features y devuelve su id.
+  snap as (
+    insert into v2.feature_snapshot
+      (espn_event_id, decision_time, home_gf, home_gc, away_gf, away_gc,
+       sample_home, sample_away, feature_data_asof, max_source_event_time, feature_version)
+    select c.espn_event_id, p_decision_time, c.home_gf, c.home_gc, c.away_gf, c.away_gc,
+       c.sample_home, c.sample_away, c.feature_data_asof, c.max_source_event_time, cfg.feature_version
+    from calc c
+    where c.sample_home is not null and c.sample_away is not null
+    on conflict (espn_event_id, decision_time, feature_version) do update
+      set home_gf=excluded.home_gf, home_gc=excluded.home_gc,
+          away_gf=excluded.away_gf, away_gc=excluded.away_gc,
+          sample_home=excluded.sample_home, sample_away=excluded.sample_away,
+          feature_data_asof=excluded.feature_data_asof,
+          max_source_event_time=excluded.max_source_event_time
+    returning espn_event_id, feature_snapshot_id
   )
   insert into v2.soccer_prediction_v2_staged
     (espn_event_id, competition_id, home_team, away_team, kickoff, decision_time,
      feature_data_asof, max_source_event_time, sample_home, sample_away, temporal_safe,
      feature_version, model_version, calibration_status,
      p_home,p_draw,p_away, btts_yes,btts_no, over_line,p_over,p_under, line_source,line_asof,
-     model_status, model_status_reason, provenance)
+     model_status, model_status_reason, provenance, feature_snapshot_id)
   select c.espn_event_id, c.competition_id, c.home_nombre, c.away_nombre, c.kickoff, p_decision_time,
      c.feature_data_asof, c.max_source_event_time, c.sample_home, c.sample_away, c.temporal_safe_calc,
      cfg.feature_version, cfg.model_version, cfg.calibration_status,
@@ -141,9 +191,13 @@ begin
           else 'Datos insuficientes' end,
      jsonb_build_object('engine','dc_goal_rates_asof','event_liga_id',c.liga_id,
         'competition_approved',c.reg_ok,'feature_data_asof',c.feature_data_asof,
-        'temporal_safe',c.temporal_safe_calc,'odds_is_context_not_preto',true)
-  from calc c, cfg,
-       lateral (select (c.reg_ok and c.sample_home is not null and c.sample_away is not null
+        'temporal_safe',c.temporal_safe_calc,'odds_is_context_not_preto',true),
+     s.feature_snapshot_id
+  -- F7: 'cfg' es una variable record de plpgsql; sus campos se usan como escalares.
+  -- NO puede ir en el FROM como si fuera una tabla (antes: 'from calc c, cfg' => error).
+  from calc c
+       left join snap s on s.espn_event_id = c.espn_event_id
+       cross join lateral (select (c.reg_ok and c.sample_home is not null and c.sample_away is not null
                         and c.sample_home>=cfg.sample_floor and c.sample_away>=cfg.sample_floor
                         and c.d is not null and c.temporal_safe_calc) as publish) pub;
   get diagnostics n = row_count;
