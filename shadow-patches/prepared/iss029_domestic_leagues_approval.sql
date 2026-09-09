@@ -1,0 +1,31 @@
+-- ============================================================================
+-- iss029 — APROBACIÓN DE LIGAS DOMÉSTICAS (BLOQUE 2) · STAGED, NO APLICAR
+-- ============================================================================
+-- Validación OOS del motor Dixon-Coles INTRA-LIGA (sin φ) sobre 5 ligas domésticas
+-- no aprobadas. Temporalmente seguro (forma 540d < kickoff). Baseline = base-rate.
+-- Evidencia: shadow-patches/reports/BLOQUE2_domesticas_2026-09-09.md
+--            lab/domestic_leagues_v1/ (validate_domestic.py, domestic_result.json)
+-- Gate de calibración: ECE <= 0.08 además de mejora OOS en Brier y LogLoss.
+-- Leakage gate: 0 filas fechadas hoy/live en el fit de las 5 ligas (verificado).
+--
+-- NO va en supabase/migrations. NO aplicar bajo freeze.
+-- ============================================================================
+
+-- APROBABLES (mejoran OOS y bien calibradas): Bélgica, Dinamarca, Escocia.
+-- insert into v2.model_registry (sport,model_name,model_version,liga_id,liga_nombre,approved,notes,approved_at) values
+--   ('FUT','dixon_coles','v2_futpro',144,'Jupiler Pro League', true,
+--     'BLOQUE2 OOS: Brier 0.622 vs base 0.660 (Δ+0.038), LogLoss Δ+0.053, ECE 0.011, n=913, estable', now()),
+--   ('FUT','dixon_coles','v2_futpro',119,'Danish Superliga', true,
+--     'BLOQUE2 OOS: Brier 0.638 vs base 0.656 (Δ+0.019), LogLoss Δ+0.024, ECE 0.05, n=571, estable', now()),
+--   ('FUT','dixon_coles','v2_futpro',179,'Scottish Premiership', true,
+--     'BLOQUE2 OOS: Brier 0.567 vs base 0.631 (Δ+0.064), LogLoss Δ+0.087, ECE 0.06, n=425', now());
+
+-- NO APROBABLES todavía (discriminan pero MAL CALIBRADAS, ECE>0.08). Requieren
+-- capa de calibración (isotónica/Platt por liga) validada antes de aprobar:
+--   Noruega/Eliteserien (103): Brier Δ+0.054 PERO ECE 0.12 (sobreconfiado).
+--   Grecia/Super League (197): Brier Δ+0.064 PERO ECE 0.097.
+-- Permanecen FAIL-CLOSE. NO insertar approval hasta recalibrar y re-medir OOS.
+
+-- Nota identidad competencia/proveedor: liga_id de ESPN es la clave canónica
+-- (v_futpro_v2 y historico_partidos_espn comparten liga_id). No hay ambigüedad
+-- de proveedor en estas 5 (todas single-country, un solo liga_id por competencia).
