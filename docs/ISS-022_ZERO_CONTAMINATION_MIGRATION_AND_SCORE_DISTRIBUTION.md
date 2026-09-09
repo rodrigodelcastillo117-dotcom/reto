@@ -78,6 +78,14 @@ Sin "un escenario compatible". Si no hay modelo confiable: "MARCADOR NO DISPONIB
 
 ---
 
+## P0-B — ESTADO: MOTOR DESPLEGADO (fútbol) ✅
+Aplicado en `wpiztubmmmzclhlprgpd`:
+- `v2.fn_score_dist(...)`: distribución conjunta Dixon-Coles (Poisson bivariado + τ, ρ=-0.05, 0..8 goles). De UNA matriz: 1X2, BTTS, O/U(línea), `predicted_score=argmax`, `predicted_score_prob`, `dist` (marcadores ≥1%). Fail-closed (NULL) si faltan tasas.
+- `v2.soccer_score_dist`: λ por partido desde `v_goles_equipo_futbol` (local/visita) normalizado por `v_liga_promedios_futbol`; piso de muestra ≥8 PJ por equipo; si no → no aparece (fail-closed).
+- `public.v_futpro_v2`: expone `predicted_score`/`predicted_score_prob`/`score_dist` SOLO cuando hay P_RETO y el marcador es coherente con él; si no → NULL + `score_status` (PUBLICADO / INCOHERENTE_CON_PRETO / SIN_PRETO / SIN_MODELO_MARCADOR). Campos `dc_*` y `lambda_*` quedan para auditoría/#206. Escudos ahora desde `escudos_evento` por `espn_event_id` (84.6% cobertura + fallback monograma).
+- Resultado medido (221 próximos): 58 PUBLICADO, 41 INCOHERENTE (→ #206), 93 SIN_PRETO, 29 SIN_MODELO. **Cero 1-1 por defecto.** Ejemplos: América 68.5%→2-0, Real Madrid 70.2%→2-0, Villarreal→3-1, Hoffenheim↔Stuttgart→2-2.
+- **Hallazgo para #206:** 41% de incoherencia marcador-vs-P_RETO = dos motores de fútbol distintos (p_reto calibrado vs distribución DC de tasas). Reconciliar en #206 (medir cuál acierta out-of-sample); mientras, el contrato falla-cerrado el marcador incoherente. `SCORE_VS_1X2_MISMATCHES` visibles = 0 (gate en la vista).
+
 ## Orden de ejecución (revisado bajo P0)
 1. **[hecho]** Denylist grounded + gate CI (`contamination-gate.mjs`) + este ISS.
 2. **Motor P0-B:** persistir λ_home/λ_away/τ en el generador DC; construir P(i,j); derivar 1X2/BTTS/O-U/predicted_score de ella; exponer en snapshot + `v_futpro_v2`; fail-closed. Auditar y eliminar el 1-1 por defecto.
