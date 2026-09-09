@@ -72,7 +72,11 @@ SELECT
   count(*) FILTER(WHERE coalesce(jsonb_array_length(payload->'coverage_manifest'),0)>=10) AS manifest_ge_10_features
 FROM d;
 
--- 8) Ninguna entrada USADA puede violar as_of <= decision_time. CERO filas.
+-- 8) Ninguna fuente USADA puede violar data_asof <= decision_time.
+-- CERO filas. Importante: los paréntesis son intencionales; sin ellos SQL evalúa
+-- AND antes que OR y `used_in_model=true` se convertía falsamente en violación.
+-- `SAFE_CURRENT` NO es aceptado para fuentes usadas: una lectura "actual" sin as_of
+-- demostrable no satisface el contrato temporal del gate.
 WITH ev AS (
   SELECT a.espn_event_id FROM public.agenda_espn a
   WHERE a.deporte='soccer' AND a.fecha BETWEEN now() AND now()+interval '48 hours'
@@ -81,10 +85,74 @@ WITH ev AS (
 ), m AS (
   SELECT d.espn_event_id,x.value item FROM d CROSS JOIN LATERAL jsonb_array_elements(d.payload->'coverage_manifest') x(value)
 )
-SELECT espn_event_id,item->>'feature' feature,item->>'source' source,item->>'as_of' as_of,item->>'decision_time' decision_time
+SELECT espn_event_id,item->>'feature' feature,item->>'source' source,item->>'as_of' as_of,item->>'decision_time' decision_time,
+       item->>'role' role,item->>'temporal_status' temporal_status
 FROM m
-WHERE coalesce((item->>'used_in_model')::boolean,false) OR coalesce((item->>'used_in_context')::boolean,false)
-  AND item->>'temporal_status' NOT IN ('STATIC','SAFE_ASOF','SAFE_COMPUTED_ASOF','SAFE_CURRENT');
+WHERE (coalesce((item->>'used_in_model')::boolean,false) OR coalesce((item->>'used_in_context')::boolean,false))
+  AND (
+    item->>'temporal_status' NOT IN ('STATIC','SAFE_ASOF','SAFE_COMPUTED_ASOF')
+    OR (
+      item->>'temporal_status' <> 'STATIC'
+      AND (
+        item->>'as_of' IS NULL
+        OR item->>'decision_time' IS NULL
+        OR (item->>'as_of')::timestamptz > (item->>'decision_time')::timestamptz
+      )
+    )
+  );
+
+-- 8b) Contrato de procedencia/completitud del manifest.
+-- Toda fila debe declarar feature/source/provenance/role/freshness/temporal_status y
+-- decision_time. Si falta el dato, debe decir missing_reason; si existe, debe tener as_of
+-- salvo que sea explícitamente STATIC. CERO filas.
+WITH ev AS (
+  SELECT a.espn_event_id FROM public.agenda_espn a
+  WHERE a.deporte='soccer' AND a.fecha BETWEEN now() AND now()+interval '48 hours'
+), d AS (
+  SELECT e.espn_event_id,public.analisis_futbol_reto_core(e.espn_event_id) payload FROM ev e
+), m AS (
+  SELECT d.espn_event_id,x.value item FROM d CROSS JOIN LATERAL jsonb_array_elements(d.payload->'coverage_manifest') x(value)
+)
+SELECT espn_event_id,item
+FROM m
+WHERE nullif(item->>'feature','') IS NULL
+   OR nullif(item->>'source','') IS NULL
+   OR nullif(item->>'provenance','') IS NULL
+   OR nullif(item->>'role','') IS NULL
+   OR nullif(item->>'freshness','') IS NULL
+   OR nullif(item->>'temporal_status','') IS NULL
+   OR nullif(item->>'decision_time','') IS NULL
+   OR (
+        coalesce((item->>'available')::boolean,false)=false
+        AND nullif(item->>'missing_reason','') IS NULL
+      )
+   OR (
+        coalesce((item->>'available')::boolean,false)=true
+        AND item->>'temporal_status' <> 'STATIC'
+        AND nullif(item->>'as_of','') IS NULL
+      );
+
+-- 8c) Separación dura MODEL_ACTIVE vs CONTEXT_ONLY / AVAILABLE_NOT_USED.
+-- Sólo MODEL_ACTIVE puede alterar P_RETO. Contexto puede informar narrativa, jamás el modelo.
+-- AVAILABLE_NOT_USED no puede estar marcado ni como model ni como context usado.
+-- CERO filas.
+WITH ev AS (
+  SELECT a.espn_event_id FROM public.agenda_espn a
+  WHERE a.deporte='soccer' AND a.fecha BETWEEN now() AND now()+interval '48 hours'
+), d AS (
+  SELECT e.espn_event_id,public.analisis_futbol_reto_core(e.espn_event_id) payload FROM ev e
+), m AS (
+  SELECT d.espn_event_id,x.value item FROM d CROSS JOIN LATERAL jsonb_array_elements(d.payload->'coverage_manifest') x(value)
+)
+SELECT espn_event_id,item->>'feature' feature,item->>'source' source,item->>'role' role,
+       item->>'used_in_model' used_in_model,item->>'used_in_context' used_in_context
+FROM m
+WHERE (coalesce((item->>'used_in_model')::boolean,false) AND item->>'role' <> 'MODEL_ACTIVE')
+   OR (item->>'role'='AVAILABLE_NOT_USED' AND (
+        coalesce((item->>'used_in_model')::boolean,false)
+        OR coalesce((item->>'used_in_context')::boolean,false)
+      ))
+   OR (item->>'role'='CONTEXT_ONLY' AND coalesce((item->>'used_in_model')::boolean,false));
 
 -- 9) P_RETO del dossier = matriz exacta. CERO filas.
 WITH ev AS (
@@ -135,4 +203,5 @@ ORDER BY a.fecha DESC;
 
 -- PASS DE BACKEND SOCCER exige:
 -- temporal violations=0; invariant violations=0; forbidden deps=false; dossier errors=0;
--- P mismatch=0; todos los missing clasificados; y smoke de latencia por separado.
+-- manifest contract violations=0; role violations=0; P mismatch=0; todos los missing
+-- clasificados; y smoke de latencia por separado.
