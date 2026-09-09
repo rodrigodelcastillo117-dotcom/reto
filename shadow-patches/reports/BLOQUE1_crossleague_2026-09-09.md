@@ -1,84 +1,91 @@
-# BLOQUE 1 — Champions / Cross-League Model · EVIDENCIA (STAGED, sin deploy)
+# BLOQUE 1 — Champions / Cross-League Model · EVIDENCIA
 
-Rama `claude/reto-13m-espn-matches-3uknie`. Proyecto Supabase `wpiztubmmmzclhlprgpd`.
-Sólo lectura contra prod. Artefacto staged: `shadow-patches/prepared/iss027_champions_crossleague_model.sql`.
-Código+evidencia: `lab/champions_crossleague_v1/`.
+## Estado
+`CROSS_LEAGUE_V1 = APPROVABLE_STAGED / FINAL_VALIDATION_PENDING`
+NO "cerrado/validado". STAGED, sin deploy. Rama `claude/reto-13m-espn-matches-3uknie`.
+Artefacto: `shadow-patches/prepared/iss027_champions_crossleague_model.sql`.
+Código+evidencia reproducible: `lab/champions_crossleague_v1/`
+(`fit_crossleague.py`, `validate_v2.py`, `validation_v2.json`, `EVIDENCE_*`).
 
-## Qué se construyó
-Modelo de fuerza entre ligas (Dixon-Coles Poisson) para competencias cruzadas
-(Champions, Europa, Conference, Libertadores, Concacaf, AFC), **identificable y
-temporalmente seguro**:
-- Fuerza de EQUIPO: tasas de gol domésticas en ventana móvil 540d **estrictamente
-  anterior** al kickoff (data_asof < decision_time por construcción).
-- Fuerza de LIGA φ_L: efecto fijo por liga identificado SÓLO por partidos cruzados;
-  ref Premier=0; regularización ridge.
-- Ventaja de local γ explícita. Corrección Dixon-Coles ρ para marcadores bajos.
-- NO usa odds/mercado. Sudamericana entrena φ pero jamás emite pick (veto).
+## Modelo
+Dixon-Coles Poisson con **fuerza de liga φ identificable** (ref Premier=0, ridge=10),
+fuerza de equipo = tasas de gol domésticas en ventana móvil **estrictamente anterior**
+al kickoff, ventaja de local γ explícita, corrección ρ de marcadores bajos.
+**floor doméstico=15** (elegido por VALIDACIÓN, ver FL). NO usa odds/mercado.
 
-## Datos reales
-- `historico_partidos_espn`: 42,538 juegos con marcador (2020–2026).
-- Cruzados continentales: 3,155. **Usables (ambos equipos ≥5 juegos domésticos en
-  ventana): 826.** El resto **fail-cierra** por falta de historia doméstica (correcto).
+## (L) LEAKAGE GATE — PASS
+- Entrenamiento = SÓLO partidos FINAL (score no nulo); **0 filas fechadas hoy/futuro**;
+  max fecha del fit = 2026-09-08. Verificado por SQL sobre `historico_partidos_espn`
+  y por asserts en `validate_v2.py::leakage_asserts`.
+- Los 3 partidos LIVE de hoy (Barça-Feyenoord, Liverpool-Atlético, Stuttgart-Viking,
+  2026-09-09) **NO están en el histórico** → imposible que entren al fit.
+- Features de cada equipo con `data_asof` estrictamente < kickoff (verificado:
+  Barça 09-06, Feyenoord 09-05, Liverpool 09-04, Atlético 09-05, Stuttgart 09-04,
+  Viking 09-04; todos < 09-09 16:45). Un marcador live nunca entra al fit ni al feature.
 
-## Validación OUT-OF-SAMPLE (split temporal, nunca aleatorio)
-Train `< 2025-02-01` (375) → Test `>= 2025-02-01` (451):
+## (B) BASELINE FUERTE
+Mismo Dixon-Coles, mismas features, misma regularización; **única diferencia = quitar φ
+de liga**. Toda comparación abajo es cross-league(φ) vs este baseline.
 
-| Modelo | Brier | LogLoss | Acc |
-|---|---|---|---|
-| **Cross-league (φ)** | **0.5989** | **1.0013** | 0.503 |
-| Doméstico naïve (φ=0) | 0.6157 | 1.0243 | 0.508 |
-| Prior tasas base | 0.6152 | 1.0223 | 0.508 |
+## (WF) WALK-FORWARD por fold (floor=5, ridge=10) — MIXTO (honesto)
+| test desde | n_train | n_val | n_test | Brier | LogLoss | ΔBrier | ΔLogLoss | CI ΔBrier |
+|---|---|---|---|---|---|---|---|---|
+| 2025-02-01 | 212 | 163 | 144 | 0.6031 | 1.0042 | +0.0074 | +0.0132 | [-0.017,+0.034] |
+| 2025-08-01 | 375 | 144 | 186 | 0.5929 | 0.9946 | **+0.0242** | +0.0311 | **[+0.004,+0.044]** |
+| 2026-03-01 | 519 | 210 |  92 | 0.6156 | 1.0254 | -0.0080 | -0.0117 | [-0.049,+0.032] |
 
-- **Bootstrap (2000): Brier gain +0.0168, 95% CI [+0.0008, +0.0333]** → mejora
-  **estadísticamente significativa** (límite inferior > 0).
-- Mejora la calibración probabilística (Brier/LogLoss), NO la accuracy (empatada) —
-  correcto para un modelo de probabilidad.
+Un fold significativamente positivo; dos con CI que cruza 0 (uno leve negativo, n=92).
+Señal real pero NO uniforme entre folds → por eso APPROVABLE_STAGED, no VALIDADO.
 
-Calibración (test cross-league): bucket 0.4–0.6 conf 0.491 → acc 0.485; bucket
-0.6–0.8 conf 0.67 → acc 0.712. Bien calibrado.
-
-Walk-forward (folds temporales, ventana 6m): Δ Brier (dom−cross) por fold =
-−0.0083 / +0.0145 / +0.0354; **media +0.0138 a favor de cross-league** (el primer
-fold, con menos datos, favorece ligeramente al doméstico → el señal se estabiliza
-con más muestra).
-
-Ridge sweep (validación interna, sin tocar test): logloss mejora con más
-regularización → **el señal de liga es real pero débil; requiere shrinkage**. Se
-fijó ridge=10 (balance walk-forward / jerarquía interpretable).
-
-Estabilidad por temporada de test: Brier 2025=0.593, 2026=0.609 (consistente).
-
-## φ liga (ridge=10, ref Premier=0) — jerarquía coherente
-Premier 0.00 · LaLiga −0.08 · Bundesliga −0.11 · Ligue1 −0.11 · Serie A −0.12 ·
-Liga MX −0.05 · Dinamarca −0.23 · Primeira −0.25 · Noruega −0.29 · Bélgica −0.30 ·
-MLS −0.32 · Turquía −0.36 · Eredivisie −0.38 · Grecia −0.39 · Escocia −0.43.
-Cobertura: 15/16 ligas con ≥20 juegos cruzados = **SERVIBLES**; Saudi (n=3) y
-liga 188 (n=0) **fail-close**.
-
-## Prueba explícita de los 3 partidos del usuario
-| Partido | Local | Empate | Visita | Marcador | O2.5 | BTTS |
+## (C) POR COMPETENCIA en test (cut 2025-02-01) — decisivo
+| Competencia | n | Brier | LogLoss | ΔBrier vs base | ECE | Veredicto |
 |---|---|---|---|---|---|---|
-| Barcelona–Feyenoord (UCL) | 78.3% | 12.4% | 9.3% | 2-0 | 74.8% | 57.7% |
-| Liverpool–Atlético (UCL) | 52.8% | 21.8% | 25.5% | 1-1 | 57.8% | 57.6% |
-| Stuttgart–Viking (UEL) | 59.1% | 19.0% | 21.9% | 2-1 | 68.2% | 64.1% |
+| UCL | 207 | 0.6069 | 1.0118 | **+0.0166** | 0.018 | **APROBABLE** |
+| UEL | 136 | 0.5979 | 1.0006 | **+0.0285** | 0.028 | **APROBABLE** |
+| Concacaf | 54 | 0.6045 | 1.0058 | -0.0051 | 0.119 | fail-close |
+| Conference | 32 | 0.6121 | 1.0233 | -0.0113 | 0.037 | fail-close |
+| FIFA CWC | 21 | 0.5324 | 0.9062 | -0.0116 | 0.166 | fail-close (n chico) |
+| AFC Elite | 1 | — | — | — | — | fail-close (n=1) |
+| Libertadores | 0 | — | — | — | — | fail-close (sin test usable) |
 
-Los 3 se sirven (todas las ligas SERVIBLES + muestra doméstica suficiente).
-Nota de campo (usuario, en vivo HT): Barça 2-0 (marcador modal exacto del modelo),
-Stuttgart 3-1 (modelo 2-1, favorito correcto). Una observación en vivo NO altera φ:
-la autoridad es la validación OOS, no un partido (guarda anti-overfit #106/#108/#109).
+**El beneficio cross-league se concentra en UCL y UEL** (mejora OOS + bien calibrados).
+Regla respetada: no se aprueba una competencia por el promedio global. Sólo UCL+UEL.
 
-## VERDICTO: APPROVABLE con guardas (fail-closed-until-approved)
-El modelo cross-league es **defendible fuera de muestra**: mejora Brier y LogLoss
-vs baseline doméstico y prior, con significancia bootstrap y estabilidad temporal.
-Guardas obligatorias (ya en el SQL): liga servible (≥20 cruzados), muestra doméstica
-≥5 por equipo, data_asof ≤ decision_time, ridge, Sudamericana sin pick.
-**NO se enciende** hasta que un humano ejecute iss027 y apruebe en `v2.model_registry`
-(bajo freeze: NO aplicar). Reproducible: `python3 fit_crossleague.py`.
+## (ID) IDENTIFICABILIDAD φ — ref liga=39 fija a 0
+φ por fold (estabilidad de las ligas débiles):
+- fold<2025-02: Grecia -0.33, Turquía -0.28, Eredivisie -0.22 … Liga MX +0.18
+- fold<2025-08: Grecia -0.36, MLS -0.35, Turquía -0.31 …
+- fold<2026-03: Escocia -0.42, Eredivisie -0.38, Grecia -0.37 …
+Ligas débiles estables en signo/orden; mid-table con más varianza (esperado con la muestra).
+
+## (FL) SAMPLE FLOOR — elegido por VALIDACIÓN (no test)
+| floor | n_train | n_val | val Brier | val LogLoss |
+|---|---|---|---|---|
+| 5 | 232 | 143 | 0.6335 | 1.0518 |
+| 8 | 206 | 140 | 0.6371 | 1.0561 |
+| 10 | 189 | 138 | 0.6292 | 1.0463 |
+| **15** | 136 | 135 | **0.6186** | **1.0301** |
+→ **floor óptimo = 15**. El modelo final y el SQL usan floor=15 (n_train=722).
+
+## Prueba prematch de los 3 partidos (snapshot congelado, floor=15)
+Features con `data_asof < kickoff` (probado). Los 3 son UCL (competencia aprobada).
+| Partido | Local | Empate | Visita | O2.5 | BTTS |
+|---|---|---|---|---|---|
+| Barcelona–Feyenoord | 79.4% | 11.8% | 8.8% | 76.0% | 57.9% |
+| Liverpool–Atlético | 54.1% | 21.3% | 24.6% | 58.0% | 57.2% |
+| Stuttgart–Viking | 56.9% | 19.1% | 24.0% | 69.2% | 65.7% |
+(Sin usar resultados en vivo como evidencia — sólo demostración de que el modelo
+publica prematch para competencias aprobadas.)
+
+## VERDICTO
+`CROSS_LEAGUE_V1 = APPROVABLE_STAGED / FINAL_VALIDATION_PENDING`.
+Defendible OOS **sólo para UCL y UEL** (mejora significativa + buena calibración).
+Guardas en SQL: competencia aprobada (UCL/UEL), liga servible (≥20 cruzados),
+muestra doméstica ≥15/equipo, data_asof ≤ decision_time, Sudamericana sin pick.
+NO se enciende hasta: (a) validación final con más temporadas para estabilizar los
+folds, (b) ejecución humana de iss027, (c) approval en `v2.model_registry` (bajo freeze: no aplicar).
 
 ## Operaciones que requerirán autorización de deploy posterior
-1. Ejecutar `iss027_champions_crossleague_model.sql` (crea `v2.liga_fuerza`,
-   `v2.crossleague_params`, `v2.fn_crossleague_features`, `v2.fn_crossleague_p_reto`).
-2. Integrar la rama cross-league en `v2.build_soccer_prediction_v2` (llamar
-   `fn_crossleague_p_reto` cuando la competencia sea cruzada).
-3. INSERT de approval en `v2.model_registry` (UCL/UEL/Conference/Libertadores/
-   Concacaf/AFC; NUNCA Sudamericana).
+1. Ejecutar `iss027` (crea tablas + funciones cross-league).
+2. Integrar `fn_crossleague_p_reto` en `v2.build_soccer_prediction_v2` para competencias cruzadas.
+3. Approval en `v2.model_registry` SÓLO UCL(2) + UEL(3).

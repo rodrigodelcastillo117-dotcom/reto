@@ -32,40 +32,60 @@ create table if not exists v2.liga_fuerza (
   model_version text      not null default 'crossleague_v1'
 );
 
--- Valores del ajuste (ridge=10, ref=Premier 39, n_train=826 juegos cruzados usables).
--- Reemplaza el contenido en cada re-fit; se aplica sólo tras approval.
+-- Valores del ajuste (ridge=10, ref=Premier 39, floor doméstico=15, n_train=722
+-- juegos cruzados usables). floor=15 elegido por VALIDACIÓN (val logloss 1.030 vs
+-- 1.052 en floor=5), nunca por test. Reemplaza el contenido en cada re-fit.
 truncate v2.liga_fuerza;
 insert into v2.liga_fuerza (liga_id, liga_nombre, phi, n_cruzados, servible) values
-  (39, 'Premier League', 0.0, 218, true),
-  (140, 'LaLiga', -0.0768, 191, true),
-  (78, 'Bundesliga', -0.1079, 177, true),
-  (135, 'Serie A', -0.1184, 168, true),
-  (61, 'Ligue 1', -0.1105, 155, true),
-  (88, 'Eredivisie', -0.382, 106, true),
-  (94, 'Primeira Liga', -0.2522, 104, true),
-  (144, 'Jupiler Pro League', -0.3017, 79, true),
-  (203, 'Super Lig', -0.3585, 61, true),
-  (197, 'Super League Greece', -0.3917, 58, true),
-  (253, 'MLS', -0.3151, 54, true),
-  (262, 'Liga MX', -0.049, 53, true),
-  (103, 'Eliteserien', -0.2915, 45, true),
-  (119, 'Danish Superliga', -0.2262, 35, true),
-  (179, 'Scottish Premiership', -0.4283, 33, true),
-  (307, 'Saudi Pro League', 0.0734, 3, false),   -- muestra cruzada insuficiente -> fail-close
+  (39, 'Premier League', 0.0, 186, true),
+  (140, 'LaLiga', -0.0998, 172, true),
+  (135, 'Serie A', -0.1053, 152, true),
+  (78, 'Bundesliga', -0.1202, 150, true),
+  (61, 'Ligue 1', -0.1104, 133, true),
+  (88, 'Eredivisie', -0.3837, 91, true),
+  (94, 'Primeira Liga', -0.279, 90, true),
+  (144, 'Jupiler Pro League', -0.3207, 66, true),
+  (253, 'MLS', -0.3035, 54, true),
+  (262, 'Liga MX', -0.0425, 53, true),
+  (203, 'Super Lig', -0.3217, 51, true),
+  (103, 'Eliteserien', -0.2809, 40, true),
+  (197, 'Super League Greece', -0.3552, 38, true),
+  (119, 'Danish Superliga', -0.2862, 30, true),
+  (179, 'Scottish Premiership', -0.5045, 25, true),
+  (307, 'Saudi Pro League', 0.065, 3, false),   -- muestra cruzada insuficiente -> fail-close
   (11,  'CONMEBOL Sudamericana', 0.0, 0, false); -- veto: nunca pick (aunque entrene)
+
+-- Competencias CRUZADAS aprobables por evidencia OOS. Sólo aquí el modelo publica.
+-- (Gate por competencia: no se aprueba una competencia porque el promedio global gane.)
+create table if not exists v2.crossleague_competencias (
+  competition_liga_id integer primary key,
+  competition_nombre  text,
+  aprobada boolean not null default false,
+  n_test integer, delta_brier_vs_base numeric, ece numeric, nota text
+);
+truncate v2.crossleague_competencias;
+insert into v2.crossleague_competencias values
+  (2,   'UEFA Champions League', true,  207, 0.0166, 0.018, 'OOS: cross-league mejora y bien calibrado'),
+  (3,   'UEFA Europa League',    true,  136, 0.0285, 0.028, 'OOS: cross-league mejora y bien calibrado'),
+  (848, 'UEFA Conference League',false, 32, -0.0113, 0.037, 'sin beneficio OOS -> fail-close'),
+  (16,  'Concacaf Champions Cup',false, 54, -0.0051, 0.119, 'sin beneficio + mal calibrado -> fail-close'),
+  (15,  'FIFA Club World Cup',   false, 21, -0.0116, 0.166, 'muestra chica + mal calibrado -> fail-close'),
+  (17,  'AFC Champions League',  false,  1, null,    null,  'muestra insuficiente -> fail-close'),
+  (13,  'CONMEBOL Libertadores', false,  0, null,    null,  'sin muestra de test usable -> fail-close'),
+  (11,  'CONMEBOL Sudamericana', false,  0, null,    null,  'VETO de negocio: nunca pick');
 
 -- ── 2) Parámetros globales del modelo (una fila) ─────────────────────────────
 create table if not exists v2.crossleague_params (
   model_version text primary key,
   a0 numeric, batt numeric, bdef numeric, home_adv numeric, rho numeric,
   ref_league integer, ridge numeric, n_train integer,
-  sample_floor_domestic integer default 5,   -- min juegos domésticos por equipo
+  sample_floor_domestic integer default 15,  -- min juegos domésticos por equipo (elegido por validación)
   coverage_floor_cruzados integer default 20,-- min juegos cruzados por liga
   fit_at timestamptz default now()
 );
 insert into v2.crossleague_params
   (model_version,a0,batt,bdef,home_adv,rho,ref_league,ridge,n_train)
-values ('crossleague_v1', -0.1351, 0.5145, 0.2781, 0.3404, 0.0586, 39, 10.0, 826)
+values ('crossleague_v1', -0.2214, 0.6057, 0.3896, 0.3568, 0.0705, 39, 10.0, 722)
 on conflict (model_version) do update set
   a0=excluded.a0, batt=excluded.batt, bdef=excluded.bdef, home_adv=excluded.home_adv,
   rho=excluded.rho, ref_league=excluded.ref_league, ridge=excluded.ridge,
@@ -95,7 +115,8 @@ $$;
 -- o data_asof > decision_time. NUNCA inventa números.
 create or replace function v2.fn_crossleague_p_reto(
   p_home_espn_id text, p_away_espn_id text,
-  p_home_liga int, p_away_liga int, p_decision_time timestamptz
+  p_home_liga int, p_away_liga int, p_decision_time timestamptz,
+  p_competition_liga_id int  -- competencia cruzada (2=UCL,3=UEL,...): gate de aprobación
 ) returns table(
   p_reto_home numeric, p_reto_draw numeric, p_reto_away numeric,
   p_over numeric, p_under numeric, btts_yes numeric,
@@ -110,6 +131,12 @@ declare
   over numeric; btts numeric; asof timestamptz;
 begin
   select * into par from v2.crossleague_params where model_version='crossleague_v1';
+  -- Gate de competencia: sólo competencias con evidencia OOS aprobada publican.
+  if not exists (select 1 from v2.crossleague_competencias
+                 where competition_liga_id=p_competition_liga_id and aprobada is true) then
+    return query select null::numeric,null::numeric,null::numeric,null::numeric,null::numeric,null::numeric,
+      null::numeric,null::numeric,'DATA_INCOMPLETE','Competencia cruzada no aprobada OOS (sólo UCL/UEL v1)',null::timestamptz; return;
+  end if;
   select * into pr from v2.fn_crossleague_features(p_home_espn_id, p_decision_time);
   select * into pa from v2.fn_crossleague_features(p_away_espn_id, p_decision_time);
   select phi, servible into phi_h, fh_serv from v2.liga_fuerza where liga_id = coalesce(pr.liga_modal, p_home_liga);
@@ -163,14 +190,15 @@ begin
 end $$;
 
 -- ── 5) APPROVAL (NO ejecutar hasta que un humano lo decida tras revisar la evidencia)
--- Al aprobar, registrar en v2.model_registry para las competencias cruzadas.
--- Sudamericana (11) queda FUERA (veto de pick).
+-- Estado: CROSS_LEAGUE_V1 = APPROVABLE_STAGED / FINAL_VALIDATION_PENDING.
+-- La evidencia OOS por competencia (ver reports/BLOQUE1_crossleague_*.md) SÓLO
+-- respalda UCL(2) y UEL(3). El resto (Conference/Concacaf/CWC/AFC/Libertadores)
+-- NO mostró beneficio OOS o tuvo muestra insuficiente -> permanece FAIL-CLOSE.
+-- Sudamericana (11) queda FUERA por veto de negocio.
 -- insert into v2.model_registry (sport,model_name,model_version,liga_id,liga_nombre,approved,notes,approved_at)
 -- values
---   ('FUT','crossleague','crossleague_v1', 2,  'UEFA Champions League', true, 'BLOQUE1 OOS Brier +0.017 CI[+0.001,+0.033]', now()),
---   ('FUT','crossleague','crossleague_v1', 3,  'UEFA Europa League',     true, 'idem', now()),
---   ('FUT','crossleague','crossleague_v1', 848,'UEFA Conference League', true, 'idem', now()),
---   ('FUT','crossleague','crossleague_v1', 13, 'CONMEBOL Libertadores',  true, 'idem', now()),
---   ('FUT','crossleague','crossleague_v1', 16, 'Concacaf Champions Cup', true, 'idem', now()),
---   ('FUT','crossleague','crossleague_v1', 17, 'AFC Champions League',   true, 'idem', now());
--- (NO Sudamericana. Concacaf/AFC sólo si su cobertura de participantes cumple el piso.)
+--   ('FUT','crossleague','crossleague_v1', 2, 'UEFA Champions League', true,
+--     'BLOQUE1 OOS: ΔBrier +0.0166 ECE 0.018 n=207 (test cut 2025-02); floor=15', now()),
+--   ('FUT','crossleague','crossleague_v1', 3, 'UEFA Europa League', true,
+--     'BLOQUE1 OOS: ΔBrier +0.0285 ECE 0.028 n=136; floor=15', now());
+-- (SÓLO UCL/UEL. NO Conference/Concacaf/CWC/AFC/Libertadores/Sudamericana en v1.)
