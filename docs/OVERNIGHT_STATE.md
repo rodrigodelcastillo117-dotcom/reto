@@ -101,3 +101,11 @@ NEXT_TASK: seguir esperando hardening de matriz para converger; verificar render
 ## Ciclo 5 — hold (sin cambios)
 - Matriz: 99 NO_VALIDADO, 0 UNVALIDATED (sigue contaminada). Auditor pusheo 176e68d (canonical totals real provider line) a autonomous-closure = STAGED, no en prod. Sin convergencia.
 - Gates OK: futpro_doble=0, crossleague=0, hardcoded_over=0; RETO 13M 116/0 fuera de set. App sana c6a6fb14.
+
+## Ciclo 6 — cierre 29A (respuesta a FAIL del auditor)
+- P0 v_analisis_v2 duplicados: CAUSA v_fuerza_equipo 1 fila/(team,liga) hasta 5/equipo → join cartesiano. FIX CTE fuerza DISTINCT ON(team_id) pj DESC. Ahora 254 filas/254 eventos/1 por evento. Stuttgart-Viking 9→1.
+- Gobernanza catalog↔registry: model_supported ahora refleja registry (11 aprobadas), provider_competition_id poblado, 0 supported sin backing.
+- Backend V2 versionado en Git: docs/backend_v2/ (v2_objects_snapshot.sql funciones+registry, v2_read_contracts.sql vistas, README manifest+re-dump).
+- Logos: 40/221 con ≥1 faltante (0 equivocados). Fallback escudos_evento→team_logo→monograma; build enviado a Lovable para garantizar monograma.
+- MILESTONE_V2_29A_CLOSURE.md con evidencia por bloqueador.
+- Rama v2-strangler NO existe; trabajo en la designada claude/reto-13m-espn-matches-3uknie.
