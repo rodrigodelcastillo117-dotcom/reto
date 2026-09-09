@@ -1,8 +1,9 @@
 -- ISS-024 — SOCCER CLOSURE VALIDATION / ACCEPTANCE MATRIX
--- *** READ-ONLY VALIDATION. Ejecutar DESPUÉS de ISS-018..023 + ISS-025 en preview/cutover txn. ***
+-- *** READ-ONLY VALIDATION. Ejecutar DESPUÉS de ISS-018..023 + ISS-025/026 en preview/cutover txn. ***
 -- No corrige nada; falla/expone cualquier violación antes de liberar.
 
--- 1) Universo + cobertura de P_RETO (los eventos NO desaparecen por falta de modelo).
+-- 1) Universo + cobertura de P_RETO. TODO evento soccer activo debe tener fila canónica;
+--    ausencia de Motor B se representa con model_status=NO_MODEL, no desapareciendo.
 WITH ev AS (
   SELECT a.espn_event_id,a.fecha,a.home_nombre,a.away_nombre
   FROM public.agenda_espn a
@@ -14,8 +15,10 @@ SELECT
   count(*) FILTER(WHERE p.model_status='UNVALIDATED' AND p.p_local_gana IS NOT NULL) AS p_reto_ready,
   count(*) FILTER(WHERE p.model_status='INSUFFICIENT_SAMPLE') AS insufficient_sample,
   count(*) FILTER(WHERE p.model_status='TEMPORAL_UNSAFE') AS temporal_unsafe,
-  count(*) FILTER(WHERE p.canonical_event_id IS NULL) AS no_model_row
+  count(*) FILTER(WHERE p.model_status='NO_MODEL') AS no_model,
+  count(*) FILTER(WHERE p.canonical_event_id IS NULL) AS missing_matrix_row
 FROM ev LEFT JOIN public.v_prediccion_reto_futbol p ON p.canonical_event_id=ev.espn_event_id;
+-- PASS: matrix_rows=event_universe; missing_matrix_row=0. Reduced model coverage is honest NO_MODEL.
 
 -- 2) Invariantes probabilísticos. Debe devolver CERO filas.
 SELECT canonical_event_id,
@@ -40,12 +43,13 @@ SELECT canonical_event_id,linea_ou,provider_total_line_raw,provider_name,provide
 FROM public.v_prediccion_reto_futbol
 WHERE linea_ou IS NOT NULL AND linea_ou IS DISTINCT FROM provider_total_line_raw;
 
--- 5) Muestra insuficiente nunca puede publicar P. CERO filas.
-SELECT canonical_event_id,model_sample,model_status,p_local_gana,p_btts_yes,p_over
+-- 5) Estados fail-closed nunca pueden publicar P. CERO filas.
+SELECT canonical_event_id,model_sample,model_status,p_local_gana,p_empate,p_visita_gana,p_btts_yes,p_btts_no,linea_ou,p_over,p_under
 FROM public.v_prediccion_reto_futbol
-WHERE model_sample<min_sample_required
+WHERE model_status IN ('INSUFFICIENT_SAMPLE','TEMPORAL_UNSAFE','NO_MODEL')
   AND (p_local_gana IS NOT NULL OR p_empate IS NOT NULL OR p_visita_gana IS NOT NULL
-       OR p_btts_yes IS NOT NULL OR p_btts_no IS NOT NULL OR p_over IS NOT NULL OR p_under IS NOT NULL);
+       OR p_btts_yes IS NOT NULL OR p_btts_no IS NOT NULL OR linea_ou IS NOT NULL
+       OR p_over IS NOT NULL OR p_under IS NOT NULL);
 
 -- 6) Dependencias prohibidas en el NUEVO core de fútbol. Todos los booleanos deben ser FALSE.
 SELECT
@@ -73,9 +77,7 @@ SELECT
 FROM d;
 
 -- 8) Ninguna fuente USADA puede violar data_asof <= decision_time.
--- CERO filas. Los paréntesis son intencionales: SQL evalúa AND antes que OR.
--- `SAFE_CURRENT` NO se acepta: una lectura "actual" sin as_of demostrable no satisface
--- el contrato temporal. STATIC queda exento de timestamp por definición.
+-- CERO filas. STATIC queda exento de timestamp por definición.
 WITH ev AS (
   SELECT a.espn_event_id FROM public.agenda_espn a
   WHERE a.deporte='soccer' AND a.fecha BETWEEN now() AND now()+interval '48 hours'
@@ -100,10 +102,7 @@ WHERE (coalesce((item->>'used_in_model')::boolean,false) OR coalesce((item->>'us
     )
   );
 
--- 8b) Contrato de procedencia/completitud del manifest.
--- Toda fila declara feature/source/provenance/role/temporal_status/decision_time.
--- Si falta el dato: missing_reason obligatorio. Si existe y no es STATIC: as_of y
--- freshness_seconds obligatorios. CERO filas.
+-- 8b) Contrato de procedencia/completitud del manifest. CERO filas.
 WITH ev AS (
   SELECT a.espn_event_id FROM public.agenda_espn a
   WHERE a.deporte='soccer' AND a.fecha BETWEEN now() AND now()+interval '48 hours'
@@ -130,9 +129,7 @@ WHERE nullif(item->>'feature','') IS NULL
         AND (nullif(item->>'as_of','') IS NULL OR item->>'freshness_seconds' IS NULL)
       );
 
--- 8c) Separación dura MODEL_ACTIVE vs CONTEXT_ONLY / AVAILABLE_NOT_USED.
--- Sólo MODEL_ACTIVE puede alterar P_RETO. CONTEXT_ONLY y AVAILABLE_NOT_USED pueden
--- enriquecer dossier/manifest, pero nunca estar marcados used_in_model=true. CERO filas.
+-- 8c) Separación dura MODEL_ACTIVE vs CONTEXT_ONLY / AVAILABLE_NOT_USED. CERO filas.
 WITH ev AS (
   SELECT a.espn_event_id FROM public.agenda_espn a
   WHERE a.deporte='soccer' AND a.fecha BETWEEN now() AND now()+interval '48 hours'
@@ -147,7 +144,7 @@ FROM m
 WHERE item->>'role' NOT IN ('MODEL_ACTIVE','CONTEXT_ONLY','AVAILABLE_NOT_USED')
    OR (coalesce((item->>'used_in_model')::boolean,false) AND item->>'role' <> 'MODEL_ACTIVE');
 
--- 9) P_RETO del dossier = matriz exacta. CERO filas.
+-- 9) P_RETO del dossier = matriz exacta. CERO filas, incluyendo NULL fail-closed.
 WITH ev AS (
   SELECT a.espn_event_id FROM public.agenda_espn a
   WHERE a.deporte='soccer' AND a.fecha BETWEEN now() AND now()+interval '48 hours'
@@ -195,6 +192,7 @@ WHERE a.deporte='soccer' AND (
 ORDER BY a.fecha DESC;
 
 -- PASS DE BACKEND SOCCER exige:
--- temporal violations=0; invariant violations=0; forbidden deps=false; dossier errors=0;
--- manifest contract violations=0; role violations=0; P mismatch=0; todos los missing
--- clasificados; y smoke de latencia por separado.
+-- matrix_rows=event_universe; missing_matrix_row=0; temporal violations=0;
+-- invariant violations=0; forbidden deps=false; dossier errors=0; manifest contract
+-- violations=0; role violations=0; P mismatch=0; fail-closed states publish zero P;
+-- todos los missing clasificados; y smoke de latencia por separado.
