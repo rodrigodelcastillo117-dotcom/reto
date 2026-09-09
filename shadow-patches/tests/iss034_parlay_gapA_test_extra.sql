@@ -19,7 +19,7 @@ values ('00000000-0000-0000-0000-0000000034c3','tester', now(), 100, 4.0, 'pendi
 update public.parlays set updated_at=now() where id='00000000-0000-0000-0000-0000000034c3';
 do $$ declare r text; begin
   select resultado into r from public.parlays where id='00000000-0000-0000-0000-0000000034c3';
-  if r<>'pendiente' then raise exception 'FAIL C3: push+pendiente cerro el parlay (r=%)', r; end if;
+  if r is distinct from 'pendiente' then raise exception 'FAIL C3: push+pendiente cerro el parlay (r=%)', r; end if;
   raise notice 'PASS C3: push + pendiente -> parlay pendiente';
 end $$;
 
@@ -54,7 +54,7 @@ values ('00000000-0000-0000-0000-0000000034c5','tester', now(), 100, 3.0, 'pendi
 update public.parlays set updated_at=now() where id='00000000-0000-0000-0000-0000000034c5';
 do $$ declare r text; begin
   select resultado into r from public.parlays where id='00000000-0000-0000-0000-0000000034c5';
-  if r<>'perdido' then raise exception 'FAIL C5a: pata FINAL perdida no cerro (r=%)', r; end if;
+  if r is distinct from 'perdido' then raise exception 'FAIL C5a: pata FINAL perdida no cerro (r=%)', r; end if;
   raise notice 'PASS C5a: pata FINAL perdida -> perdido';
 end $$;
 -- proveedor revierte a live
@@ -63,7 +63,7 @@ update public.parlays set updated_at=now() where id='00000000-0000-0000-0000-000
 do $$ declare r text; begin
   select resultado into r from public.parlays where id='00000000-0000-0000-0000-0000000034c5';
   -- protect solo actua desde estado no-graded; ya graded permanece (no doble-cierre)
-  if r<>'perdido' then raise exception 'FAIL C5b: cierre no estable tras revert (r=%)', r; end if;
+  if r is distinct from 'perdido' then raise exception 'FAIL C5b: cierre no estable tras revert (r=%)', r; end if;
   raise notice 'PASS C5b: cierre estable, sin doble-cierre irreversible';
 end $$;
 

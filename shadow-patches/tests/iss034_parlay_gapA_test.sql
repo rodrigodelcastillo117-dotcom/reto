@@ -28,6 +28,7 @@ update public.parlays set updated_at=now() where id='00000000-0000-0000-0000-000
 
 do $$ declare r text; begin
   select resultado into r from public.parlays where id='00000000-0000-0000-0000-0000000034a1';
+  if not found then raise exception 'FAIL C1 setup: fixture parlay no existe (zero-row guard)'; end if;
   if r='perdido' then raise exception 'FAIL C1: parlay cerrado como perdido con pata LIVE (no final)'; end if;
   raise notice 'PASS C1: pata LIVE perdida no cierra el parlay -> resultado=%', r;
 end $$;
@@ -38,7 +39,8 @@ update public.parlays set updated_at=now() where id='00000000-0000-0000-0000-000
 
 do $$ declare r text; g numeric; begin
   select resultado, ganancia_neta into r,g from public.parlays where id='00000000-0000-0000-0000-0000000034a1';
-  if r<>'perdido' then raise exception 'FAIL C2: pata FINAL perdida no cerró el parlay (r=%)', r; end if;
+  if not found then raise exception 'FAIL C2 setup: fixture parlay no existe (zero-row guard)'; end if;
+  if r is distinct from 'perdido' then raise exception 'FAIL C2: pata FINAL perdida no cerró el parlay (r=%)', r; end if;
   if g<>-100 then raise exception 'FAIL C2: ganancia_neta esperada -100, fue %', g; end if;
   raise notice 'PASS C2: pata FINAL perdida cierra el parlay -> % (ganancia %)', r, g;
 end $$;
