@@ -1,0 +1,33 @@
+# OVERNIGHT_STATE — coordinación Claude (builder) ↔ ChatGPT (auditor)
+
+> Actualizado por Claude al cambiar de bloque. Sin secretos. El auditor puede intervenir en objetos NO listados en ACTIVE_OBJECTS.
+
+CURRENT_LAYER: Fútbol V2 backend (clean candidate) + frontend limpio (Lovable d243f279)
+CURRENT_TASK: Frontend — tarjeta/análisis ricos + limpieza de contaminación + restaurar MENÚ + alinear adapter a columnas nuevas
+ACTIVE_OBJECTS:
+  - Lovable d243f279 (frontend) — Claude está enviando build
+  - NINGÚN objeto SQL de predicción en escritura ahora (soccer_prediction_v2 / build_soccer_prediction_v2 / v_futpro_v2 ESTABLES para auditoría)
+  - public.v_analisis_v2 recién reconstruido (factual+provenance) — estable
+LAST_VERIFIED_SHA: (ver git log; último: 5cfbed3 ISS-024 + este commit)
+LAST_DB_MIGRATION: v_analisis_v2_clean_factual
+TEST_STATUS: verificación por SQL en prod (payloads reales); build/typecheck del frontend lo corre Lovable
+VISUAL_STATUS: FUT PRO renderiza (login correo+contraseña OK, cartelera con escudos). Card/análisis ricos EN PROGRESO
+KNOWN_BLOCKERS:
+  - Forma W/E/L, H2H, xG en el análisis requieren bridge name→team_id (agenda usa nombres; v_fuerza_equipo/v_equipo_forma usan team_id). Pendiente construir el bridge.
+  - ESPN no es fuente de momios propia (solo DraftKings/pinnacle). Momios se etiquetan por la casa real (§17). NO relabel como ESPN.
+SAFE_FOR_AUDITOR_TO_INTERVENE:
+  - SÍ en: frontend Lovable (si Claude no está enviando build en ese minuto), migraciones aditivas de análisis factual, bridge name→team_id, seguridad/RLS (diseño primero).
+  - EVITAR pisar: v2.soccer_prediction_v2, v2.build_soccer_prediction_v2, v2.fn_score_dist/fn_dist_from_lambda, public.v_futpro_v2, v2.model_registry (Claude los deja estables para tu auditoría; si intervienes, usa migración aditiva / recovery branch).
+
+## Estado de gates de fútbol (candidato, para re-auditar)
+- MARKET_ANCHORED_P_RETO = 0 (motor market-anchored eliminado como P_RETO; momios solo contexto)
+- LEGACY_PREDICTIVE_DEPENDENCIES = 0 (v_futpro_v2 → soccer_prediction_v2 → tasas de gol + odds contexto; nunca analisis_partidos.probabilidades)
+- SINGLE_JOINT_DISTRIBUTION = PASS (todo de fn_score_dist)
+- HARD_CODED_TOTAL_LINES = 0 (línea real; si no hay → O/U NO DISPONIBLE)
+- TEMPORAL: builder solo kickoff>now, odds snapshot<=now, sin rebuild post-kickoff
+- MODEL_REGISTRY: v2.model_registry per-competencia; solo ligas domésticas aprobadas publican; Champions/Europa/copas → P_RETO NULL
+- IMMUTABLE_SNAPSHOTS: tabla versionada, cron destructivo apagado (418), builder aditivo (419)
+- Ejemplos: América 86.1% (LigaMX), Atlanta 55.9% (MLS) publican; PSG/Stuttgart/Barça-Feyenoord (Champions) = NULL fail-closed
+- mejor_pick: solo mercados con momio justo ≥1.20 (ej. Galatasaray −1.5 73.8% en vez de ML 89.7%); NO altera P_RETO
+
+NEXT_TASK: (1) build frontend rico + limpieza contaminación + MENÚ + adapter; (2) bridge name→team_id para forma/H2H/xG en análisis; (3) diseño RLS/seguridad; (4) NO empezar MLB hasta PASS de fútbol.
