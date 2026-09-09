@@ -31,3 +31,11 @@ SAFE_FOR_AUDITOR_TO_INTERVENE:
 - mejor_pick: solo mercados con momio justo ≥1.20 (ej. Galatasaray −1.5 73.8% en vez de ML 89.7%); NO altera P_RETO
 
 NEXT_TASK: (1) build frontend rico + limpieza contaminación + MENÚ + adapter; (2) bridge name→team_id para forma/H2H/xG en análisis; (3) diseño RLS/seguridad; (4) NO empezar MLB hasta PASS de fútbol.
+
+## Ciclo 1 — progreso (autónomo)
+- v_analisis_v2 enriquecido: forma W/E/L (normalizada de v_fuerza_equipo.forma_5 vía bridge escudos_partido→team_id) + ataque/defensa + gf/gc por partido + posición + clima/venue + alineaciones. Provenance por bloque.
+- public.v_reto13m_daily: mejor pick por deporte por día (probability-first, momio≥1.20, es_mejor_del_dia). Cross-sport UNION-ready (hoy solo FUT publica).
+- Frontend Lovable: build integral aterrizó (commit 8ee9834a; login solo correo+contraseña). Build siguiente pendiente para wire de RETO 13M + forma.
+- SELF-CHECK gates fútbol (última foto/evento, 116 READY): market_as_preto=0, unapproved_with_preto=0, temporal_violations=0, hardcoded_lines=0, unsafe_sample=0, crossleague_published=0. TODO PASS.
+LAST_DB_MIGRATION: v_reto13m_daily_best_pick (+ v_analisis_v2_add_forma_fuerza)
+NEXT_TASK: wire frontend RETO 13M tab (v_reto13m_daily) + forma en análisis; diseño RLS; luego esperar PASS del auditor antes de MLB.
