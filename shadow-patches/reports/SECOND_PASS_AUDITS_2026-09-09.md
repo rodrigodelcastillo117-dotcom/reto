@@ -39,3 +39,25 @@ Auditados los tests staged:
 ## Notas
 - Determinismo (§69): fn_score_dist sin RNG; replays A==B; calcular_bankroll_actual STABLE.
 - Todos los chequeos read-only; ninguna mutación de prod.
+
+## PASS 4 — Governance literals / registry (§47) · REGISTRY_GATE = STAGED_ONLY (limpio)
+Auditado iss033: los umbrales de gobernanza son **registry-driven** — el builder usa
+`cfg.window_days`, `cfg.sample_floor`, `cfg.feature_version`, `cfg.calibration_status`
+(de `v2.model_config`), no literales dispersos. Únicos literales:
+- VALUES del seed de `v2.model_config` (8, 540, 'dc-2026.09.1', 'UNVALIDATED') — correcto:
+  la gobernanza vive EN la tabla registry, ese es el punto de §47.
+- `p_window_days int default 540` — sólo default de argumento; la llamada real pasa
+  `cfg.window_days`. Fail-safe.
+- selector `where model_version='dc-2026.09.1'` — nombra qué modelo construir (aceptable).
+Nit menor (no defecto, no leak): `model_config.publish_authorized` existe pero NO se
+consulta; la puerta de publicación real es per-liga `model_registry.approved` (más estricta).
+Recomendación de cutover: o se enforce `publish_authorized` como AND global, o se elimina
+la columna para no confundir gobernanza. No bloquea.
+
+## PASS 9 — Consistencia de report / SHA
+- El closure report no hardcodea un SHA (referencia `git rev-parse HEAD`) → no queda stale.
+- Gate matrix del closure actualizada: CROSS_LEAGUE_REPLAY_GATE FAIL→STAGED_ONLY (iss037),
+  MARKET_CONTAMINATION_GATE=PASS añadido.
+- DAG incluye iss037 (paso 2b). Runbook y DAG mutuamente consistentes en orden y rollback.
+- Todos los artefactos citados en el closure existen en shadow-patches/ (iss027..iss037,
+  iss023; tests; reports). Sin referencias colgantes.
