@@ -55,3 +55,10 @@ ALTER TABLE v2.team_logo ENABLE ROW LEVEL SECURITY;
 
 ## Orden bloqueado
 FUT (este candidato) → auditoría externa → MLB → auditoría → NFL → auditoría → Fantasy. **No se toca MLB hasta que el auditor apruebe SOCCER_V2_BACKEND_CLEAN_CANDIDATE.**
+
+## Actualización — motor dual (misma liga vs cross-liga anclado al mercado)
+El fail-close cross-liga dejaba en blanco PSG/Barça/Champions (el usuario: "no toma en cuenta nada"). Corregido con motor dual, ambos sobre UNA distribución:
+- **Misma liga + muestra≥8**: Dixon-Coles desde tasas de goles reales (`fn_score_dist`) → READY_UNVALIDATED.
+- **Cross-liga o sin datos propios, con momios**: `fn_market_anchored_dist` — de-vig del 1X2 del libro + línea de goles real → resuelve λ_home/λ_away (bisección) → misma distribución conjunta → READY_NO_EDGE ("estimación alineada al mercado", honesto; no se disfraza de ventaja).
+- Resultado verificado: PSG 92.3%, Barcelona 89.1%, Stuttgart 75.3% (antes 41.7% mal), Arsenal 57.6% sobre Napoli (antes Napoli favorito mal), coherente con momios ESPN. Vista publica READY_UNVALIDATED y READY_NO_EDGE.
+- Pendiente: mostrar en la tarjeta/sheet los factuales ricos (forma W/E/L, GF/GC por partido, xG, H2H) desde vistas factuales limpias; recalibración; estado live/final.
