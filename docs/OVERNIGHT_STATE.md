@@ -90,3 +90,10 @@ NEXT_TASK: verificar que aterricen los 3 builds de Lovable (top-3 marcador, nav 
 - Verificado: St Johnstone-Celtic xG home 1.11/1.29 (m8) vs Celtic 1.79/0.83 (m5), H2H 1 previo. Coherente.
 - Enviado build a Lovable para renderizar los 3 bloques en el sheet (colapsables, fail-closed, sin conclusiones).
 - Migración: v_analisis_v2_add_xg_h2h_tendencias. NO toca motor/predicción; es análisis factual aditivo.
+
+## Ciclo 4 — check-in autónomo (todo verde, sin regresión)
+- Matriz auditor: 9 Champions NO_VALIDADO, head 8e28ed1 sin cambios → NO convergencia (reto_dc_v2 único cerebro).
+- Gates fútbol (116 READY): crossleague_published=0, hardcoded_over=0, unsafe_sample=0, futpro_doble_oportunidad=0. PASS.
+- RETO 13M: 116 picks, 0 fuera de ML/BTTS/Over2.5.
+- App Lovable sana (commit c6a6fb14, sin error); build análisis rico (xg/h2h/tendencias) aterrizó.
+NEXT_TASK: seguir esperando hardening de matriz para converger; verificar render de xg/h2h/tendencias en el sheet; Fase 1 inventario RLS. NO MLB hasta PASS auditor.
