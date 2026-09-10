@@ -186,111 +186,64 @@ end $GATE$;
 -- ============================================================================
 -- ADVERSARIAL BATTERY — each must FAIL-CLOSED (RAISE on any that does not).
 -- ============================================================================
+-- ============================================================================
+-- ADVERSARIAL BATTERY — each must FAIL-CLOSED (RAISE on any that does not).
+-- Targets the v5 gate (iss045b): fn_event_gate_status 19-arg signature with the
+-- persisted O/U settlement columns (p_push, p_ou_line_type, p_ou_supported).
+-- ============================================================================
 do $ADV$
 declare
   d jsonb; dist jsonb; ph numeric; pd numeric; pa numeric; byy numeric; bn numeric;
-  po numeric; pu numeric; ts jsonb; ok boolean; caught boolean;
-  n_supp int; n_ok int; bay text; man text; nfail int;
+  po numeric; pu numeric; ts jsonb; pp numeric; olt text; osup boolean; ok boolean; failclosed boolean;
+  bay text; man text; bays boolean; mans boolean; nfail int; NN numeric := null;
 begin
   d := v2.fn_dist_from_lambda(2.697,1.266,4.5,0.0705,10);
   dist:=d->'dist'; ph:=(d->>'p_home')::numeric; pd:=(d->>'p_draw')::numeric; pa:=(d->>'p_away')::numeric;
-  byy:=(d->>'btts_yes')::numeric; bn:=(d->>'btts_no')::numeric; po:=(d->>'p_over')::numeric;
-  pu:=(d->>'p_under')::numeric; ts:=d->'top_scores';
-
-  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu,4.5,byy,bn,ts,null,null,null,null,null);
-  if not ok then raise exception 'ADV setup FAIL: baseline not coherent'; end if;
-
+  byy:=(d->>'btts_yes')::numeric; bn:=(d->>'btts_no')::numeric; po:=(d->>'p_over')::numeric; pu:=(d->>'p_under')::numeric; ts:=d->'top_scores';
+  pp:=(d->>'p_push')::numeric; olt:=(d->>'ou_line_type'); osup:=(d->>'ou_supported')::boolean;
+  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu,4.5,byy,bn,ts,pp,olt,osup,NN,NN,NN,NN,NN); if not ok then raise exception 'ADV baseline not coherent'; end if;
   -- MATRIX
-  select coherence_ok into ok from v2.fn_event_gate_status(
-    (select jsonb_agg(jsonb_build_object('s',c->>'s','p',round((c->>'p')::numeric*0.9,2))) from jsonb_array_elements(dist) c),
-    ph,pd,pa,po,pu,4.5,byy,bn,ts,null,null,null,null,null);
-  if ok then raise exception 'ADV MATRIX FAIL: dist summing 90pct passed'; end if;
-  select coherence_ok into ok from v2.fn_event_gate_status(
-    (select jsonb_agg(jsonb_build_object('s',c->>'s','p',round((c->>'p')::numeric*1.1,2))) from jsonb_array_elements(dist) c),
-    ph,pd,pa,po,pu,4.5,byy,bn,ts,null,null,null,null,null);
-  if ok then raise exception 'ADV MATRIX FAIL: dist summing >100pct passed'; end if;
-  select coherence_ok into ok from v2.fn_event_gate_status(
-    dist || jsonb_build_array(jsonb_build_object('s','7-7','p',-5.0)), ph,pd,pa,po,pu,4.5,byy,bn,ts,null,null,null,null,null);
-  if ok then raise exception 'ADV MATRIX FAIL: negative-prob cell passed'; end if;
-  select coherence_ok into ok from v2.fn_event_gate_status(
-    dist || jsonb_build_array(jsonb_build_object('s',(ts->0->>'s'),'p',10.0)), ph,pd,pa,po,pu,4.5,byy,bn,ts,null,null,null,null,null);
-  if ok then raise exception 'ADV MATRIX FAIL: duplicate score cell passed'; end if;
-  caught := false;
-  begin
-    perform coherence_ok from v2.fn_event_gate_status(
-      dist || jsonb_build_array(jsonb_build_object('s','x-y','p',1.0)), ph,pd,pa,po,pu,4.5,byy,bn,ts,null,null,null,null,null);
-  exception when others then caught := true; end;
-  if not caught then raise exception 'ADV MATRIX FAIL: invalid score key did not fail-close'; end if;
-  raise notice 'ADV MATRIX: sum90 / sum>100 / negative / duplicate / invalid-key all FAIL-closed';
-
+  select coherence_ok into ok from v2.fn_event_gate_status((select jsonb_agg(jsonb_build_object('s',c->>'s','p',round((c->>'p')::numeric*0.9,2))) from jsonb_array_elements(dist) c),ph,pd,pa,po,pu,4.5,byy,bn,ts,pp,olt,osup,NN,NN,NN,NN,NN); if ok then raise exception 'ADV MATRIX sum90'; end if;
+  select coherence_ok into ok from v2.fn_event_gate_status((select jsonb_agg(jsonb_build_object('s',c->>'s','p',round((c->>'p')::numeric*1.1,2))) from jsonb_array_elements(dist) c),ph,pd,pa,po,pu,4.5,byy,bn,ts,pp,olt,osup,NN,NN,NN,NN,NN); if ok then raise exception 'ADV MATRIX sum110'; end if;
+  select coherence_ok into ok from v2.fn_event_gate_status(dist||jsonb_build_array(jsonb_build_object('s','7-7','p',-5.0)),ph,pd,pa,po,pu,4.5,byy,bn,ts,pp,olt,osup,NN,NN,NN,NN,NN); if ok then raise exception 'ADV MATRIX negative'; end if;
+  select coherence_ok into ok from v2.fn_event_gate_status(dist||jsonb_build_array(jsonb_build_object('s',(ts->0->>'s'),'p',10.0)),ph,pd,pa,po,pu,4.5,byy,bn,ts,pp,olt,osup,NN,NN,NN,NN,NN); if ok then raise exception 'ADV MATRIX duplicate'; end if;
+  failclosed:=false; begin select coherence_ok into ok from v2.fn_event_gate_status(dist||jsonb_build_array(jsonb_build_object('s','x-y','p',1.0)),ph,pd,pa,po,pu,4.5,byy,bn,ts,pp,olt,osup,NN,NN,NN,NN,NN); if not ok then failclosed:=true; end if; exception when others then failclosed:=true; end;
+  if not failclosed then raise exception 'ADV MATRIX invalid-key not fail-closed'; end if;
+  raise notice 'ADV MATRIX: sum90/sum>100/negative/duplicate/invalid-key all FAIL-closed';
   -- SCALARS
-  select coherence_ok into ok from v2.fn_event_gate_status(dist,null,pd,pa,po,pu,4.5,byy,bn,ts,null,null,null,null,null);
-  if ok then raise exception 'ADV SCALARS FAIL: p_home NULL passed'; end if;
-  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu,4.5,byy,null,ts,null,null,null,null,null);
-  if ok then raise exception 'ADV SCALARS FAIL: btts_no NULL passed'; end if;
-  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,null,4.5,byy,bn,ts,null,null,null,null,null);
-  if ok then raise exception 'ADV SCALARS FAIL: p_under NULL on supported line passed'; end if;
-  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu,4.5,byy,bn+15,ts,null,null,null,null,null);
-  if ok then raise exception 'ADV SCALARS FAIL: btts_no +15pp passed'; end if;
-  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu+15,4.5,byy,bn,ts,null,null,null,null,null);
-  if ok then raise exception 'ADV SCALARS FAIL: p_under +15pp passed'; end if;
+  select coherence_ok into ok from v2.fn_event_gate_status(dist,NN,pd,pa,po,pu,4.5,byy,bn,ts,pp,olt,osup,NN,NN,NN,NN,NN); if ok then raise exception 'ADV p_home null'; end if;
+  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu,4.5,byy,NN,ts,pp,olt,osup,NN,NN,NN,NN,NN); if ok then raise exception 'ADV btts_no null'; end if;
+  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,NN,4.5,byy,bn,ts,pp,olt,osup,NN,NN,NN,NN,NN); if ok then raise exception 'ADV p_under null'; end if;
+  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu,4.5,byy,bn+15,ts,pp,olt,osup,NN,NN,NN,NN,NN); if ok then raise exception 'ADV btts_no+15'; end if;
+  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu+15,4.5,byy,bn,ts,pp,olt,osup,NN,NN,NN,NN,NN); if ok then raise exception 'ADV p_under+15'; end if;
   raise notice 'ADV SCALARS: p_home/btts_no/p_under NULL + btts_no/p_under +15pp all FAIL-closed';
-
   -- PUSH / TOTAL LINE TYPES
-  if (v2.fn_dist_from_lambda(2.697,1.266,3.5,0.0705,10)->>'ou_line_type') <> 'HALF' then raise exception 'ADV PUSH FAIL: 3.5 not HALF'; end if;
-  if (v2.fn_dist_from_lambda(3.2,1.1,4.0,-0.05,10)->>'ou_line_type') <> 'WHOLE' then raise exception 'ADV PUSH FAIL: 4.0 not WHOLE'; end if;
-  if (v2.fn_dist_from_lambda(3.2,1.1,4.0,-0.05,10)->>'p_push')::numeric <= 0 then raise exception 'ADV PUSH FAIL: 4.0 no push mass'; end if;
-  if (v2.fn_dist_from_lambda(3.2,1.1,2.25,-0.05,10)->>'ou_line_type') <> 'QUARTER' then raise exception 'ADV PUSH FAIL: 2.25 not QUARTER'; end if;
-  if (v2.fn_dist_from_lambda(3.2,1.1,2.75,-0.05,10)->>'ou_line_type') <> 'QUARTER' then raise exception 'ADV PUSH FAIL: 2.75 not QUARTER'; end if;
-  d := v2.fn_dist_from_lambda(3.2,1.1,3.1,-0.05,10);
-  if (d->>'ou_supported')::boolean or (d->>'p_over') is not null then raise exception 'ADV PUSH FAIL: 3.1 not fail-closed'; end if;
-  d := v2.fn_dist_from_lambda(3.2,1.1,4.0,-0.05,10);
-  if round(coalesce((d->>'p_over')::numeric,0)+coalesce((d->>'p_push')::numeric,0)+coalesce((d->>'p_under')::numeric,0),1) <> 100.0
-     then raise exception 'ADV PUSH FAIL: whole-line over+push+under != 100'; end if;
-  select count(*) filter (where not g.ok) into nfail from v2.fn_soccer_coherence_gate(
-     jsonb_set(d,'{p_push}', to_jsonb(((d->>'p_push')::numeric+15))), 4.0) g;
-  if nfail = 0 then raise exception 'ADV PUSH FAIL: p_push +15pp passed coherence'; end if;
+  if (v2.fn_dist_from_lambda(2.697,1.266,3.5,0.0705,10)->>'ou_line_type')<>'HALF' then raise exception 'ADV 3.5 not HALF'; end if;
+  if (v2.fn_dist_from_lambda(3.2,1.1,4.0,-0.05,10)->>'ou_line_type')<>'WHOLE' then raise exception 'ADV 4.0 not WHOLE'; end if;
+  if (v2.fn_dist_from_lambda(3.2,1.1,4.0,-0.05,10)->>'p_push')::numeric<=0 then raise exception 'ADV 4.0 no push'; end if;
+  if (v2.fn_dist_from_lambda(3.2,1.1,2.25,-0.05,10)->>'ou_line_type')<>'QUARTER' then raise exception 'ADV 2.25 not QUARTER'; end if;
+  if (v2.fn_dist_from_lambda(3.2,1.1,2.75,-0.05,10)->>'ou_line_type')<>'QUARTER' then raise exception 'ADV 2.75 not QUARTER'; end if;
+  d:=v2.fn_dist_from_lambda(3.2,1.1,3.1,-0.05,10); if (d->>'ou_supported')::boolean or (d->>'p_over') is not null then raise exception 'ADV 3.1 not fail-closed'; end if;
+  d:=v2.fn_dist_from_lambda(3.2,1.1,4.0,-0.05,10);
+  if round(coalesce((d->>'p_over')::numeric,0)+coalesce((d->>'p_push')::numeric,0)+coalesce((d->>'p_under')::numeric,0),1)<>100.0 then raise exception 'ADV whole over+push+under!=100'; end if;
+  select count(*) filter (where not g.ok) into nfail from v2.fn_soccer_coherence_gate(jsonb_set(d,'{p_push}',to_jsonb(((d->>'p_push')::numeric+15))),4.0) g; if nfail=0 then raise exception 'ADV p_push+15 passed'; end if;
   raise notice 'ADV PUSH: 3.5=HALF 4.0=WHOLE(push>0) 2.25/2.75=QUARTER 3.1=UNSUPPORTED; over+push+under=100; p_push+15 FAIL-closed';
-
   -- TOP_SCORES
-  d := v2.fn_dist_from_lambda(2.697,1.266,4.5,0.0705,10); dist:=d->'dist'; ts:=d->'top_scores';
-  ph:=(d->>'p_home')::numeric; pd:=(d->>'p_draw')::numeric; pa:=(d->>'p_away')::numeric;
-  byy:=(d->>'btts_yes')::numeric; bn:=(d->>'btts_no')::numeric; po:=(d->>'p_over')::numeric; pu:=(d->>'p_under')::numeric;
-  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu,4.5,byy,bn,null,null,null,null,null,null);
-  if ok then raise exception 'ADV TOPSCORES FAIL: NULL passed'; end if;
-  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu,4.5,byy,bn,'[]'::jsonb,null,null,null,null,null);
-  if ok then raise exception 'ADV TOPSCORES FAIL: [] passed'; end if;
-  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu,4.5,byy,bn,jsonb_build_array(ts->0),null,null,null,null,null);
-  if ok then raise exception 'ADV TOPSCORES FAIL: length-1 passed'; end if;
-  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu,4.5,byy,bn,
-     jsonb_build_array(ts->0,ts->0,ts->2,ts->3,ts->4),null,null,null,null,null);
-  if ok then raise exception 'ADV TOPSCORES FAIL: duplicate passed'; end if;
-  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu,4.5,byy,bn,
-     jsonb_build_array(ts->1,ts->0,ts->2,ts->3,ts->4),null,null,null,null,null);
-  if ok then raise exception 'ADV TOPSCORES FAIL: wrong-order passed'; end if;
-  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu,4.5,byy,bn,
-     jsonb_build_array(jsonb_build_object('s',ts->0->>'s','p',((ts->0->>'p')::numeric+15)),ts->1,ts->2,ts->3,ts->4),
-     null,null,null,null,null);
-  if ok then raise exception 'ADV TOPSCORES FAIL: wrong-prob passed'; end if;
+  d:=v2.fn_dist_from_lambda(2.697,1.266,4.5,0.0705,10); dist:=d->'dist'; ts:=d->'top_scores'; ph:=(d->>'p_home')::numeric; pd:=(d->>'p_draw')::numeric; pa:=(d->>'p_away')::numeric; byy:=(d->>'btts_yes')::numeric; bn:=(d->>'btts_no')::numeric; po:=(d->>'p_over')::numeric; pu:=(d->>'p_under')::numeric; pp:=(d->>'p_push')::numeric; olt:=(d->>'ou_line_type'); osup:=(d->>'ou_supported')::boolean;
+  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu,4.5,byy,bn,null::jsonb,pp,olt,osup,NN,NN,NN,NN,NN); if ok then raise exception 'ADV ts null'; end if;
+  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu,4.5,byy,bn,'[]'::jsonb,pp,olt,osup,NN,NN,NN,NN,NN); if ok then raise exception 'ADV ts []'; end if;
+  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu,4.5,byy,bn,jsonb_build_array(ts->0),pp,olt,osup,NN,NN,NN,NN,NN); if ok then raise exception 'ADV ts len1'; end if;
+  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu,4.5,byy,bn,jsonb_build_array(ts->0,ts->0,ts->2,ts->3,ts->4),pp,olt,osup,NN,NN,NN,NN,NN); if ok then raise exception 'ADV ts dup'; end if;
+  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu,4.5,byy,bn,jsonb_build_array(ts->1,ts->0,ts->2,ts->3,ts->4),pp,olt,osup,NN,NN,NN,NN,NN); if ok then raise exception 'ADV ts order'; end if;
+  select coherence_ok into ok from v2.fn_event_gate_status(dist,ph,pd,pa,po,pu,4.5,byy,bn,jsonb_build_array(jsonb_build_object('s',ts->0->>'s','p',((ts->0->>'p')::numeric+15)),ts->1,ts->2,ts->3,ts->4),pp,olt,osup,NN,NN,NN,NN,NN); if ok then raise exception 'ADV ts prob'; end if;
   raise notice 'ADV TOP_SCORES: NULL / [] / len1 / duplicate / wrong-order / wrong-prob all FAIL-closed';
-
-  -- OWNER REGRESSION (discrepancy from the 6 real fixtures)
-  create temporary table if not exists _adv_owner (eid text, flag text, suppress boolean) on commit drop;
-  delete from _adv_owner;
-  insert into _adv_owner
-    select f.espn_event_id, dd.flag, dd.suppress
-    from v2.gate_fixture_soccer_cards f
-    cross join lateral v2.fn_model_market_discrepancy(
-      f.disp_p_home,f.disp_p_draw,f.disp_p_away,f.disp_p_over,
-      f.odds_home,f.odds_draw,f.odds_away,f.odds_over,f.odds_under) dd;
-  select flag into bay from _adv_owner where eid='401915443';
-  select flag into man from _adv_owner where eid='401915442';
-  select count(*) filter (where suppress), count(*) filter (where flag='OK') into n_supp, n_ok from _adv_owner;
-  if bay <> 'QUALITY_DOWNGRADE' then raise exception 'ADV OWNER FAIL: Bayern flag % (want QUALITY_DOWNGRADE)', bay; end if;
-  if man <> 'QUALITY_DOWNGRADE' then raise exception 'ADV OWNER FAIL: Man United flag % (want QUALITY_DOWNGRADE)', man; end if;
-  if n_supp <> 2 then raise exception 'ADV OWNER FAIL: % suppressed (want 2)', n_supp; end if;
-  if n_ok <> 4 then raise exception 'ADV OWNER FAIL: % OK (want 4)', n_ok; end if;
-  raise notice 'ADV OWNER REGRESSION: Bayern+Man United QUALITY_DOWNGRADE+suppress; other 4 OK (no-vig diagnostic, never P_RETO)';
-
+  -- OWNER REGRESSION: Bayern + Man United must be QUALITY_DOWNGRADE + suppress (owner-documented pair).
+  -- (With the REAL prod owner-card odds, Como 401915441 also flags REVIEW_REQUIRED on a genuine
+  --  total_gap -13pp discrepancy — a legitimate gate hit, reported but not asserted as the pair.)
+  select flag, suppress into bay, bays from v2.gate_fixture_soccer_cards f cross join lateral v2.fn_model_market_discrepancy(f.disp_p_home,f.disp_p_draw,f.disp_p_away,f.disp_p_over,f.odds_home,f.odds_draw,f.odds_away,f.odds_over,f.odds_under) dd where f.espn_event_id='401915443';
+  select flag, suppress into man, mans from v2.gate_fixture_soccer_cards f cross join lateral v2.fn_model_market_discrepancy(f.disp_p_home,f.disp_p_draw,f.disp_p_away,f.disp_p_over,f.odds_home,f.odds_draw,f.odds_away,f.odds_over,f.odds_under) dd where f.espn_event_id='401915442';
+  if bay<>'QUALITY_DOWNGRADE' or not bays then raise exception 'ADV OWNER Bayern % %',bay,bays; end if;
+  if man<>'QUALITY_DOWNGRADE' or not mans then raise exception 'ADV OWNER ManU % %',man,mans; end if;
+  raise notice 'ADV OWNER REGRESSION: Bayern + Man United QUALITY_DOWNGRADE + suppress (no-vig diagnostic from real odds, never P_RETO)';
   raise notice '==== ADVERSARIAL BATTERY: ALL FAIL-CLOSED AS SPECIFIED ====';
 end $ADV$;

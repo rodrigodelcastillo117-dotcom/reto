@@ -96,6 +96,18 @@ histórico por dependencias verificadas de objeto/vista (no de runtime):
   antes de iss039 porque referencia fn_resolve_competition/fn_competition_active_mapping
   sólo en el cuerpo plpgsql (resolución en runtime), no al CREATE.
 
+### iss045b (GATE v5 HARDENING) — paso 20, DESPUÉS de iss036
+- El branch recibió (aplicado por el auditor como migración `chatgpt_soccer_gate_v5_hardening`)
+  una versión endurecida de `v2.fn_event_gate_status` (firma de 19 args: agrega p_push,
+  p_ou_line_type, p_ou_supported tras p_top_scores) que valida estructura de matriz
+  (score key/rango/prob/dist_sum=100/duplicados), 1X2/BTTS rango+suma=100, top_scores==5 +
+  key/dup/orden/prob, y O/U line-type/supported match + p_over/p_push/p_under rango+suma=100.
+- Se capturó VERBATIM del objeto vivo a `shadow-patches/prepared/iss045b_gate_v5_hardening.sql`
+  (fn + v_soccer_event_gate 18-arg + v_gate_fixture_* + vistas selector iss036 recreadas por el
+  CASCADE) para que la cadena committeada reproduzca el gate del branch. Se aplica DESPUÉS de
+  iss036 y deja EXACTAMENTE una firma de fn_event_gate_status.
+- Orden final de la cadena: pasos 1..19 (arriba) + iss045b (paso 20).
+
 ### GAP: iss041_fixtures (v2.gate_fixture_soccer_cards) FALTA en el repo
 - iss045 (vistas v_gate_fixture_*) y los tests iss042/043/036/048 LEEN
   `v2.gate_fixture_soccer_cards` (las 6 cartas UCL del owner: 401915440/441/442/443/444 +
