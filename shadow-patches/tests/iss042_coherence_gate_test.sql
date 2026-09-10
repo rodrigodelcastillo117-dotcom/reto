@@ -1,69 +1,64 @@
 -- ============================================================================
--- iss042 TEST — SOCCER_JOINT_DISTRIBUTION_COHERENCE_GATE · tx ROLLBACK · branch-only
--- Adversarial fixtures = the SIX owner UCL cards (exact prod inputs; rho=0.0705 xleague).
--- POST-FIX (iss041 applied): every card must PASS all 14 coherence checks (<=0.2pp).
--- Also demonstrates PRE-FIX FAIL by restoring the prod-verbatim fn inside the tx.
--- Requires: iss000 baseline, iss041 fix, iss042 gate, iss041_fixtures loaded.
+-- iss042/043/045 v2 GATE TEST — branch-only (soccer-coherence-gate). Reproduces
+-- AUDIT_NO_PASS 5619542059 required rerun: 6 fixtures coherent, TOP_ONLY exclusion,
+-- top-k, adversarial totals (4.5/4.0/2.25/2.75/unsupported), whole-handicap push.
+-- Requires iss041 v2 + iss042 v2 + iss043 v2 + iss045 installed and the fixture table.
+-- RAISE EXCEPTION on any failure; a clean run = all assertions passed.
 -- ============================================================================
-begin;
 do $$
-declare bad int; worst numeric;
+declare r record; n int; s text; d jsonb;
 begin
-  -- POST-FIX assertion: 0 failing checks across all 6 fixtures
-  select count(*) filter (where not ok), max(delta) into bad, worst
-  from v2.gate_fixture_soccer_cards f,
-       lateral v2.fn_dist_from_lambda(f.lambda_home,f.lambda_away,f.over_line,f.rho,f.maxg) d,
-       lateral v2.fn_soccer_coherence_gate(d, f.over_line, 0.2) g;
-  if bad <> 0 then raise exception 'FAIL post-fix coherence: % failing checks (worst %pp)', bad, worst; end if;
-  raise notice 'PASS iss042 post-fix: 6/6 cards coherent, worst delta %pp (<=0.2)', worst;
-end $$;
-rollback;
+  -- 1) six owner fixtures: 0 failing markets each
+  for r in
+    select f.espn_event_id, f.home_team,
+           (select count(*) filter (where not g.ok)
+              from v2.fn_soccer_coherence_gate(
+                v2.fn_dist_from_lambda(f.lambda_home,f.lambda_away,f.over_line,f.rho,coalesce(f.maxg,10)),
+                f.over_line) g) fails
+    from v2.gate_fixture_soccer_cards f
+  loop
+    if r.fails <> 0 then raise exception 'FAIL C1: % has % failing markets', r.home_team, r.fails; end if;
+  end loop;
+  raise notice 'PASS C1: 6/6 fixtures coherent (0 failing markets each)';
 
--- PRE-FIX demonstration (separate tx): restore prod-verbatim fn, expect failures.
-begin;
-CREATE OR REPLACE FUNCTION v2.fn_dist_from_lambda(lh numeric, la numeric, over_line numeric DEFAULT NULL::numeric, rho numeric DEFAULT '-0.05'::numeric, maxg integer DEFAULT 8)
- RETURNS jsonb LANGUAGE plpgsql IMMUTABLE AS $f$
-declare fact numeric[] := array[1,1,2,6,24,120,720,5040,40320,362880,3628800];
- i int; j int; ph numeric; pa numeric; tau numeric; pij numeric; tot numeric:=0;
- p_home numeric:=0;p_draw numeric:=0;p_away numeric:=0;btts numeric:=0;p_over numeric:=0;
- best numeric:=-1;best_i int:=0;best_j int:=0; dist jsonb:='[]'::jsonb;
- hm2 numeric:=0;am2 numeric:=0;cs_h numeric:=0;cs_a numeric:=0;
-begin
- if lh is null or la is null or lh<=0 or la<=0 or lh>8 or la>8 then return null; end if;
- for i in 0..maxg loop for j in 0..maxg loop
-   ph:=exp(-lh)*power(lh,i)/fact[i+1];pa:=exp(-la)*power(la,j)/fact[j+1];
-   tau:=case when i=0 and j=0 then 1-lh*la*rho when i=0 and j=1 then 1+lh*rho when i=1 and j=0 then 1+la*rho when i=1 and j=1 then 1-rho else 1 end;
-   tot:=tot+greatest(tau,0)*ph*pa; end loop; end loop;
- if tot<=0 then return null; end if;
- for i in 0..maxg loop for j in 0..maxg loop
-   ph:=exp(-lh)*power(lh,i)/fact[i+1];pa:=exp(-la)*power(la,j)/fact[j+1];
-   tau:=case when i=0 and j=0 then 1-lh*la*rho when i=0 and j=1 then 1+lh*rho when i=1 and j=0 then 1+la*rho when i=1 and j=1 then 1-rho else 1 end;
-   pij:=greatest(tau,0)*ph*pa/tot;
-   if i>j then p_home:=p_home+pij; elsif i=j then p_draw:=p_draw+pij; else p_away:=p_away+pij; end if;
-   if i>=1 and j>=1 then btts:=btts+pij; end if;
-   if over_line is not null and (i+j)>over_line then p_over:=p_over+pij; end if;
-   if (i-j)>=2 then hm2:=hm2+pij; end if; if (j-i)>=2 then am2:=am2+pij; end if;
-   if j=0 then cs_h:=cs_h+pij; end if; if i=0 then cs_a:=cs_a+pij; end if;
-   if pij>best then best:=pij;best_i:=i;best_j:=j; end if;
-   if pij>=0.01 then dist:=dist||jsonb_build_object('s',i||'-'||j,'p',round(pij*100,1)); end if;
- end loop; end loop;
- return jsonb_build_object('lambda_home',round(lh,3),'lambda_away',round(la,3),'rho',rho,'exp_goals_total',round(lh+la,2),
-   'p_home',round(p_home*100,1),'p_draw',round(p_draw*100,1),'p_away',round(p_away*100,1),
-   'btts_yes',round(btts*100,1),'btts_no',round((1-btts)*100,1),'over_line',over_line,
-   'p_over',case when over_line is null then null else round(p_over*100,1) end,
-   'p_under',case when over_line is null then null else round((1-p_over)*100,1) end,
-   'predicted_score',best_i||'-'||best_j,'predicted_score_prob',round(best*100,1),'dist',dist,'max_goals',maxg,
-   'markets',jsonb_build_object('home_minus15',round(hm2*100,1),'away_minus15',round(am2*100,1),
-     'clean_sheet_home',round(cs_h*100,1),'clean_sheet_away',round(cs_a*100,1)));
-end $f$;
-do $$
-declare bad int;
-begin
-  select count(*) filter (where not ok) into bad
-  from v2.gate_fixture_soccer_cards f,
-       lateral v2.fn_dist_from_lambda(f.lambda_home,f.lambda_away,f.over_line,f.rho,f.maxg) d,
-       lateral v2.fn_soccer_coherence_gate(d, f.over_line, 0.2) g;
-  if bad = 0 then raise exception 'UNEXPECTED: pre-fix should FAIL coherence but produced 0 failures'; end if;
-  raise notice 'PASS iss042 pre-fix demo: gate correctly FAILS pre-fix (% failing checks across 6 cards)', bad;
+  -- 2) TOP_ONLY exclusion: Bayern 401915443 + ManU 401915442 excluded from candidates, present in analysis
+  select count(*) into n from v2.v_gate_fixture_candidates where canonical_event_id in ('401915442','401915443');
+  if n <> 0 then raise exception 'FAIL C2a: suppressed events leaked into TOP_ONLY candidates (n=%)', n; end if;
+  select count(distinct espn_event_id) into n from v2.v_gate_fixture_analysis_all where espn_event_id in ('401915442','401915443');
+  if n <> 2 then raise exception 'FAIL C2b: suppressed events not visible in analysis (n=%)', n; end if;
+  select count(distinct canonical_event_id) into n from v2.v_gate_fixture_candidates;
+  if n <> 4 then raise exception 'FAIL C2c: expected 4 eligible events in candidates, got %', n; end if;
+  raise notice 'PASS C2: Bayern/ManU excluded from TOP_ONLY, present in analysis (4 eligible)';
+
+  -- 3) top-k: Bayern true top-1 = 2-1 (was 0-0 under the old dist.slice bug)
+  d := v2.fn_dist_from_lambda(2.697,1.266,4.5,0.0705,10);
+  if (d->>'predicted_score') <> '2-1' then raise exception 'FAIL C3: Bayern top1 % (expected 2-1)', d->>'predicted_score'; end if;
+  if (d->'top_scores'->0->>'s') <> '2-1' then raise exception 'FAIL C3: top_scores[0] mismatch'; end if;
+  raise notice 'PASS C3: top-k sorted by prob (Bayern top1=2-1)';
+
+  -- 4) adversarial totals
+  d := v2.fn_dist_from_lambda(3.2,1.1,4.0,-0.05,10);   -- WHOLE line: exact-total push
+  if (d->>'ou_line_type') <> 'WHOLE' or (d->>'p_push')::numeric <= 0 then raise exception 'FAIL C4a: whole line 4.0 no push (%)', d->>'p_push'; end if;
+  if round(coalesce((d->>'p_over')::numeric,0)+coalesce((d->>'p_push')::numeric,0)+coalesce((d->>'p_under')::numeric,0),1) <> 100.0
+     then raise exception 'FAIL C4a: whole 4.0 over+push+under != 100'; end if;
+  select count(*) filter (where not ok) into n from v2.fn_soccer_coherence_gate(d,4.0); if n<>0 then raise exception 'FAIL C4a: whole 4.0 gate fails=%',n; end if;
+  d := v2.fn_dist_from_lambda(3.2,1.1,2.25,-0.05,10); if (d->>'ou_line_type')<>'QUARTER' then raise exception 'FAIL C4b: 2.25 not QUARTER'; end if;
+  select count(*) filter (where not ok) into n from v2.fn_soccer_coherence_gate(d,2.25); if n<>0 then raise exception 'FAIL C4b: quarter 2.25 gate fails=%',n; end if;
+  d := v2.fn_dist_from_lambda(3.2,1.1,2.75,-0.05,10);
+  select count(*) filter (where not ok) into n from v2.fn_soccer_coherence_gate(d,2.75); if n<>0 then raise exception 'FAIL C4c: quarter 2.75 gate fails=%',n; end if;
+  d := v2.fn_dist_from_lambda(3.2,1.1,3.1,-0.05,10);   -- unsupported fraction: fail-closed
+  if (d->>'ou_supported')::boolean or (d->>'p_over') is not null then raise exception 'FAIL C4d: unsupported line 3.1 not fail-closed'; end if;
+  raise notice 'PASS C4: totals push (4.0)+split (2.25/2.75)+fail-close (3.1)';
+
+  -- 5) whole handicap -1 push semantics: win=P(m>=2), push=P(m=1), win+push+lose=100
+  d := v2.fn_dist_from_lambda(2.289,1.308,3.5,0.0705,10);
+  if abs((d->'markets'->>'home_minus1')::numeric - v2.fn_matrix_market(d->'dist','AH','HOME',-1)) > 0.2
+     then raise exception 'FAIL C5: home_minus1 win != P(margin>=2)'; end if;
+  if abs((d->'markets'->>'home_minus1_push')::numeric - v2.fn_matrix_market(d->'dist','AH','PUSH',-1)) > 0.2
+     then raise exception 'FAIL C5: home_minus1 push != P(margin==1)'; end if;
+  if round((d->'markets'->>'home_minus1')::numeric+(d->'markets'->>'home_minus1_push')::numeric+(d->'markets'->>'away_plus1')::numeric,1) <> 100.0
+     then raise exception 'FAIL C5: home-1 win+push+lose != 100'; end if;
+  raise notice 'PASS C5: whole handicap -1 win/push/lose settlement complete';
+
+  raise notice 'ALL COHERENCE-GATE v2 ASSERTIONS PASSED';
 end $$;
-rollback;

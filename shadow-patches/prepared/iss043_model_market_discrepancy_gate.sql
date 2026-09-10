@@ -59,9 +59,11 @@ begin
   wg := case when mfavp is null then null else round(favp - mfavp,1) end;   -- model minus market on model's fav
   tg := case when w.nv_1 is null or p_p_over is null then null else round(p_p_over - w.nv_1,1) end;
   winner_gap:=wg; total_gap:=tg;
-  -- classify (fail-open to REVIEW when market missing? no: if market missing we cannot diagnose -> REVIEW_REQUIRED)
+  -- Market ABSENCE is NOT a discrepancy (5619542059 finding 2): it is a distinct
+  -- NO_MARKET_DIAGNOSTIC state that does NOT suppress. Market absence must never
+  -- fabricate a discrepancy or make an event TOP_ONLY-ineligible on its own.
   if wg is null and tg is null then
-    flag:='REVIEW_REQUIRED'; suppress:=false; reason:='NO_MARKET_ODDS_FOR_DIAGNOSTIC'; return next; return;
+    flag:='NO_MARKET_DIAGNOSTIC'; suppress:=false; reason:='no market odds available for model-vs-market diagnostic'; return next; return;
   end if;
   -- QUALITY_DOWNGRADE: a single extreme breach (>=18pp) OR a DUAL breach (both winner
   -- and total adverse by >=12pp) -> the model is systematically off on this event.
@@ -74,7 +76,9 @@ begin
     return next; return;
   end if;
   if (wg is not null and wg <= -12) or (tg is not null and abs(tg) >= 12) then
-    flag:='REVIEW_REQUIRED'; suppress:=false;
+    -- A real threshold breach (>=12pp) is a discrepancy: TOP_ONLY-INELIGIBLE until
+    -- reviewed/cleared (5619542059 finding 2). suppress=true, distinct from OK/NO_MARKET.
+    flag:='REVIEW_REQUIRED'; suppress:=true;
     reason:=concat_ws('; ',
       case when wg<=-12 then 'winner_gap '||wg||'pp (model '||favp||' vs no-vig '||mfavp||')' end,
       case when tg is not null and abs(tg)>=12 then 'total_gap '||tg||'pp (model over '||p_p_over||' vs no-vig '||w.nv_1||')' end);

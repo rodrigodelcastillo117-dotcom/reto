@@ -66,3 +66,21 @@ NOT permitted. Challenger is therefore NOT adopted. Recommendation: a proper wal
 before any change to crossleague_v1 φ. No P_RETO changed by this analysis (read-only, diagnostic).
 
 Labels: all numbers above = REAL_DATA_ADVERSARIAL_READONLY. NOT synthetic.
+
+## Reproducible artifact (AUDIT_NO_PASS 5619542059 finding 6)
+Executable read-only regenerator: `shadow-patches/prepared/iss044_regime_crossleague_backtest_readonly.sql`
+(sha256 `f2ccf7f85a3c7107dc68464f9d2c660f0257c80490d93cb6128cb9ad603fa8b3`). It carries a SEALED
+INPUT/CUTOFF MANIFEST (source table, universe ligas 2/3, 540d window, min_n 15, split 2025-08-01,
+SCALE grid, rho 0.0705, regime bins, phi definition) and regenerates the SCALE-selection /
+OOS tables from `public.historico_partidos_espn` + `v2.fn_dist_from_lambda`. It is SELECT-only and
+was EXPLAIN-validated against prod (binds to real columns, uses hpe_fecha_idx). It must be run in a
+DATA-BEARING context (prod, read-only) with the iss041 v2 emitter present; the disposable gate branch
+has no historico data. No φ re-fit / challenger adoption is performed until this artifact's walk-forward
+re-fit is run and independently reviewed (per the verdict above).
+
+## Wording correction (finding 7)
+The single-source normalization does NOT leave displayed probabilities bit-identical: model
+math / λ / ρ are UNCHANGED, but displayed probabilities can move by <= the rounding residual folded
+into the modal cell (e.g. Bayern home 68.1 -> 68.2; assorted fields +/-0.1pp). Measured max drift on
+the 6 owner cards <= 0.1pp. Do not state "P_RETO unchanged" literally; state "model math/λ/ρ unchanged;
+displayed probabilities may move <= rounding residual due to authoritative matrix normalization".
