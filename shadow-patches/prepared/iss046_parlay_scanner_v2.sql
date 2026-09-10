@@ -53,9 +53,9 @@ returns text language sql immutable as $$
               translate(lower(coalesce(p_raw,'')),                -- 1) accent fold
                 'áàâäãåéèêëíìîïóòôöõúùûüñçø',
                 'aaaaaaeeeeiiiiooooouuuunco'),
-              '\bm(u|ü)nchen\b','munich','g'),
+              '\ymunchen\y','munich','g'),                        -- \y = word boundary
             '[^a-z0-9 ]',' ','g'),
-          '\b(fc|fk|fa|cf|rc|sc|as|rb|afc|cd)\b','','g'),
+          '\y(fc|fk|fa|cf|rc|sc|as|rb|afc|cd)\y','','g'),         -- PG uses \y not \b
         '\s+',' ','g')
     ), '');
 $$;
@@ -90,6 +90,18 @@ create table if not exists v2.parlay_canonical_agenda (
 comment on table v2.parlay_canonical_agenda is
   'iss046: canonical resolution agenda (id, normalized teams, kickoff, competition).';
 
+-- Registry-backed canonical team key: an alias (incl. OCR garble) is mapped to
+-- the canonical name, then to its canonical key. Falls back to plain fn_norm_team
+-- for teams already canonical. This is how finding 2's registry drives resolution.
+create or replace function v2.fn_canon_team_key(p_raw text)
+returns text language sql stable as $$
+  select coalesce(
+    (select v2.fn_norm_team(r.canonical_name)
+       from v2.team_alias_registry r
+      where r.alias_norm = v2.fn_norm_team(p_raw) limit 1),
+    v2.fn_norm_team(p_raw));
+$$;
+
 -- Seed registry + agenda from the 6 real UCL fixture cards + observed OCR variants.
 create or replace function v2.fn_seed_parlay_scanner_agenda(p_kickoff timestamptz)
 returns void language plpgsql as $$
@@ -116,7 +128,8 @@ begin
   -- ... plus the OCR variants observed on the owner ticket (all collapse to the
   -- same alias_norm, proving the fold; canonical_name kept from the card).
   insert into v2.team_alias_registry (alias_norm, canonical_name, espn_team_hint) values
-    (v2.fn_norm_team('Fenerbahçe'),      'Fenerbahce',        '401915444'),
+    (v2.fn_norm_team('Fenerbahçe'),               'Fenerbahce',   '401915444'),
+    (v2.fn_norm_team('Fenerb'||chr(233)||'çe'),   'Fenerbahce',   '401915444'), -- L1 OCR garble
     (v2.fn_norm_team('AS Roma'),         'AS Roma',           '401915444'),
     (v2.fn_norm_team('Roma'),            'AS Roma',           '401915444'),
     (v2.fn_norm_team('Bayern München'),  'Bayern Munich',     '401915443'),
@@ -201,8 +214,8 @@ create or replace function v2.fn_resolve_event(
   p_explicit_event_id text default null, p_window_days int default 1)
 returns jsonb language plpgsql stable as $$
 declare
-  lh text := v2.fn_norm_team(p_home_raw);
-  la text := v2.fn_norm_team(p_away_raw);
+  lh text := v2.fn_canon_team_key(p_home_raw);
+  la text := v2.fn_canon_team_key(p_away_raw);
   v_cand jsonb;
   v_n int;
   r record;
@@ -331,7 +344,7 @@ begin
     from jsonb_array_elements(coalesce(p_legs,'[]'::jsonb)) with ordinality e(leg, ord)
   ),
   normed as (
-    select l.*, v2.fn_norm_team(l.hr) as lh, v2.fn_norm_team(l.ar) as la,
+    select l.*, v2.fn_canon_team_key(l.hr) as lh, v2.fn_canon_team_key(l.ar) as la,
            v2.fn_canon_market(l.mkt) as cm
     from legs l
   ),
