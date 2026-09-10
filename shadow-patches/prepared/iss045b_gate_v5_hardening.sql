@@ -30,7 +30,7 @@ CREATE OR REPLACE FUNCTION v2.fn_event_gate_status(p_dist jsonb, p_home numeric,
  LANGUAGE plpgsql IMMUTABLE
 AS $function$
 declare
-  d record; coh boolean := true; reasons text := ''; e jsonb; s text; pv numeric;
+  d record; coh boolean := true; reasons text := null; e jsonb; s text; pv numeric;  -- null (not '') so concat_ws skips the seed -> no leading '; ' / '; ;' in gate_reason
   dist_sum numeric := 0; dist_n int := 0; dist_unique int := 0; dist_struct_ok boolean := true;
   gi int; gj int; true_top jsonb; top_keys jsonb; top_n int := 0;
   expected_line_type text; expected_supported boolean; frac numeric; scalar_sum numeric;
