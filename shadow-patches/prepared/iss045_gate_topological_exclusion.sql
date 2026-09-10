@@ -79,6 +79,12 @@ begin
   if p_btts_no is null  then coh:=false; reasons:=concat_ws('; ',reasons,'NULL_FIELD:btts_no'); end if;
   if p_top_scores is null or jsonb_typeof(p_top_scores) <> 'array' or jsonb_array_length(p_top_scores)=0
      then coh:=false; reasons:=concat_ws('; ',reasons,'NULL_FIELD:top_scores'); end if;
+  -- 5620477307 hardening (branch gate): the canonical top-k contract is EXACTLY 5 (iss041
+  --   emits limit 5). A length other than 5 is corruption (truncated/padded) and must
+  --   fail-close even when the shorter/longer set is internally the true top-n. Adds a
+  --   check; never weakens (a valid 5-entry array is unaffected).
+  if p_top_scores is not null and jsonb_typeof(p_top_scores)='array' and jsonb_array_length(p_top_scores) <> 5
+     then coh:=false; reasons:=concat_ws('; ',reasons,'TOPK_LEN_NOT_5'); end if;
   -- O/U is required ONLY when the provider line is a SUPPORTED fraction. An UNSUPPORTED
   --   line legitimately fail-closes p_over/p_under to NULL (ou_supported=false, iss041 F3),
   --   so a NULL there is expected, not a bug. fn_total_weights(...) returns NULL exactly
