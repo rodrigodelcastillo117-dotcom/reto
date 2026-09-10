@@ -58,14 +58,19 @@ begin
 
   -- ── 1) Predicción CANÓNICA congelada (autoridad = fila staged, no la vista móvil) ──
   if p_decision_time is not null then
+    -- iss051: the staged contract is now MULTI-MODEL (domestic dc-2026.09.1 AND
+    -- crossleague crossleague_v1 write the SAME table, one row per event). Pinning
+    -- model_version to the domestic config here would make the dossier BLIND to every
+    -- crossleague P_RETO. The event+decision_time pair already identifies exactly one
+    -- row (enforced by v2.v_soccer_staged_identity_violations), so we select by that and
+    -- prefer a READY row deterministically instead of filtering by model_version.
     select spp.* into sp from v2.soccer_prediction_v2_staged spp
      where spp.espn_event_id=p_event_id and spp.decision_time=p_decision_time
-       and spp.model_version=coalesce(cfg.model_version,'dc-2026.09.1')
+     order by (spp.model_status like 'READY%') desc, spp.built_at desc
      limit 1;
   else
     select spp.* into sp from v2.soccer_prediction_v2_staged spp
      where spp.espn_event_id=p_event_id
-       and spp.model_version=coalesce(cfg.model_version,'dc-2026.09.1')
      order by spp.decision_time desc
      limit 1;
   end if;
