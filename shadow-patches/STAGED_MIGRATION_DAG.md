@@ -28,6 +28,17 @@ Toda la SQL cualifica esquema; DDL idempotente donde aplica (CREATE OR REPLACE /
 | 9b | iss034b_parlay_grading_trigger_set | iss034 (auto_cerrar, fn_leg_is_final), iss000 (live_scores, marcadores_archivo, ligamx_*, evento_id_map, slug_equipo, is_truly_final) | stub `public.mundial_partidos`; CREATE OR REPLACE (verbatim prod) `is_postponed_or_cancelled`, `buscar_marcador`, `buscar_marcador_v2`, `bloquear_calificacion_parlay_con_legs_futuros`, `protect_parlays_premature_grading`; instala triggers `trg_auto_cerrar_parlay`, `protect_parlays_premature`, `trg_bloquear_calificacion_parlay_legs_futuros` en `public.parlays` | iss034_extra C3/C4/C5 (requiere el set COMPLETO de triggers) | rollback/iss034b_parlay_grading_trigger_set_rollback.sql (defs prod verbatim) |
 | 10 | iss035_bankroll_idempotence | calcular_bankroll_actual | REEMPLAZA `actualizar_bankroll_post_al_calificar`, `_parlay` | iss035 idempotence test | restaurar defs previas |
 
+## P0 COHERENCE + DISCREPANCY GATE (issue #4 · 5618913334) — branch-only, HOLD
+| paso | artefacto | prerequisitos | crea / reemplaza | tests | rollback |
+|---|---|---|---|---|---|
+| C1 | iss041_soccer_joint_matrix_single_source | iss000 (fn_score_dist) | REEMPLAZA `v2.fn_dist_from_lambda` + `v2.fn_score_dist` (matriz única autoritativa: emite matriz completa, renormaliza a 100, escalares DERIVADOS de las celdas; DC rho/lambda intactos) | iss042 gate (6 cards pre-fix FAIL / post-fix PASS) | CREATE OR REPLACE defs prod verbatim (capturadas read-only) |
+| C2 | iss042_soccer_joint_coherence_gate | iss041 | `v2.fn_matrix_market`, `v2.fn_soccer_coherence_gate` (1X2/BTTS/CS/OU@línea real/AH±1.5/exact top-k, tol 0.2pp) | tests/iss042_coherence_gate_test.sql | DROP funciones nuevas |
+| C3 | iss043_model_market_discrepancy_gate | iss000 (odds en v_momios/v_futpro) | `v2.fn_novig_1x2`, `v2.fn_novig_2way`, `v2.fn_model_market_discrepancy` (no-vig SOLO diagnóstico, nunca P_RETO; QUALITY_DOWNGRADE/REVIEW + suppress) | tests/iss043_discrepancy_gate_test.sql | DROP funciones nuevas |
+| C4 | iss044_regime_crossleague_backtest (read-only, NO migración) | prod historico | — (análisis) | reports/iss044_regime_crossleague_backtest_readonly.md | n/a |
+- Branch de validación: `soccer-coherence-gate` (ref kmasawoljjyfmxadbvou). Orden real aplicado:
+  iss000 (subset core) → iss000b (fn_dist prod-verbatim pre-fix, para reproducir bug) → fixtures →
+  iss041 (fix) → iss042 → iss043. Todo en tx/branch; prod SOLO lectura.
+
 ## Notas de dependencia
 - iss036 REQUIERE iss033 (lee `soccer_prediction_v2_staged`). No aplicar 6 antes de 3.
 - iss029 aplica el INSERT de aprobación de Grecia **sólo** tras BLOQUE 2b (ya validado);
