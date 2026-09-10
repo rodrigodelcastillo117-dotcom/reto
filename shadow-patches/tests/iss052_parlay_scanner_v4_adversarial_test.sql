@@ -27,7 +27,7 @@ begin
       'intended_date','2026-09-10','explicit_event_id','401915422','ticket_total_odds','5.71')),
     timestamptz '2026-09-10 15:00+00',1156,null,null,1);
   if r->>'status'<>'NEEDS_REVIEW' or r->>'is_canonical_reason'<>'IDENTITY_CONFLICT'
-     or r->'payout' is not null or r->'joint_probability' is not null or r->'EV_REAL' is not null then
+     or r->>'payout' is not null or r->>'joint_probability' is not null or r->>'EV_REAL' is not null then
     raise exception 'ticket identity conflict did not fail-close: %',r;
   end if;
   if r->'legs'->0->>'identity_status'<>'IDENTITY_CONFLICT' or r->'legs'->0->>'canonical_event_id' is not null then
@@ -50,7 +50,7 @@ begin
       'intended_date','2026-09-10','ticket_total_odds','-5.71')),
     timestamptz '2026-09-10 15:00+00',1156,null,null,1);
   if r->>'status'<>'NEEDS_REVIEW' or r->>'ticket_price_status'<>'INVALID_TICKET_PRICE'
-     or r->'ticket_total_odds' is not null or r->'payout' is not null then
+     or r->>'ticket_total_odds' is not null or r->>'payout' is not null then
     raise exception 'negative ticket price leaked: %',r;
   end if;
 
