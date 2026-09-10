@@ -19,36 +19,39 @@
 -- (p_over/p_under) SOLO sobre la línea REAL del proveedor (over_line, line_source).
 -- ============================================================================
 
--- ── GATE STATUS por evento (iss045/iss043) — suppress = discrepancia real (>=12pp).
--- Odds de contexto desde la MISMA fuente real (v_momios_confiables); nunca P_RETO.
--- NO_MARKET_DIAGNOSTIC / OK => no suprime (ausencia de mercado no fabrica discrepancia).
+-- ── GATE STATUS por evento (iss045 fn_event_gate_status) — coherence_ok && !suppress.
+-- coherence_ok: los escalares publicados (p_home/p_draw/p_away/btts_yes/p_over) SUMAN la
+--   matriz PERSISTIDA c.score_dist dentro de 0.2pp (una fila corrupta => coherence_ok=false).
+-- suppress: discrepancia real (>=12pp) vs no-vig de v_momios_confiables (columnas REALES
+--   home_ml/draw_ml/away_ml/over_odds/under_odds); NO_MARKET_DIAGNOSTIC/OK no suprimen.
+-- Odds de contexto (nunca P_RETO). top_only_eligible = READY && coherence_ok && !suppress.
 create or replace view v2.v_soccer_event_gate as
 select c.espn_event_id as canonical_event_id,
-       g.disc_flag, coalesce(g.suppress,false) as suppress,
-       (c.model_status='READY_UNVALIDATED' and not coalesce(g.suppress,false)) as top_only_eligible,
+       g.coherence_ok, g.disc_flag, coalesce(g.suppress,false) as suppress,
+       (c.model_status='READY_UNVALIDATED' and coalesce(g.coherence_ok,false) and not coalesce(g.suppress,false)) as top_only_eligible,
        g.gate_reason
 from v2.soccer_prediction_v2_staged c
 left join lateral (
-  select mc.over_odds, mc.under_odds, mc.home_odds, mc.draw_odds, mc.away_odds
+  select mc.over_odds, mc.under_odds, mc.home_ml, mc.draw_ml, mc.away_ml
   from public.v_momios_confiables mc
   where mc.espn_event_id = c.espn_event_id and mc.confiable is true
   order by mc.snapshot_at desc limit 1
 ) o on true
-left join lateral v2.fn_model_market_discrepancy(
-  c.p_home,c.p_draw,c.p_away,c.p_over,
-  o.home_odds,o.draw_odds,o.away_odds,o.over_odds,o.under_odds
+left join lateral v2.fn_event_gate_status(
+  c.score_dist, c.p_home,c.p_draw,c.p_away, c.p_over, c.over_line, c.btts_yes,
+  o.home_ml,o.draw_ml,o.away_ml,o.over_odds,o.under_odds
 ) g on true;
 
--- Superficie de ANÁLISIS: TODOS los eventos READY (incluye suprimidos) — visibles.
+-- Superficie de ANÁLISIS: TODOS los eventos READY (incluye suprimidos e incoherentes) — visibles.
 create or replace view v2.v_soccer_analysis_all as
-select c.*, gt.disc_flag, gt.suppress, gt.top_only_eligible, gt.gate_reason
+select c.*, gt.coherence_ok, gt.disc_flag, gt.suppress, gt.top_only_eligible, gt.gate_reason
 from v2.soccer_prediction_v2_staged c
 left join v2.v_soccer_event_gate gt on gt.canonical_event_id = c.espn_event_id
 where c.model_status = 'READY_UNVALIDATED';
 
 -- Candidatos canónicos: 1X2 (3) + BTTS sí/no (explícitos) + O/U a la línea REAL.
 -- Cada candidato lleva su market/side/line y su probabilidad canónica tal cual.
--- 5619542059-1: EXCLUYE eventos suprimidos por el gate de discrepancia (TOP_ONLY).
+-- 5619542059-1/3: EXCLUYE eventos incoherentes O suprimidos (coherence_ok && !suppress).
 create or replace view v2.v_soccer_daily_candidates as
 select c.espn_event_id as canonical_event_id,
        c.home_team, c.away_team, c.competition_id, c.kickoff, c.decision_time,
@@ -57,7 +60,7 @@ select c.espn_event_id as canonical_event_id,
        c.sample_home, c.sample_away
 from v2.soccer_prediction_v2_staged c
 join v2.v_soccer_event_gate gt
-  on gt.canonical_event_id = c.espn_event_id and gt.top_only_eligible   -- <-- exclusión TOP_ONLY
+  on gt.canonical_event_id = c.espn_event_id and gt.top_only_eligible   -- <-- coherence_ok && !suppress
 cross join lateral (
   values
     ('1X2'::text, 'HOME'::text, null::numeric, c.p_home),

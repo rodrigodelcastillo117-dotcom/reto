@@ -112,12 +112,16 @@ create table if not exists v2.soccer_prediction_v2_staged (
   model_status text, model_status_reason text, provenance jsonb,
   competition_mapping_version text,          -- §20: mapping_version CONGELADO en la fila (AUDIT 5611083879 pt1)
   availability_verified boolean,             -- pt2: ¿se exigió cargado_at<=decision? (no-leak de disponibilidad)
+  score_dist jsonb,                          -- 5619542059-3: matriz conjunta COMPLETA persistida (única fuente)
+  top_scores jsonb,                          -- 5619542059-5: top-k canónico ordenado por prob (no dist.slice)
   feature_snapshot_id uuid, built_at timestamptz default now(),
   primary key (espn_event_id, decision_time, model_version)
 );
 -- (para tablas ya creadas en branch)
 alter table v2.soccer_prediction_v2_staged add column if not exists competition_mapping_version text;
 alter table v2.soccer_prediction_v2_staged add column if not exists availability_verified boolean;
+alter table v2.soccer_prediction_v2_staged add column if not exists score_dist jsonb;
+alter table v2.soccer_prediction_v2_staged add column if not exists top_scores jsonb;
 
 -- pt3: feature_snapshot inmutable fail-on-drift. Re-run idéntico = no-op; cambio de
 -- features bajo la MISMA (event,decision,feature_version) => RAISE (no reescribe belief).
@@ -221,7 +225,7 @@ begin
      feature_version, model_version, calibration_status,
      p_home,p_draw,p_away, btts_yes,btts_no, over_line,p_over,p_under, line_source,line_asof,
      model_status, model_status_reason, provenance,
-     competition_mapping_version, availability_verified, feature_snapshot_id)
+     competition_mapping_version, availability_verified, score_dist, top_scores, feature_snapshot_id)
   select c.espn_event_id, c.competition_id, c.home_nombre, c.away_nombre, c.kickoff, p_decision_time,
      c.feature_data_asof, c.max_source_event_time, c.sample_home, c.sample_away, c.temporal_safe_calc,
      cfg.feature_version, cfg.model_version, cfg.calibration_status,
@@ -255,7 +259,10 @@ begin
         'competition_mapping_version',v_map,'availability_verified',p_enforce_availability,
         'availability_note', case when p_enforce_availability then 'ENFORCED_cargado_at<=decision'
                                   else 'REPLAY_AVAILABILITY_UNVERIFIED' end),
-     v_map, p_enforce_availability, s.feature_snapshot_id
+     v_map, p_enforce_availability,
+     case when pub.publish then (c.d->'dist') end,          -- 5619542059-3: matriz persistida (misma fuente)
+     case when pub.publish then (c.d->'top_scores') end,    -- 5619542059-5: top-k canónico persistido
+     s.feature_snapshot_id
   -- F7: 'cfg' es una variable record de plpgsql; sus campos se usan como escalares.
   -- NO puede ir en el FROM como si fuera una tabla (antes: 'from calc c, cfg' => error).
   from calc c
