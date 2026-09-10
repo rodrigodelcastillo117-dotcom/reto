@@ -35,11 +35,12 @@ insert into v2.model_config values
 on conflict (sport,model_version) do nothing;
 -- Guarda fail-on-drift: si alguien intenta UPDATE de params bajo un model_version sellado,
 -- se aborta (la identidad versionada no cambia belief en-place).
+-- AUDIT 5611572904 pt1: WHOLE-ROW inmutable (antes sólo 3 columnas; model_name/
+-- calibration_status/publish_authorized quedaban editables in-place => drift de gobernanza).
 create or replace function v2.fn_model_config_immutable() returns trigger language plpgsql as $$
 begin
-  if row(new.feature_version,new.sample_floor,new.window_days) is distinct from
-     row(old.feature_version,old.sample_floor,old.window_days) then
-    raise exception 'MODEL_CONFIG_DRIFT: params de (%,%) son inmutables; usa un model_version nuevo',
+  if to_jsonb(new) is distinct from to_jsonb(old) then
+    raise exception 'MODEL_CONFIG_DRIFT: (%,%) es inmutable (whole-row); usa un model_version nuevo',
       new.sport, new.model_version;
   end if;
   return new;
@@ -160,8 +161,15 @@ begin
   ),
   mapped as (
     -- §20 (iss039): identidad por PROVIDER-ID numérico con la mapping_version CONGELADA (v_map).
+    -- AUDIT 5611572904 pt2: registry y features siguen keyed por ag.liga_id (provider).
+    -- Para que el mapping sea AUTORIDAD END-TO-END, el canonical competition_id resuelto
+    -- debe COINCIDIR con la identidad provider que gobierna registry/features (ag.liga_id).
+    -- Si un remap hace competition_id != ag.liga_id, la aprobación/priores/features serían de
+    -- OTRA liga => end_to_end=false => fail-close (NO_MODEL), nunca publicar id canónico
+    -- servido por registry/features de otra identidad.
     select ag.*, rc.competition_id,
-           (r.approved is true) reg_ok
+           (r.approved is true) reg_ok,
+           (rc.competition_id is not null and rc.competition_id = ag.liga_id) as end_to_end
     from agenda ag
     left join lateral v2.fn_resolve_competition('espn', ag.liga_id, v_map) rc on true
     left join v2.model_registry r on r.sport='soccer' and r.model_name=cfg.model_name
@@ -229,9 +237,11 @@ begin
      c.snapshot_at,
      case when pub.publish then 'READY_UNVALIDATED'
           when c.competition_id is null then 'NO_MODEL'      -- unsupported/unmapped: visible, P=NULL
+          when not c.end_to_end then 'NO_MODEL'              -- remap no end-to-end: fail-close
           else 'DATA_INCOMPLETE' end,
      case when pub.publish then 'DC V2 as-of decision_time desde tasas FINAL de la misma competencia'
           when c.competition_id is null then 'Competencia no mapeada/soportada (provider-id): evento visible sin P_RETO'
+          when not c.end_to_end then 'MAPPING_NOT_END_TO_END: canonical competition_id ('||c.competition_id||') != identidad provider (liga_id '||c.liga_id||') que gobierna registry/features; fail-close'
           when not c.reg_ok then 'Competencia no aprobada para el modelo'
           when c.sample_home is null or c.sample_away is null then 'Sin tasas de ambos equipos EN ESTA competencia'
           when c.sample_home < cfg.sample_floor or c.sample_away < cfg.sample_floor then 'Muestra insuficiente (<'||cfg.sample_floor||')'
@@ -250,7 +260,7 @@ begin
   -- NO puede ir en el FROM como si fuera una tabla (antes: 'from calc c, cfg' => error).
   from calc c
        left join snap s on s.espn_event_id = c.espn_event_id
-       cross join lateral (select (c.reg_ok and c.sample_home is not null and c.sample_away is not null
+       cross join lateral (select (c.reg_ok and c.end_to_end and c.sample_home is not null and c.sample_away is not null
                         and c.sample_home>=cfg.sample_floor and c.sample_away>=cfg.sample_floor
                         and c.d is not null and c.temporal_safe_calc) as publish) pub;
   get diagnostics n = row_count;
