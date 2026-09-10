@@ -80,10 +80,14 @@ select f.espn_event_id, f.home_team, f.away_team, f.competition, f.over_line,
        gs.coherence_ok, gs.disc_flag, gs.suppress, gs.top_only_eligible, gs.gate_reason
 from v2.gate_fixture_soccer_cards f
 cross join lateral (select v2.fn_dist_from_lambda(f.lambda_home,f.lambda_away,f.over_line,f.rho,coalesce(f.maxg,10)) jd) d
+-- 5620477307 F2: new fn_event_gate_status signature — checks EVERY candidate field.
+-- Arg order: p_dist, p_home, p_draw, p_away, p_over, p_under, p_over_line, p_btts_yes,
+--            p_btts_no, p_top_scores, then the 5 context odds.
 cross join lateral v2.fn_event_gate_status(
   d.jd->'dist',
   (d.jd->>'p_home')::numeric,(d.jd->>'p_draw')::numeric,(d.jd->>'p_away')::numeric,
-  (d.jd->>'p_over')::numeric, f.over_line, (d.jd->>'btts_yes')::numeric,
+  (d.jd->>'p_over')::numeric,(d.jd->>'p_under')::numeric, f.over_line,
+  (d.jd->>'btts_yes')::numeric,(d.jd->>'btts_no')::numeric, d.jd->'top_scores',
   f.odds_home,f.odds_draw,f.odds_away,f.odds_over,f.odds_under) gs;
 
 -- ANALYSIS surface: ALL events (incl. suppressed) remain visible.

@@ -114,6 +114,14 @@ create table if not exists v2.soccer_prediction_v2_staged (
   availability_verified boolean,             -- pt2: ¿se exigió cargado_at<=decision? (no-leak de disponibilidad)
   score_dist jsonb,                          -- 5619542059-3: matriz conjunta COMPLETA persistida (única fuente)
   top_scores jsonb,                          -- 5619542059-5: top-k canónico ordenado por prob (no dist.slice)
+  -- 5620477307 F5 (iss033): O/U settlement PERSISTIDO desde la misma matriz (c.d).
+  --   p_push       : masa de empate (money/line blocker). Half-line=0; línea entera>0;
+  --                  quarter split>0; línea no soportada => NULL (fail-close, junto a p_over/p_under NULL).
+  --   ou_line_type : WHOLE/HALF/QUARTER/UNSUPPORTED (clasificación de la línea real del proveedor).
+  --   ou_supported : si la línea admite settlement; false => p_over/p_under/p_push NULL.
+  --   Settlement de handicap/otros sigue DERIVÁNDOSE de score_dist vía v2.fn_total_weights
+  --   (fuente única; los handicaps no son mercados candidatos => sin columnas extra).
+  p_push numeric, ou_line_type text, ou_supported boolean,
   feature_snapshot_id uuid, built_at timestamptz default now(),
   primary key (espn_event_id, decision_time, model_version)
 );
@@ -122,6 +130,9 @@ alter table v2.soccer_prediction_v2_staged add column if not exists competition_
 alter table v2.soccer_prediction_v2_staged add column if not exists availability_verified boolean;
 alter table v2.soccer_prediction_v2_staged add column if not exists score_dist jsonb;
 alter table v2.soccer_prediction_v2_staged add column if not exists top_scores jsonb;
+alter table v2.soccer_prediction_v2_staged add column if not exists p_push numeric;
+alter table v2.soccer_prediction_v2_staged add column if not exists ou_line_type text;
+alter table v2.soccer_prediction_v2_staged add column if not exists ou_supported boolean;
 
 -- pt3: feature_snapshot inmutable fail-on-drift. Re-run idéntico = no-op; cambio de
 -- features bajo la MISMA (event,decision,feature_version) => RAISE (no reescribe belief).
@@ -225,7 +236,8 @@ begin
      feature_version, model_version, calibration_status,
      p_home,p_draw,p_away, btts_yes,btts_no, over_line,p_over,p_under, line_source,line_asof,
      model_status, model_status_reason, provenance,
-     competition_mapping_version, availability_verified, score_dist, top_scores, feature_snapshot_id)
+     competition_mapping_version, availability_verified, score_dist, top_scores,
+     p_push, ou_line_type, ou_supported, feature_snapshot_id)
   select c.espn_event_id, c.competition_id, c.home_nombre, c.away_nombre, c.kickoff, p_decision_time,
      c.feature_data_asof, c.max_source_event_time, c.sample_home, c.sample_away, c.temporal_safe_calc,
      cfg.feature_version, cfg.model_version, cfg.calibration_status,
@@ -262,6 +274,12 @@ begin
      v_map, p_enforce_availability,
      case when pub.publish then (c.d->'dist') end,          -- 5619542059-3: matriz persistida (misma fuente)
      case when pub.publish then (c.d->'top_scores') end,    -- 5619542059-5: top-k canónico persistido
+     -- 5620477307 F5: O/U settlement persistido desde c.d (fn_score_dist devuelve p_push/
+     --   ou_line_type/ou_supported). Half-line p_push=0; línea no soportada => p_over/p_under/
+     --   p_push NULL (c.d ya los emite NULL). ou_line_type/ou_supported reflejan la línea real.
+     case when pub.publish and c.over_line is not null then (c.d->>'p_push')::numeric end,
+     case when pub.publish then (c.d->>'ou_line_type') end,
+     case when pub.publish then (c.d->>'ou_supported')::boolean end,
      s.feature_snapshot_id
   -- F7: 'cfg' es una variable record de plpgsql; sus campos se usan como escalares.
   -- NO puede ir en el FROM como si fuera una tabla (antes: 'from calc c, cfg' => error).
