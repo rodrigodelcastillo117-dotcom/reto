@@ -51,4 +51,15 @@ grading/replay/idempotence, opening/current/closing snapshots as context only,
 walk-forward + calibration (Brier/log-loss) champion-vs-challenger before promotion.
 SYNTHETIC_GATE first; REAL_DATA_GATE only in a data-bearing environment (same limit as SOCCER).
 
+## 7) RESOLVED brain call-graph (read-only, 2026-09-10) — evidence
+Measured via `pg_get_functiondef` inspection (lengths + call refs):
+- `predecir_mlb` = **the canonical brain** (~22KB body). Self-contained; does NOT call `motor_mlb`.
+- `predecir_partido` (dispatcher) → calls `predecir_mlb` for MLB. Not a parallel brain. ✅
+- `refrescar_mlb_modelo_snapshot` → writes `mlb_modelo_snapshot` AND inserts MLB/picks rows = the materializer of the canonical output into the pick surfaces.
+- `motor_mlb` (~3.5KB) = **standalone legacy engine, NOT in the canonical path** (predecir_mlb doesn't call it). → FASE 1 candidate to quarantine/retire so it can't diverge.
+- `badrino_predecir` = unrelated to MLB (no motor/predecir/snapshot/mlb-insert refs). Not a brain risk.
+- None of these use Dixon-Coles/`fn_score_dist` (soccer-only), as expected — MLB has its own run model.
+
+FASE 1 canonical path to certify: `predecir_mlb` → `refrescar_mlb_modelo_snapshot` → `mlb_modelo_snapshot` → `v_picks_mlb_modelo`/`v_mejores_picks_mlb`/`v_radar_mlb`. Single P_RETO writer confirmed = predecir_mlb; the "ONE BRAIN" unification mainly needs `motor_mlb` retired/quarantined and the snapshot verified for model/version/features_as_of/provenance immutability.
+
 (Prep note only — no code/model change until SOCCER is released by the auditor.)
