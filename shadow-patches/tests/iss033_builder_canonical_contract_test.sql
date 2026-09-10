@@ -20,8 +20,8 @@ insert into v2.competition_provider_map(provider,provider_competition_id,competi
   values ('espn','197',197,'Grecia SL','compmap_v1') on conflict do nothing;
 insert into v2.competition_mapping_config(singleton,active_mapping_version) values (true,'compmap_v1')
   on conflict (singleton) do update set active_mapping_version='compmap_v1';
-insert into v2.model_registry values ('soccer','reto_dc_v2','dc-2026.09.1',197,true) on conflict do nothing;
-insert into public.v_liga_promedios_futbol values (197,1.5,1.2) on conflict do nothing;
+insert into v2.model_registry (sport,model_name,model_version,liga_id,approved) values ('soccer','reto_dc_v2','dc-2026.09.1',197,true) on conflict do nothing;
+insert into public.v_liga_promedios_futbol (liga_id,media_goles_local,media_goles_visita) values (197,1.5,1.2) on conflict do nothing;
 
 insert into public.agenda_espn (espn_event_id,deporte,liga_id,liga_nombre,home_nombre,away_nombre,home_espn_id,away_espn_id,fecha) values
  ('EA','soccer',197,'Grecia SL','Home A','Away A','HA','AA', timestamptz '2026-09-10 18:00+00'),
