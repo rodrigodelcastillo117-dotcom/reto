@@ -61,3 +61,51 @@ Toda la SQL cualifica esquema; DDL idempotente donde aplica (CREATE OR REPLACE /
 - Ningún DROP CASCADE. Ningún UPDATE destructivo de datos. Ningún backfill sin plan tx.
 - iss031 backfill = dry-run (no muta hasta autorización).
 - Todos los tests corren en tx con ROLLBACK.
+
+## Orden de aplicación VERIFICADO en branch (soccer-final-branch-gate · rotbmkcqvaeqmfdormfp)
+Clean-bootstrap reproducible (empty -> 19 pasos, 0 errores). Orden topológico REAL
+aplicado vía la cadena de migraciones (apply_migration), corregido respecto al listado
+histórico por dependencias verificadas de objeto/vista (no de runtime):
+1. iss000_soccer_branch_baseline
+2. iss032_real_total_line_contract
+3. iss027_champions_crossleague_model
+4. iss037_crossleague_phi_versioned_snapshot
+5. iss041_soccer_joint_matrix_single_source   (antes que el builder: matriz coherente única)
+6. iss033_temporal_reproducible_builder
+7. iss029_domestic_leagues_approval            (no-op bajo freeze; INSERT Grecia sólo en cutover)
+8. iss030_soccer_dossier_manifest             (v3, integración clave — desde la cadena)
+9. iss031_parlay_leg_canonical_identity
+10. iss038_parlay_joint_prob_failclosed
+11. iss039_competition_provider_id_mapping     (fn_resolve_competition/active_mapping)
+12. iss042_soccer_joint_coherence_gate         (fn_matrix_market/coherence_gate)
+13. iss043_model_market_discrepancy_gate       (fn_novig_*/discrepancy)
+14. iss045_gate_topological_exclusion          (fn_event_gate_status + vistas de prueba)
+15. iss028_soccer_grading_root_guard
+16. iss034_parlay_gapA_final_leg_loss
+17. iss034b_parlay_grading_trigger_set
+18. iss035_bankroll_idempotence
+19. iss036_daily_canonical_selector            (MOVIDO al final: sus vistas v_soccer_event_gate/
+    v_soccer_daily_candidates referencian v2.fn_event_gate_status (iss045) y se validan en
+    CREATE VIEW, no en runtime -> DEBE ir DESPUÉS de iss045/iss042/iss043/iss039).
+
+### REORDER (dependency-driven fix)
+- iss036 se movió del paso 6 (listado histórico) al paso 19: `v2.v_soccer_event_gate`
+  hace `left join lateral v2.fn_event_gate_status(...)`, función creada por iss045. Una
+  vista se valida al crearse -> iss036 antes de iss045 rompía el bootstrap (relación/función
+  inexistente). El nuevo orden satisface la dependencia real. iss033 (builder) SÍ puede ir
+  antes de iss039 porque referencia fn_resolve_competition/fn_competition_active_mapping
+  sólo en el cuerpo plpgsql (resolución en runtime), no al CREATE.
+
+### GAP: iss041_fixtures (v2.gate_fixture_soccer_cards) FALTA en el repo
+- iss045 (vistas v_gate_fixture_*) y los tests iss042/043/036/048 LEEN
+  `v2.gate_fixture_soccer_cards` (las 6 cartas UCL del owner: 401915440/441/442/443/444 +
+  PSV 401915422). El SEED `iss041_fixtures` NUNCA se comiteó (los tests dicen "Requires
+  iss041_fixtures loaded"). Sin la tabla, `CREATE VIEW v_gate_fixture_status` falla y la
+  cadena se rompe en iss045.
+- FIX de bootstrap (mínimo, preserva semántica): iss045 ahora hace
+  `create table if not exists v2.gate_fixture_soccer_cards(...)` (unión de columnas de todos
+  los consumidores en scope) ANTES de sus vistas. Tabla vacía => vistas válidas, 0 filas;
+  las FILAS de fixture las siembra el setup de test (execute_sql), nunca la cadena.
+- PENDIENTE para cutover: recuperar el seed real de las 6 cartas (lambdas + odds DraftKings
+  reales) desde la branch original soccer-coherence-gate para correr las suites C1/C2 de
+  iss042 y la suite completa de iss043/iss048 end-to-end sobre la tabla.

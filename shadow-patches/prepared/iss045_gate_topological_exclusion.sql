@@ -18,6 +18,25 @@
 -- ============================================================================
 create schema if not exists v2;
 
+-- ── BOOTSTRAP FIX (clean-chain reproducibility) ──────────────────────────────
+-- The proof views below (v_gate_fixture_*) and the gate test suites read the
+-- adversarial owner-card fixture table v2.gate_fixture_soccer_cards. On a clean
+-- empty branch that table does not yet exist, so CREATE VIEW v_gate_fixture_status
+-- fails (missing relation) and the whole migration chain breaks here. The 6-owner
+-- fixture SEED (`iss041_fixtures`) was never committed to the repo; this DDL creates
+-- the table structure (idempotent, empty => proof views are valid and return 0 rows)
+-- so the chain reproduces from scratch with ZERO errors. The fixture ROWS are seeded
+-- separately by the gate test setup (execute_sql), never fabricated into the chain.
+-- Column set = union of every in-scope consumer (iss045 views, iss042/043/036/048 tests).
+create table if not exists v2.gate_fixture_soccer_cards (
+  espn_event_id text primary key,
+  home_team text, away_team text, competition text,
+  over_line numeric, lambda_home numeric, lambda_away numeric, rho numeric, maxg int,
+  odds_home numeric, odds_draw numeric, odds_away numeric, odds_over numeric, odds_under numeric,
+  disp_p_home numeric, disp_p_draw numeric, disp_p_away numeric, disp_p_over numeric,
+  bookmaker text
+);
+
 -- Per-event gate status from the stored matrix + stored scalars + real odds context.
 -- Works on any surface that persists score_dist + scalars + odds (prod staged rows or
 -- the branch fixture rows), so the exclusion logic is identical everywhere.
