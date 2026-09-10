@@ -38,17 +38,28 @@ create or replace function v2.fn_real_total_line(
 $$;
 
 -- Auditoría de línea real (evidencia continua; read-only).
-create or replace view v2.v_real_line_audit as
-with ev as (
-  select canonical_event_id eid, coalesce(prediction_time,computed_at) dec, over_line, p_over
-  from v_futpro_v2 where model_status like 'READY%' and p_over is not null
-)
-select e.eid, e.dec, e.over_line as linea_publicada,
-  l.provider_total_line as linea_real, l.provider, l.line_asof,
-  (l.provider_total_line is null) as fail_close_por_sin_linea,
-  (l.provider_total_line is not null and l.provider_total_line = e.over_line) as coincide
-from ev e
-left join lateral v2.fn_real_total_line(e.eid, e.dec) l on true;
+-- STAGED-GATE FIX: v_futpro_v2 es un objeto base de prod con cierre de dependencias
+-- que explota (>3 objetos: soccer_prediction_v2, v_goles_equipo_futbol, escudos_evento,
+-- team_logo, fn_dist_from_lambda...). En un branch vacío no existe. La vista de
+-- auditoría se crea SOLO si v_futpro_v2 está presente (no bloquea el deliverable
+-- central, que es v2.fn_real_total_line). En prod real la vista se crea normal.
+do $iss032$ begin
+  if to_regclass('public.v_futpro_v2') is not null then
+    execute $view$
+      create or replace view v2.v_real_line_audit as
+      with ev as (
+        select canonical_event_id eid, coalesce(prediction_time,computed_at) dec, over_line, p_over
+        from v_futpro_v2 where model_status like 'READY%' and p_over is not null
+      )
+      select e.eid, e.dec, e.over_line as linea_publicada,
+        l.provider_total_line as linea_real, l.provider, l.line_asof,
+        (l.provider_total_line is null) as fail_close_por_sin_linea,
+        (l.provider_total_line is not null and l.provider_total_line = e.over_line) as coincide
+      from ev e
+      left join lateral v2.fn_real_total_line(e.eid, e.dec) l on true;
+    $view$;
+  end if;
+end $iss032$;
 
 -- Regla de consumo (BLOQUE 5): over_prob/under_prob SOLO si fn_real_total_line
 -- devuelve fila Y la línea usada por el modelo == provider_total_line. Si difieren
