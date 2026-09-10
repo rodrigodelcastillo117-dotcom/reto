@@ -27,11 +27,26 @@ create table if not exists v2.model_config (
   calibration_status text, sample_floor int, window_days int, publish_authorized boolean,
   primary key (sport, model_version)
 );
+-- Append-only (AUDIT 5611083879 pt3): NO DO UPDATE — cambiar params bajo el MISMO
+-- model_version mutaría silenciosamente el belief histórico. Un cambio de gobernanza
+-- exige un model_version NUEVO. Re-seed idéntico = no-op.
 insert into v2.model_config values
   ('soccer','reto_dc_v2','dc-2026.09.1','goal_rates_same_comp_asof_v2','UNVALIDATED',8,540,true)
-on conflict (sport,model_version) do update set
-  feature_version=excluded.feature_version, sample_floor=excluded.sample_floor,
-  window_days=excluded.window_days, publish_authorized=excluded.publish_authorized;
+on conflict (sport,model_version) do nothing;
+-- Guarda fail-on-drift: si alguien intenta UPDATE de params bajo un model_version sellado,
+-- se aborta (la identidad versionada no cambia belief en-place).
+create or replace function v2.fn_model_config_immutable() returns trigger language plpgsql as $$
+begin
+  if row(new.feature_version,new.sample_floor,new.window_days) is distinct from
+     row(old.feature_version,old.sample_floor,old.window_days) then
+    raise exception 'MODEL_CONFIG_DRIFT: params de (%,%) son inmutables; usa un model_version nuevo',
+      new.sport, new.model_version;
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_model_config_immutable on v2.model_config;
+create trigger trg_model_config_immutable before update on v2.model_config
+  for each row execute function v2.fn_model_config_immutable();
 
 -- ── 2) Features AS OF decision_time (reproducible, FINAL-only, fecha<decision) ──
 -- Mirror del split de producción: local del equipo local, visitante del visitante.
@@ -94,18 +109,47 @@ create table if not exists v2.soccer_prediction_v2_staged (
   p_home numeric, p_draw numeric, p_away numeric, btts_yes numeric, btts_no numeric,
   over_line numeric, p_over numeric, p_under numeric, line_source text, line_asof timestamptz,
   model_status text, model_status_reason text, provenance jsonb,
+  competition_mapping_version text,          -- §20: mapping_version CONGELADO en la fila (AUDIT 5611083879 pt1)
+  availability_verified boolean,             -- pt2: ¿se exigió cargado_at<=decision? (no-leak de disponibilidad)
   feature_snapshot_id uuid, built_at timestamptz default now(),
   primary key (espn_event_id, decision_time, model_version)
 );
+-- (para tablas ya creadas en branch)
+alter table v2.soccer_prediction_v2_staged add column if not exists competition_mapping_version text;
+alter table v2.soccer_prediction_v2_staged add column if not exists availability_verified boolean;
+
+-- pt3: feature_snapshot inmutable fail-on-drift. Re-run idéntico = no-op; cambio de
+-- features bajo la MISMA (event,decision,feature_version) => RAISE (no reescribe belief).
+create or replace function v2.fn_feature_snapshot_immutable() returns trigger language plpgsql as $$
+begin
+  if row(new.home_gf,new.home_gc,new.away_gf,new.away_gc,new.sample_home,new.sample_away,
+         new.feature_data_asof,new.max_source_event_time) is distinct from
+     row(old.home_gf,old.home_gc,old.away_gf,old.away_gc,old.sample_home,old.sample_away,
+         old.feature_data_asof,old.max_source_event_time) then
+    raise exception 'FEATURE_SNAPSHOT_DRIFT: (%,%,%) ya sellado con features distintas; usa un feature_version nuevo',
+      new.espn_event_id, new.decision_time, new.feature_version;
+  end if;
+  return new;
+end $$;
+drop trigger if exists trg_feature_snapshot_immutable on v2.feature_snapshot;
+create trigger trg_feature_snapshot_immutable before update on v2.feature_snapshot
+  for each row execute function v2.fn_feature_snapshot_immutable();
 
 -- ── 4) Builder reproducible (decision_time explícito; sin now() como autoridad) ─
 -- Diferencias clave vs producción: features as-of, temporal_safe calculado, config
 -- registry-driven, agenda LEFT JOIN (universo), snapshot persistido.
-create or replace function v2.build_soccer_prediction_v2_staged(p_decision_time timestamptz)
-returns integer language plpgsql as $function$
-declare n int; cfg record;
+-- AUDIT 5611083879: p_enforce_availability default TRUE (forward-safe); p_mapping_version
+-- permite replay explícito. La mapping_version se CAPTURA una vez (v_map) y se persiste.
+create or replace function v2.build_soccer_prediction_v2_staged(
+  p_decision_time timestamptz,
+  p_enforce_availability boolean default true,
+  p_mapping_version text default null
+) returns integer language plpgsql as $function$
+declare n int; cfg record; v_map text;
 begin
   select * into cfg from v2.model_config where sport='soccer' and model_version='dc-2026.09.1';
+  -- pt1: congela UNA mapping_version para todo el build (no re-lee el puntero activo por fila).
+  v_map := coalesce(p_mapping_version, v2.fn_competition_active_mapping());
   with agenda as (  -- AGENDA = UNIVERSO (LEFT JOIN al modelo/catálogo; nada desaparece)
     select distinct on (a.espn_event_id) a.espn_event_id, a.liga_id, a.liga_nombre,
            a.home_nombre, a.away_nombre, a.fecha kickoff,
@@ -115,33 +159,32 @@ begin
     order by a.espn_event_id, a.fecha
   ),
   mapped as (
-    -- §20 (iss039): identidad de competencia por PROVIDER-ID numérico (no por nombre).
-    -- competition_id sale de fn_resolve_competition('espn', ag.liga_id, active_mapping);
-    -- el nombre es sólo etiqueta. provider-id no mapeado -> competition_id NULL -> NO_MODEL.
+    -- §20 (iss039): identidad por PROVIDER-ID numérico con la mapping_version CONGELADA (v_map).
     select ag.*, rc.competition_id,
            (r.approved is true) reg_ok
     from agenda ag
-    left join lateral v2.fn_resolve_competition('espn', ag.liga_id, v2.fn_competition_active_mapping()) rc on true
+    left join lateral v2.fn_resolve_competition('espn', ag.liga_id, v_map) rc on true
     left join v2.model_registry r on r.sport='soccer' and r.model_name=cfg.model_name
          and r.model_version=cfg.model_version and r.liga_id=ag.liga_id
   ),
   feats as (
     select m.*, f.home_gf,f.home_gc,f.away_gf,f.away_gc,f.sample_home,f.sample_away,
            f.feature_data_asof, f.max_source_event_time,
-           -- F8: alinear al contrato REAL de iss032.fn_real_total_line
-           -- (provider_total_line/provider/line_asof); no hay moneylines en el contrato de línea.
            o.provider_total_line as over_line, o.over_odds, o.under_odds,
            o.provider as bookmaker, o.line_asof as snapshot_at
     from mapped m
-    -- F3: excluye el evento target (m.espn_event_id) del propio cómputo de features.
+    -- pt2: pasa p_enforce_availability (exige cargado_at<=decision cuando true).
     left join lateral v2.fn_soccer_features_asof(
-        m.home_espn_id,m.away_espn_id,m.liga_id,p_decision_time,cfg.window_days,m.espn_event_id) f on true
+        m.home_espn_id,m.away_espn_id,m.liga_id,p_decision_time,cfg.window_days,
+        m.espn_event_id, p_enforce_availability) f on true
     left join lateral (select * from v2.fn_real_total_line(m.espn_event_id,p_decision_time)) o on true
   ),
   calc as (
     select fe.*,
-      -- temporal_safe CALCULADO (nunca literal true)
-      (fe.max_source_event_time is not null and fe.max_source_event_time <= p_decision_time) temporal_safe_calc,
+      -- pt2: temporal_safe SÓLO si (kickoff<=decision) Y se verificó disponibilidad de época.
+      -- Un replay sin enforce (availability_verified=false) NO reclama temporal_safe.
+      (fe.max_source_event_time is not null and fe.max_source_event_time <= p_decision_time
+         and p_enforce_availability) temporal_safe_calc,
       v2.fn_score_dist(fe.home_gf,fe.home_gc,fe.away_gf,fe.away_gc,
                        lg.media_goles_local, lg.media_goles_visita, fe.over_line) d
     from feats fe left join public.v_liga_promedios_futbol lg on lg.liga_id=fe.liga_id
@@ -169,7 +212,8 @@ begin
      feature_data_asof, max_source_event_time, sample_home, sample_away, temporal_safe,
      feature_version, model_version, calibration_status,
      p_home,p_draw,p_away, btts_yes,btts_no, over_line,p_over,p_under, line_source,line_asof,
-     model_status, model_status_reason, provenance, feature_snapshot_id)
+     model_status, model_status_reason, provenance,
+     competition_mapping_version, availability_verified, feature_snapshot_id)
   select c.espn_event_id, c.competition_id, c.home_nombre, c.away_nombre, c.kickoff, p_decision_time,
      c.feature_data_asof, c.max_source_event_time, c.sample_home, c.sample_away, c.temporal_safe_calc,
      cfg.feature_version, cfg.model_version, cfg.calibration_status,
@@ -187,17 +231,21 @@ begin
           when c.competition_id is null then 'NO_MODEL'      -- unsupported/unmapped: visible, P=NULL
           else 'DATA_INCOMPLETE' end,
      case when pub.publish then 'DC V2 as-of decision_time desde tasas FINAL de la misma competencia'
-          when c.competition_id is null then 'Competencia no mapeada/soportada: evento visible sin P_RETO'
+          when c.competition_id is null then 'Competencia no mapeada/soportada (provider-id): evento visible sin P_RETO'
           when not c.reg_ok then 'Competencia no aprobada para el modelo'
           when c.sample_home is null or c.sample_away is null then 'Sin tasas de ambos equipos EN ESTA competencia'
           when c.sample_home < cfg.sample_floor or c.sample_away < cfg.sample_floor then 'Muestra insuficiente (<'||cfg.sample_floor||')'
-          when not c.temporal_safe_calc then 'Fuga temporal: features posteriores a decision_time'
+          when not p_enforce_availability then 'REPLAY_AVAILABILITY_UNVERIFIED: disponibilidad de época no verificada; no se reclama temporal_safe'
+          when c.max_source_event_time is not null and c.max_source_event_time > p_decision_time then 'Fuga temporal: features posteriores a decision_time'
           when c.d is null then 'El modelo no pudo estimar goles'
           else 'Datos insuficientes' end,
      jsonb_build_object('engine','dc_goal_rates_asof','event_liga_id',c.liga_id,
         'competition_approved',c.reg_ok,'feature_data_asof',c.feature_data_asof,
-        'temporal_safe',c.temporal_safe_calc,'odds_is_context_not_preto',true),
-     s.feature_snapshot_id
+        'temporal_safe',c.temporal_safe_calc,'odds_is_context_not_preto',true,
+        'competition_mapping_version',v_map,'availability_verified',p_enforce_availability,
+        'availability_note', case when p_enforce_availability then 'ENFORCED_cargado_at<=decision'
+                                  else 'REPLAY_AVAILABILITY_UNVERIFIED' end),
+     v_map, p_enforce_availability, s.feature_snapshot_id
   -- F7: 'cfg' es una variable record de plpgsql; sus campos se usan como escalares.
   -- NO puede ir en el FROM como si fuera una tabla (antes: 'from calc c, cfg' => error).
   from calc c
