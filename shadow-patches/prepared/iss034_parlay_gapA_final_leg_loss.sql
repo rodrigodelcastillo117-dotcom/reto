@@ -19,8 +19,12 @@ begin
   if eid is null then return false; end if;                 -- sin evento -> no se puede afirmar final
   select * into v from public.live_scores where espn_event_id=eid limit 1;
   if not found then return false; end if;                   -- sin marcador -> no final demostrable
+  -- STAGED-GATE FIX: pasar liga/deporte del propio live_scores (antes null,null), porque
+  -- is_truly_final es FAIL-CLOSED para eventos sin deporte resoluble (no aplica la regla
+  -- de "final" de fútbol si no puede clasificar el deporte). Un evento soccer con
+  -- status='final'/period>=2 sólo se reconoce como final si lleva su liga/deporte.
   return public.is_truly_final(v.status, v.status_detail, v.minute, v.period,
-                               v.home_score, v.away_score, null, null);
+                               v.home_score, v.away_score, v.liga, v.deporte);
 end $$;
 
 -- ── Trigger reescrito: cierre por pata perdida SÓLO si esa pata es FINAL ──────

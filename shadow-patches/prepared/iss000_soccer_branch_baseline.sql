@@ -220,3 +220,206 @@ BEGIN
   END IF;
   RETURN false;
 END; $function$;
+
+-- ============================================================================
+-- BASELINE ADDITIONS (SOCCER FINAL GATE) — prod base objects missing from the
+-- original scaffold, required by iss031/iss035/iss038 gate tests. Extracted
+-- READ-ONLY from prod (wpiztubmmmzclhlprgpd). Empty tables => genuine fail-closed
+-- behavior. All idempotent. NO PROD MUTATION.
+-- ============================================================================
+create extension if not exists unaccent;
+
+-- ── missing columns / constraints on baseline tables ────────────────────────
+alter table public.usuarios  add column if not exists reto_inicio_at timestamptz;
+create unique index if not exists usuarios_apodo_key on public.usuarios(apodo);
+create unique index if not exists live_scores_espn_event_id_key on public.live_scores(espn_event_id);
+alter table public.picks     add column if not exists pa_activado_at timestamptz;
+alter table public.parlays   add column if not exists ai_prob_combinada numeric;
+alter table public.parlays   add column if not exists cashout_monto numeric;
+alter table public.parlays   add column if not exists momio_efectivo numeric;
+alter table public.parlays   add column if not exists bono numeric;
+alter table public.parlays   add column if not exists ganancia_total numeric;
+
+-- ── ajustes_cuenta (bankroll adjustments; read by calcular_bankroll_actual__base) ──
+create table if not exists public.ajustes_cuenta (
+  id uuid default gen_random_uuid(), user_id uuid, apodo text, fecha date,
+  tipo text, monto numeric, descripcion text, created_at timestamptz default now()
+);
+
+-- ── resolver_evento_canonico dependency closure (empty => fail-closed resolve) ──
+create table if not exists public.evento_id_map (
+  id_externo text, espn_event_id text
+);
+create table if not exists public.ligamx_partidos (
+  id bigint, espn_event_id text, fecha_utc timestamptz, home_id bigint, away_id bigint
+);
+create table if not exists public.ligamx_equipos (
+  api_football_id bigint, nombre text
+);
+create table if not exists public.marcadores_archivo (
+  espn_event_id text, home_team text, away_team text, game_date timestamptz
+);
+
+-- ── bankroll truth functions (REAL from prod) ───────────────────────────────
+CREATE OR REPLACE FUNCTION public.apodo_scope(p_in text)
+ RETURNS text LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+  select case when auth.uid() is not null
+              then (select u.apodo from public.usuarios u where u.user_id = auth.uid())
+              else p_in end
+$function$;
+
+CREATE OR REPLACE FUNCTION public.reto_desde__base(p_apodo text)
+ RETURNS timestamptz LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+  select coalesce((select reto_inicio_at from usuarios where apodo = p_apodo),
+                  '-infinity'::timestamptz);
+$function$;
+
+CREATE OR REPLACE FUNCTION public.reto_desde(p_apodo text)
+ RETURNS timestamptz LANGUAGE sql SECURITY DEFINER SET search_path TO 'public'
+AS $function$ SELECT public.reto_desde__base(public.apodo_scope(p_apodo)) $function$;
+
+CREATE OR REPLACE FUNCTION public.calcular_bankroll_actual__base(p_apodo text)
+ RETURNS numeric LANGUAGE sql STABLE SET search_path TO 'public'
+AS $function$
+  select round(
+    coalesce((select bankroll_inicial from usuarios where apodo=p_apodo),0)
+  + coalesce((select sum(monto) from ajustes_cuenta
+      where apodo=p_apodo and created_at >= public.reto_desde(p_apodo)),0)
+  + coalesce((select sum(ganancia_neta) from picks
+      where apodo=p_apodo and resultado in ('ganado','perdido','push','nulo','retirado')
+        and created_at >= public.reto_desde(p_apodo)),0)
+  + coalesce((select sum(ganancia_total) from parlays
+      where apodo=p_apodo and resultado in ('ganado','perdido','push','nulo','retirado')
+        and created_at >= public.reto_desde(p_apodo)),0), 2)
+$function$;
+
+CREATE OR REPLACE FUNCTION public.calcular_bankroll_actual(p_apodo text)
+ RETURNS numeric LANGUAGE sql SECURITY DEFINER SET search_path TO 'public'
+AS $function$ SELECT public.calcular_bankroll_actual__base(public.apodo_scope(p_apodo)) $function$;
+
+-- ── slug_equipo + resolver_evento_canonico (REAL from prod) ─────────────────
+CREATE OR REPLACE FUNCTION public.slug_equipo(p text)
+ RETURNS text LANGUAGE sql IMMUTABLE
+AS $function$
+  WITH limpio AS (SELECT lower(unaccent(COALESCE(p,''))) t),
+  sin_ruido AS (
+    SELECT regexp_replace(
+      regexp_replace(t,
+        '(^|\s)(fc|cf|sc|ac|as|rsc|rc|hnk|nk|ifk|if|bk|fk|sk|cd|ca|club|deportivo|real|atletico|athletic|sporting|united|utd|city|calcio|ssc|us|usl|afc|cfr|mfk|zn|jk|ks|lks|gks|szk|pfc|cska|se|ec|sd|ud|sv|tsv|vfb|vfl|fsv|msv|bsc|kv|kaa|kvc|rkc|psv|nec|az)(\s|$)',
+        ' ', 'g'),
+      '\s+(ii|b|res\.?|reserve|u\d+|sub\d+|femenino|women|w)(\s|$)', ' ', 'g') t
+    FROM limpio),
+  translit AS (
+    SELECT regexp_replace(
+      regexp_replace(
+        regexp_replace(t, 'kiev', 'kyiv', 'g'),
+        'goteborg|gothenburg', 'goteborg', 'g'),
+      'munchen|munich', 'munchen', 'g') t
+    FROM sin_ruido)
+  SELECT regexp_replace(t, '[^a-z0-9]', '', 'g') FROM translit;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.resolver_evento_canonico(p_id text)
+ RETURNS jsonb LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path TO 'public'
+AS $function$
+DECLARE
+  v_id    text := btrim(coalesce(p_id, ''));
+  v_espn  text; v_num text; v_af bigint; v_home text; v_away text;
+  v_fecha date; v_n int; v_partes text[];
+BEGIN
+  IF v_id = '' THEN
+    RETURN jsonb_build_object('espn_event_id', NULL, 'reason_code', 'ANALYSIS_UNAVAILABLE', 'metodo', 'empty');
+  END IF;
+  IF EXISTS (SELECT 1 FROM agenda_espn a WHERE a.espn_event_id = v_id) THEN
+    RETURN jsonb_build_object('espn_event_id', v_id, 'reason_code', 'DIRECT', 'metodo', 'agenda_espn');
+  END IF;
+  SELECT m.espn_event_id INTO v_espn FROM evento_id_map m WHERE m.id_externo = v_id;
+  IF v_espn IS NOT NULL AND EXISTS (SELECT 1 FROM agenda_espn a WHERE a.espn_event_id = v_espn) THEN
+    RETURN jsonb_build_object('espn_event_id', v_espn, 'reason_code', 'MAP_CACHE', 'metodo', 'evento_id_map');
+  END IF;
+  v_num := regexp_replace(v_id, '^af[_:]?', '', 'i');
+  IF v_num ~ '^[0-9]+$' THEN
+    v_af := v_num::bigint;
+    SELECT p.espn_event_id INTO v_espn FROM ligamx_partidos p WHERE p.id = v_af AND p.espn_event_id IS NOT NULL;
+    IF v_espn IS NOT NULL AND EXISTS (SELECT 1 FROM agenda_espn a WHERE a.espn_event_id = v_espn) THEN
+      RETURN jsonb_build_object('espn_event_id', v_espn, 'reason_code', 'MAP_LIGAMX', 'metodo', 'ligamx_partidos.espn_event_id');
+    END IF;
+    SELECT h.nombre, a.nombre, p.fecha_utc::date INTO v_home, v_away, v_fecha
+      FROM ligamx_partidos p
+      LEFT JOIN ligamx_equipos h ON h.api_football_id = p.home_id
+      LEFT JOIN ligamx_equipos a ON a.api_football_id = p.away_id
+     WHERE p.id = v_af;
+  ELSIF v_id LIKE 'futmap:%' THEN
+    v_partes := string_to_array(v_id, ':');
+    IF array_length(v_partes, 1) >= 4 THEN
+      BEGIN v_fecha := v_partes[3]::date; EXCEPTION WHEN OTHERS THEN v_fecha := NULL; END;
+      v_home := split_part(v_partes[4], '_vs_', 1);
+      v_away := split_part(v_partes[4], '_vs_', 2);
+    END IF;
+  END IF;
+  IF v_home IS NOT NULL AND v_away IS NOT NULL AND v_fecha IS NOT NULL
+     AND slug_equipo(v_home) <> '' AND slug_equipo(v_away) <> '' THEN
+    WITH cand AS (
+      SELECT DISTINCT l.espn_event_id
+      FROM (SELECT espn_event_id, home_team, away_team, game_date FROM live_scores
+            UNION ALL
+            SELECT espn_event_id, home_team, away_team, game_date FROM marcadores_archivo) l
+      WHERE l.espn_event_id ~ '^[0-9]+$'
+        AND l.game_date::date BETWEEN v_fecha - 1 AND v_fecha + 1
+        AND slug_equipo(l.home_team) LIKE '%' || left(slug_equipo(v_home), 6) || '%'
+        AND slug_equipo(l.away_team) LIKE '%' || left(slug_equipo(v_away), 6) || '%'
+        AND EXISTS (SELECT 1 FROM agenda_espn a WHERE a.espn_event_id = l.espn_event_id)
+    )
+    SELECT count(*), min(espn_event_id) INTO v_n, v_espn FROM cand;
+    IF v_n = 1 THEN
+      RETURN jsonb_build_object('espn_event_id', v_espn, 'reason_code', 'FUZZY_UNIQUE', 'metodo', 'equipos+fecha');
+    ELSIF v_n > 1 THEN
+      RETURN jsonb_build_object('espn_event_id', NULL, 'reason_code', 'IDENTITY_AMBIGUOUS', 'metodo', 'equipos+fecha', 'candidatos', v_n);
+    END IF;
+  END IF;
+  RETURN jsonb_build_object('espn_event_id', NULL, 'reason_code', 'ANALYSIS_UNAVAILABLE', 'metodo', 'no_match');
+END;
+$function$;
+
+-- ── dossier CONTEXT/MARKET source tables (real prod columns; empty => not-available) ──
+-- Required by v2.fn_soccer_dossier_manifest (iss030) when it evaluates a real event.
+create table if not exists public.lab_soccer_xg_forward (
+  captura_id bigint, match_id text, equipo_id text, lado text, xg_value numeric, source text,
+  model_version text, computed_at timestamptz, available_at timestamptz, ingested_at timestamptz,
+  kickoff_at timestamptz, temporal_flag text, usable_pre_kickoff boolean, notes text
+);
+create table if not exists public.alineaciones_espn (
+  espn_event_id text, espn_endpoint text, deporte text, fecha_partido timestamptz,
+  capturado_at timestamptz, minutos_antes integer, hay_alineacion boolean, rosters jsonb
+);
+create table if not exists public.futbol_arbitro_partido (
+  espn_event_id text, liga text, fecha timestamptz, arbitro_id text, arbitro text,
+  amarillas_local numeric, amarillas_visita numeric, rojas_local numeric, rojas_visita numeric,
+  faltas_local numeric, faltas_visita numeric, cargado_at timestamptz
+);
+create table if not exists public.soccer_standings (
+  id bigint, liga_id integer, liga_nombre text, temporada integer, conferencia text, grupo text,
+  team_id integer, team_nombre text, team_escudo text, posicion integer, puntos integer,
+  pj integer, pg integer, pe integer, pp integer, gf integer, gc integer, diff integer,
+  forma text, descripcion text, updated_at timestamptz
+);
+create table if not exists public.bt_h2h (
+  espn_event_id text, liga text, fecha timestamptz, h text, a text, over25 integer, btts integer,
+  gano_local integer, h2h_over_prev numeric, h2h_local_prev numeric, h2h_n bigint
+);
+create table if not exists public.bt_descanso (
+  espn_event_id text, equipo text, lado text, fecha timestamptz, dias_descanso numeric
+);
+create table if not exists public.bt_forma (
+  espn_event_id text, equipo text, f_over numeric, n bigint
+);
+create table if not exists public.odds_pro_snapshots (
+  id bigint, espn_event_id varchar, fixture_id integer, sport_key varchar, market varchar,
+  pinnacle_home_odds numeric, pinnacle_draw_odds numeric, pinnacle_away_odds numeric,
+  bookie_best_home_odds numeric, bookie_best_draw_odds numeric, bookie_best_away_odds numeric,
+  bookie_best_name varchar, implied_pinnacle_prob_home numeric, implied_pinnacle_prob_draw numeric,
+  implied_pinnacle_prob_away numeric, ev_home numeric, ev_draw numeric, ev_away numeric,
+  is_opening boolean, is_closing boolean, clv_percentage numeric, created_at timestamptz
+);
