@@ -10,9 +10,9 @@ create trigger trg_auto_cerrar_parlay before update on public.parlays
   for each row execute function public.auto_cerrar_parlay_si_leg_perdido();
 
 -- Evento LIVE (no final) para la pata "perdedora" temprana
-insert into public.live_scores (espn_event_id,status,minute,period,home_score,away_score,home_team,away_team)
-values ('GAPA_LIVE','in_progress',60,2,0,1,'A','B')
-on conflict (espn_event_id) do update set status=excluded.status,home_score=excluded.home_score,away_score=excluded.away_score;
+insert into public.live_scores (espn_event_id,status,minute,period,home_score,away_score,home_team,away_team,liga,deporte)
+values ('GAPA_LIVE','in_progress',60,2,0,1,'A','B','UEFA Champions League','⚽ Fútbol')
+on conflict (espn_event_id) do update set status=excluded.status,home_score=excluded.home_score,away_score=excluded.away_score,liga=excluded.liga,deporte=excluded.deporte;
 
 -- Parlay 3 patas: 1 ganada final, 1 pendiente, 1 "perdido" pero su evento está EN VIVO
 insert into public.parlays (id, apodo, fecha, apuesta, momio_total, resultado, picks_data)

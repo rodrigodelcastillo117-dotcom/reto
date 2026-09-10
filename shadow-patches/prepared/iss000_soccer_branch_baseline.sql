@@ -250,14 +250,19 @@ create table if not exists public.ajustes_cuenta (
 create table if not exists public.evento_id_map (
   id_externo text, espn_event_id text
 );
+-- ligamx_partidos / _equipos / marcadores_archivo: real prod columns needed by
+-- buscar_marcador (SQL language -> validated at CREATE) and buscar_marcador_v2 (iss034b).
 create table if not exists public.ligamx_partidos (
-  id bigint, espn_event_id text, fecha_utc timestamptz, home_id bigint, away_id bigint
+  id bigint, espn_event_id text, fecha_utc timestamptz, home_id bigint, away_id bigint,
+  status text, minuto integer, home_score integer, away_score integer, raw jsonb
 );
 create table if not exists public.ligamx_equipos (
-  api_football_id bigint, nombre text
+  id integer, api_football_id bigint, nombre text, espn_id text
 );
 create table if not exists public.marcadores_archivo (
-  espn_event_id text, home_team text, away_team text, game_date timestamptz
+  espn_event_id text, liga text, deporte text, home_team text, away_team text,
+  home_score integer, away_score integer, home_sets integer, away_sets integer,
+  status text, status_detail text, game_date timestamptz, archivado_at timestamptz
 );
 
 -- ── bankroll truth functions (REAL from prod) ───────────────────────────────

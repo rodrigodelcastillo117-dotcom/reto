@@ -25,6 +25,7 @@ Toda la SQL cualifica esquema; DDL idempotente donde aplica (CREATE OR REPLACE /
 | 7 | iss031_parlay_leg_canonical_identity | resolver_evento_canonico | `v2.fn_leg_canonical_event_id`, `v2.fn_parlay_identidad_propuesta`, `v2.v_parlay_identity_audit` | parlay a3135134 identity | DROP objetos v2; backfill es dry-run |
 | 8 | iss028_soccer_grading_root_guard | is_truly_final, live_scores, pa_score_snapshot | REEMPLAZA `guard_no_early_loss`, `guard_pa_evidencia_obligatoria` | iss028 grading guard test | restaurar defs previas (guardadas en rollback/) |
 | 9 | iss034_parlay_gapA_final_leg_loss | is_truly_final, live_scores | crea `v2.fn_leg_is_final`; REEMPLAZA `auto_cerrar_parlay_si_leg_perdido`, `cerrar_parlays_con_pata_perdida` | iss034 C1/C2 + extra C3/C4/C5 | restaurar defs previas |
+| 9b | iss034b_parlay_grading_trigger_set | iss034 (auto_cerrar, fn_leg_is_final), iss000 (live_scores, marcadores_archivo, ligamx_*, evento_id_map, slug_equipo, is_truly_final) | stub `public.mundial_partidos`; CREATE OR REPLACE (verbatim prod) `is_postponed_or_cancelled`, `buscar_marcador`, `buscar_marcador_v2`, `bloquear_calificacion_parlay_con_legs_futuros`, `protect_parlays_premature_grading`; instala triggers `trg_auto_cerrar_parlay`, `protect_parlays_premature`, `trg_bloquear_calificacion_parlay_legs_futuros` en `public.parlays` | iss034_extra C3/C4/C5 (requiere el set COMPLETO de triggers) | rollback/iss034b_parlay_grading_trigger_set_rollback.sql (defs prod verbatim) |
 | 10 | iss035_bankroll_idempotence | calcular_bankroll_actual | REEMPLAZA `actualizar_bankroll_post_al_calificar`, `_parlay` | iss035 idempotence test | restaurar defs previas |
 
 ## Notas de dependencia
@@ -32,6 +33,9 @@ Toda la SQL cualifica esquema; DDL idempotente donde aplica (CREATE OR REPLACE /
 - iss029 aplica el INSERT de aprobación de Grecia **sólo** tras BLOQUE 2b (ya validado);
   el resto de ligas permanece fail-closed (sin fila).
 - Pasos 8-10 REEMPLAZAN funciones de prod: capturar `pg_get_functiondef` ANTES (rollback/).
+- iss034b va INMEDIATAMENTE DESPUÉS de iss034. iss034_extra (C3/C4/C5) NO instala triggers
+  propios: iss034b es lo que lo hace ejecutable (set completo de triggers en parlays +
+  helpers de prod capturados read-only). Sus defs se copiaron a rollback/ (versión prod).
 - Pasos 1-7 son aditivos (objetos v2 nuevos): rollback = DROP.
 
 ## Colisiones / overlaps detectados

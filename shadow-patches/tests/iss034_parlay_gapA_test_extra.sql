@@ -7,9 +7,9 @@
 begin;
 
 -- C3: pata FINAL push + resto PRE => parlay sigue pendiente (push no pierde)
-insert into public.live_scores (espn_event_id,status,minute,period,home_score,away_score,home_team,away_team)
-values ('GAPA_PUSH','final',90,2,1,1,'A','B')
-on conflict (espn_event_id) do update set status='final',home_score=1,away_score=1;
+insert into public.live_scores (espn_event_id,status,minute,period,home_score,away_score,home_team,away_team,liga,deporte)
+values ('GAPA_PUSH','final',90,2,1,1,'A','B','UEFA Champions League','⚽ Fútbol')
+on conflict (espn_event_id) do update set status='final',home_score=1,away_score=1,liga=excluded.liga,deporte=excluded.deporte;
 insert into public.parlays (id, apodo, fecha, apuesta, momio_total, resultado, picks_data)
 values ('00000000-0000-0000-0000-0000000034c3','tester', now(), 100, 4.0, 'pendiente',
   jsonb_build_array(
@@ -24,9 +24,9 @@ do $$ declare r text; begin
 end $$;
 
 -- C4: pata marcada 'perdido' pero evento POSTPONED (no final) => pending
-insert into public.live_scores (espn_event_id,status,status_detail,minute,period,home_score,away_score,home_team,away_team)
-values ('GAPA_PPD','postponed','Postponed',0,1,0,0,'A','B')
-on conflict (espn_event_id) do update set status='postponed',status_detail='Postponed';
+insert into public.live_scores (espn_event_id,status,status_detail,minute,period,home_score,away_score,home_team,away_team,liga,deporte)
+values ('GAPA_PPD','postponed','Postponed',0,1,0,0,'A','B','UEFA Champions League','⚽ Fútbol')
+on conflict (espn_event_id) do update set status='postponed',status_detail='Postponed',liga=excluded.liga,deporte=excluded.deporte;
 insert into public.parlays (id, apodo, fecha, apuesta, momio_total, resultado, picks_data)
 values ('00000000-0000-0000-0000-0000000034c4','tester', now(), 100, 4.0, 'pendiente',
   jsonb_build_array(
@@ -43,9 +43,9 @@ end $$;
 -- C5: pata FINAL perdida cierra el parlay; luego el proveedor revierte a live.
 --     No debe re-abrir/duplicar de forma irreversible: el cierre queda estable y
 --     cualquier correccion pasa por recalc (idempotente, GAP B).
-insert into public.live_scores (espn_event_id,status,minute,period,home_score,away_score,home_team,away_team)
-values ('GAPA_C5','final',90,2,0,2,'A','B')
-on conflict (espn_event_id) do update set status='final',home_score=0,away_score=2;
+insert into public.live_scores (espn_event_id,status,minute,period,home_score,away_score,home_team,away_team,liga,deporte)
+values ('GAPA_C5','final',90,2,0,2,'A','B','UEFA Champions League','⚽ Fútbol')
+on conflict (espn_event_id) do update set status='final',home_score=0,away_score=2,liga=excluded.liga,deporte=excluded.deporte;
 insert into public.parlays (id, apodo, fecha, apuesta, momio_total, resultado, picks_data)
 values ('00000000-0000-0000-0000-0000000034c5','tester', now(), 100, 3.0, 'pendiente',
   jsonb_build_array(
