@@ -18,7 +18,31 @@ Toda la SQL cualifica esquema; DDL idempotente donde aplica (CREATE OR REPLACE /
 | 1 | iss032_real_total_line_contract | v_momios_confiables | `v2.fn_real_total_line`, `v2.v_real_line_audit` | real_line audit 77/77 | DROP FUNCTION/VIEW (nuevos) |
 | 2 | iss027_champions_crossleague_model | historico, liga catalogs | `v2.liga_fuerza`, `v2.crossleague_params`, `v2.crossleague_competencias`, `v2.fn_crossleague_features`, `v2.fn_crossleague_p_reto` | lab/champions_crossleague_v1 | DROP objetos v2 nuevos |
 | 2b | iss037_crossleague_phi_versioned_snapshot | iss027 (liga_fuerza) | `v2.liga_fuerza_version` (PK incl. cutoff, append-only), `v2.fn_seal_liga_fuerza_snapshot`, `v2.fn_crossleague_active_cutoff`, `v2.fn_crossleague_phi_asof` | iss037_phi_replay_test (2 cutoffs, fail-close, append-only) | DROP tabla/funciones nuevas |
-| 3 | iss033_temporal_reproducible_builder | iss032 (fn_real_total_line), model_registry, fn_score_dist, v_liga_promedios | `v2.model_config`, `v2.fn_soccer_features_asof`, `v2.feature_snapshot`, `v2.soccer_prediction_v2_staged`, `v2.build_soccer_prediction_v2_staged`, (`v2.v_soccer_canonical` al descomentar) | iss033 adversarial replay + agenda_universe_regression | DROP funciones/tablas nuevas (staged, sin datos prod) |
+| 3 | iss033_temporal_reproducible_builder | iss032 (fn_real_total_line), iss027 (crossleague model + liga_fuerza + crossleague_competencias), iss041 (fn_dist_from_lambda), model_registry, fn_score_dist, v_liga_promedios | `v2.model_config`, `v2.fn_soccer_features_asof`, `v2.feature_snapshot`, `v2.soccer_prediction_v2_staged`, **`v2.fn_crossleague_staged`** (nuevo), `v2.build_soccer_prediction_v2_staged` (con ROUTING cruzado), (`v2.v_soccer_canonical` al descomentar) | iss033 adversarial replay + agenda_universe_regression + REAL-PATH 6-fixture block (run_soccer_final_branch_gate) | DROP funciones/tablas nuevas (staged, sin datos prod) |
+
+### CROSSLEAGUE ROUTING FIX en iss033 (blocker AUDIT 5623863543 / 5623894301)
+- ROOT CAUSE: `build_soccer_prediction_v2_staged` computaba `reg_ok` sólo desde
+  `v2.model_registry` (ligas DOMÉSTICAS). Las competencias CRUZADAS (UCL competition_id=2,
+  UEL=3) se aprueban en `v2.crossleague_competencias` (iss027), y el modelo cruzado
+  (`fn_crossleague_features` + coeficientes `crossleague_params` + φ `liga_fuerza`) NO
+  estaba cableado -> las 6 fixtures UCL del owner fallaban-cerrado como "Competencia no
+  aprobada para el modelo".
+- FIX (sin hardcode de event ids, sin debilitar guardas): `mapped` marca `is_xl` =
+  competencia resuelta está aprobada en `crossleague_competencias`. Para `is_xl`, el builder
+  llama `v2.fn_crossleague_staged(home,away,decision,competition_id,over_line_real)` que
+  computa λ cruzadas (forma doméstica as-of + φ + coeficientes, idénticas a
+  `fn_crossleague_p_reto`) y emite el contrato COMPLETO vía la MISMA fuente autoritativa de
+  matriz `v2.fn_dist_from_lambda` (iss041): score_dist + top-5 + 1X2/BTTS + O/U push/
+  line_type/supported en la LÍNEA REAL. El path doméstico queda intacto. fail-close cruzado
+  con razón REAL (muestra doméstica insuficiente / liga sin φ / fuga temporal) DESPUÉS de
+  intentar el modelo, nunca por config/mapping vacío.
+- VERIFICADO en branch (qcfjvnmjjfiiwugrxksv, decision 2026-09-10 12:00): 6 procesadas,
+  3 READY (Como–RB Leipzig, Bayern–Bodo/Glimt, Fenerbahce–AS Roma), 3 DATA_INCOMPLETE
+  (PSV–Shakhtar, Slavia–Lens, Man United–Sabah: el visitante tiene 0 partidos domésticos
+  rastreados). Bayern READY+coherente -> QUALITY_DOWNGRADE suprimido por v_soccer_event_gate
+  DESPUÉS de existir predicción. Como/Fenerbahce eligibles -> candidates. Replay idempotente.
+  El seed versionado (seed_soccer_branch_data.sql) ahora incluye las 6 agenda UCL reales,
+  momios DraftKings reales, e historico 540d real de los 12 clubes + competition_catalog real.
 | 4 | iss029_domestic_leagues_approval | iss033 (model_config/registry) | INSERT approval **sólo Grecia 197** (comentado) | BLOQUE2b (validación) | DELETE de la fila de registro Grecia |
 | 5 | iss030_soccer_dossier_manifest | iss032, v_futpro_v2, tablas fuente | `v2.dossier_source_catalog`, `v2.fn_soccer_dossier_manifest` | iss030 manifest test + dossier coverage | DROP función/catalog nuevos |
 | 6 | iss036_daily_canonical_selector | **iss033** (soccer_prediction_v2_staged) | `v2.v_soccer_daily_candidates`, `v2.v_soccer_daily_canonical` | DAILY_NO_FIXED_LINE (branch) | DROP VIEWs nuevas |
