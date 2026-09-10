@@ -34,6 +34,20 @@
 --   (edge-layer OCR/parse parallelization is out of this repo — noted at end)
 -- ============================================================================
 
+-- ============================================================================
+-- v3 ADDENDUM — resolves issue #4 comment 5620923816 (6 STOP-SHIP vs v2 @6e11994):
+--   F2  resolver repointed onto the REAL public.agenda_espn universe
+--       (fn_seed_parlay_scanner_agenda_real; synthetic gate_fixture path retired
+--        for the real fixture). PRODUCT edge OCR->resolver E2E stays BLOCKED here.
+--   F3  ticket_total_odds MAX() replaced by explicit-tolerance AGREEMENT check;
+--       contradiction => TICKET_PRICE_CONFLICT / NEEDS_REVIEW / payout NULL.
+--   F4  market line read STRICTLY from the tail after the Total/Handicap token,
+--       never from digits in the team name (Schalke 04 / 1860 Munich / Bayer 04).
+--   F6  resolution prefers explicit id then provider team ids; alias keys are
+--       FALLBACK only; >1 candidate => AMBIGUOUS + candidates, never guessed.
+-- (F1 real fixture + F5 edge performance plan live in the v3 test / report.)
+-- ============================================================================
+
 create schema if not exists v2;
 
 -- ----------------------------------------------------------------------------
@@ -87,8 +101,14 @@ create table if not exists v2.parlay_canonical_agenda (
   kickoff            timestamptz not null,
   competition_id     text
 );
+-- FINDING 6: carry provider (ESPN) team ids so resolution can prefer canonical
+-- provider ids over alias-normalized keys (aliases are FALLBACK only).
+alter table v2.parlay_canonical_agenda add column if not exists home_provider_id text;
+alter table v2.parlay_canonical_agenda add column if not exists away_provider_id text;
 comment on table v2.parlay_canonical_agenda is
-  'iss046: canonical resolution agenda (id, normalized teams, kickoff, competition).';
+  'iss046 v3: canonical resolution agenda (id, normalized teams, kickoff, '
+  'competition, provider team ids). Seeded from the REAL public.agenda_espn '
+  'universe via fn_seed_parlay_scanner_agenda_real (finding 2).';
 
 -- Registry-backed canonical team key: an alias (incl. OCR garble) is mapped to
 -- the canonical name, then to its canonical key. Falls back to plain fn_norm_team
@@ -146,6 +166,84 @@ begin
 end $$;
 
 -- ----------------------------------------------------------------------------
+-- FINDING 2 — REAL canonical event universe seeder (repoints the resolver off
+-- the synthetic gate_fixture_soccer_cards side path onto public.agenda_espn).
+-- The 6 rows below are the REAL prod public.agenda_espn rows for the owner
+-- ticket's events (SELECT-only snapshot taken from prod wpiztubmmmzclhlprgpd;
+-- prod is never mutated). Real espn_event_id / home_nombre / away_nombre /
+-- fecha / liga_id / provider team ids (home_espn_id / away_espn_id) verbatim.
+--   401915444 Fenerbahce vs AS Roma          2026-09-10 16:45+00  (436/104)
+--   401915422 PSV Eindhoven vs Shakhtar Don. 2026-09-10 16:45+00  (148/493)
+--   401915443 Bayern Munich vs Bodo/Glimt    2026-09-10 19:00+00  (132/2980)
+--   401915441 Como vs RB Leipzig             2026-09-10 19:00+00  (2572/11420)
+--   401915440 Slavia Prague vs Lens          2026-09-10 19:00+00  (494/175)
+--   401915442 Manchester United vs Sabah FK  2026-09-10 19:00+00  (360/21922)
+-- All liga_id=2 (UEFA Champions League). Nothing here is fabricated; unknown
+-- fields are simply not carried. This is the shape the product resolver targets.
+-- ----------------------------------------------------------------------------
+create or replace function v2.fn_seed_parlay_scanner_agenda_real()
+returns void language plpgsql as $$
+begin
+  delete from v2.parlay_canonical_agenda;
+  insert into v2.parlay_canonical_agenda
+    (canonical_event_id, home_canonical, away_canonical, home_norm, away_norm,
+     kickoff, competition_id, home_provider_id, away_provider_id)
+  values
+    ('401915444','Fenerbahce','AS Roma',
+       v2.fn_norm_team('Fenerbahce'),      v2.fn_norm_team('AS Roma'),
+       '2026-09-10 16:45:00+00','2','436','104'),
+    ('401915422','PSV Eindhoven','Shakhtar Donetsk',
+       v2.fn_norm_team('PSV Eindhoven'),   v2.fn_norm_team('Shakhtar Donetsk'),
+       '2026-09-10 16:45:00+00','2','148','493'),
+    ('401915443','Bayern Munich','Bodo/Glimt',
+       v2.fn_norm_team('Bayern Munich'),   v2.fn_norm_team('Bodo/Glimt'),
+       '2026-09-10 19:00:00+00','2','132','2980'),
+    ('401915441','Como','RB Leipzig',
+       v2.fn_norm_team('Como'),            v2.fn_norm_team('RB Leipzig'),
+       '2026-09-10 19:00:00+00','2','2572','11420'),
+    ('401915440','Slavia Prague','Lens',
+       v2.fn_norm_team('Slavia Prague'),   v2.fn_norm_team('Lens'),
+       '2026-09-10 19:00:00+00','2','494','175'),
+    ('401915442','Manchester United','Sabah FK',
+       v2.fn_norm_team('Manchester United'),v2.fn_norm_team('Sabah FK'),
+       '2026-09-10 19:00:00+00','2','360','21922')
+  on conflict (canonical_event_id) do update set
+     home_canonical=excluded.home_canonical, away_canonical=excluded.away_canonical,
+     home_norm=excluded.home_norm, away_norm=excluded.away_norm,
+     kickoff=excluded.kickoff, competition_id=excluded.competition_id,
+     home_provider_id=excluded.home_provider_id, away_provider_id=excluded.away_provider_id;
+
+  -- alias registry from the REAL canonical names + the OCR variants observed on
+  -- the owner ticket (each variant folds to the same normalized alias key).
+  insert into v2.team_alias_registry (alias_norm, canonical_name, espn_team_hint) values
+    (v2.fn_norm_team('Fenerbahce'),            'Fenerbahce',        '401915444'),
+    (v2.fn_norm_team('Fenerbahçe'),            'Fenerbahce',        '401915444'),
+    (v2.fn_norm_team('Fenerb'||chr(233)||'çe'),'Fenerbahce',        '401915444'),
+    (v2.fn_norm_team('AS Roma'),               'AS Roma',           '401915444'),
+    (v2.fn_norm_team('Roma'),                  'AS Roma',           '401915444'),
+    (v2.fn_norm_team('PSV Eindhoven'),         'PSV Eindhoven',     '401915422'),
+    (v2.fn_norm_team('PSV'),                   'PSV Eindhoven',     '401915422'),
+    (v2.fn_norm_team('Shakhtar Donetsk'),      'Shakhtar Donetsk',  '401915422'),
+    (v2.fn_norm_team('Bayern München'),        'Bayern Munich',     '401915443'),
+    (v2.fn_norm_team('Bayern Munich'),         'Bayern Munich',     '401915443'),
+    (v2.fn_norm_team('Bodo/Glimt'),            'Bodo/Glimt',        '401915443'),
+    (v2.fn_norm_team('Bodø/Glimt'),            'Bodo/Glimt',        '401915443'),
+    (v2.fn_norm_team('Como'),                  'Como',              '401915441'),
+    (v2.fn_norm_team('RB Leipzig'),            'RB Leipzig',        '401915441'),
+    (v2.fn_norm_team('Leipzig'),               'RB Leipzig',        '401915441'),
+    (v2.fn_norm_team('Slavia Prague'),         'Slavia Prague',     '401915440'),
+    (v2.fn_norm_team('RC Lens'),               'Lens',              '401915440'),
+    (v2.fn_norm_team('Lens'),                  'Lens',              '401915440'),
+    (v2.fn_norm_team('Manchester United'),     'Manchester United', '401915442'),
+    (v2.fn_norm_team('Sabah FK'),              'Sabah FK',          '401915442')
+  on conflict (alias_norm) do nothing;
+end $$;
+comment on function v2.fn_seed_parlay_scanner_agenda_real() is
+  'iss046 v3 / finding 2: seeds parlay_canonical_agenda from the REAL '
+  'public.agenda_espn universe (prod snapshot) so resolution is proven against '
+  'the real event shape, not the synthetic gate_fixture_soccer_cards side path.';
+
+-- ----------------------------------------------------------------------------
 -- FINDING 4 — Market canonicalization.
 -- Distinguishes BTTS / 1X2(ML) / ASIAN_HANDICAP / MATCH_TOTAL / TEAM_TOTAL.
 -- Team totals ("Como Total Más de 1.5") carry team_norm => NEVER match totals.
@@ -165,6 +263,7 @@ declare
   v_line   numeric := null;
   v_team_raw  text := null;
   v_team_norm text := null;
+  v_tail   text := null;   -- FINDING 4: market-expression segment AFTER the token
 begin
   if t ~ 'btts|ambos anotan|ambos marcan|both teams' then
     v_market := 'BTTS';
@@ -172,14 +271,21 @@ begin
 
   elsif t ~ 'asian handicap|handicap asiatico|hcap|handicap' then
     v_market := 'ASIAN_HANDICAP';
-    v_line := nullif(substring(t from '[-+]?[0-9]+\.?[0-9]*'),'')::numeric;
+    -- FINDING 4: read the handicap line STRICTLY from the tail AFTER the token,
+    -- never from digits embedded in the team name (e.g. "1860 Munich" -> not 1860).
+    v_tail := substring(t from '(?:asian handicap|handicap asiatico|hcap|handicap)\s*(.*)$');
+    v_line := nullif(substring(coalesce(v_tail,'') from '[-+]?[0-9]+(?:\.[0-9]+)?'),'')::numeric;
     v_team_raw := trim(regexp_replace(t,'(asian handicap|handicap asiatico|hcap|handicap).*$',''));
     v_team_norm := v2.fn_norm_team(v_team_raw);
 
   elsif t ~ 'total|over|under|mas de|menos de|mayor|menor|goles' then
     v_side := case when t ~ 'over|mas de|mayor' then 'OVER'
                    when t ~ 'under|menos|menor' then 'UNDER' end;
-    v_line := nullif(substring(t from '[0-9]+\.?[0-9]*'),'')::numeric;
+    -- FINDING 4: read the total line STRICTLY from the tail AFTER the token,
+    -- never from digits embedded in the team name (e.g. "Schalke 04" -> not 4/04,
+    -- "Bayer 04 Leverkusen" -> not 04).
+    v_tail := substring(t from '(?:total|over|under|mas de|menos de|mayor|menor|goles)\s*(.*)$');
+    v_line := nullif(substring(coalesce(v_tail,'') from '[0-9]+(?:\.[0-9]+)?'),'')::numeric;
     v_team_raw := trim(regexp_replace(t,'(total|over|under|mas de|menos de|mayor|menor|goles).*$',''));
     if v_team_raw is null or v_team_raw = '' then
       v_market := 'MATCH_TOTAL'; v_team_norm := null;
@@ -319,6 +425,12 @@ declare
   v_n_corr      int;
   v_any_bad     boolean;
   v_ticket_odds numeric;
+  v_tto_min     numeric;
+  v_tto_max     numeric;
+  v_tto_n       int;
+  v_tto_tol     numeric;
+  v_price_conflict boolean;
+  v_price_status   text;
   v_bankroll    jsonb;
   v_bonus       numeric;
   v_bonus_rsn   text;
@@ -340,7 +452,9 @@ begin
                     nullif(e.leg->>'grouped_event_odds','')::numeric)       as grp,
            nullif(e.leg->>'ticket_total_odds','')::numeric                  as tto,
            nullif(e.leg->>'odds_source','')                                as src_in,
-           nullif(e.leg->>'intended_date','')::date                        as idate
+           nullif(e.leg->>'intended_date','')::date                        as idate,
+           nullif(e.leg->>'home_provider_id','')                           as hpid,
+           nullif(e.leg->>'away_provider_id','')                           as apid
     from jsonb_array_elements(coalesce(p_legs,'[]'::jsonb)) with ordinality e(leg, ord)
   ),
   normed as (
@@ -349,22 +463,46 @@ begin
     from legs l
   ),
   matched as (
+    -- FINDING 6: resolution priority is (a) explicit event id, then
+    -- (b) canonical PROVIDER team ids (both sides present), then
+    -- (c) alias-normalized team keys + date (FALLBACK ONLY). When the alias
+    -- fallback yields >1 candidate event the leg is AMBIGUOUS (fail-close, see
+    -- finalized/legrows) and is NEVER guessed. Provider-id / explicit-id matches
+    -- do not use the fuzzy alias keys and so are immune to alias collisions.
     select n.*,
       m.canonical_event_id, m.home_canonical, m.away_canonical,
       m.home_norm, m.away_norm, m.kickoff, m.competition_id,
       ( select count(*) from v2.parlay_canonical_agenda a2
          where ( n.xid is not null and a2.canonical_event_id = n.xid )
-            or ( n.xid is null and
+            or ( n.xid is null and n.hpid is not null and n.apid is not null and
+                 ((a2.home_provider_id=n.hpid and a2.away_provider_id=n.apid) or
+                  (a2.home_provider_id=n.apid and a2.away_provider_id=n.hpid)) )
+            or ( n.xid is null and (n.hpid is null or n.apid is null) and
                  ((a2.home_norm=n.lh and a2.away_norm=n.la) or
                   (a2.home_norm=n.la and a2.away_norm=n.lh)) and
                  a2.kickoff::date between coalesce(n.idate,a2.kickoff::date)-p_window_days
                                      and coalesce(n.idate,a2.kickoff::date)+p_window_days)
-      ) as n_cand
+      ) as n_cand,
+      ( select jsonb_agg(a3.canonical_event_id order by a3.canonical_event_id)
+          from v2.parlay_canonical_agenda a3
+         where ( n.xid is not null and a3.canonical_event_id = n.xid )
+            or ( n.xid is null and n.hpid is not null and n.apid is not null and
+                 ((a3.home_provider_id=n.hpid and a3.away_provider_id=n.apid) or
+                  (a3.home_provider_id=n.apid and a3.away_provider_id=n.hpid)) )
+            or ( n.xid is null and (n.hpid is null or n.apid is null) and
+                 ((a3.home_norm=n.lh and a3.away_norm=n.la) or
+                  (a3.home_norm=n.la and a3.away_norm=n.lh)) and
+                 a3.kickoff::date between coalesce(n.idate,a3.kickoff::date)-p_window_days
+                                     and coalesce(n.idate,a3.kickoff::date)+p_window_days)
+      ) as cand_ids
     from normed n
     left join lateral (
       select * from v2.parlay_canonical_agenda a
        where ( n.xid is not null and a.canonical_event_id = n.xid )
-          or ( n.xid is null and
+          or ( n.xid is null and n.hpid is not null and n.apid is not null and
+               ((a.home_provider_id=n.hpid and a.away_provider_id=n.apid) or
+                (a.home_provider_id=n.apid and a.away_provider_id=n.hpid)) )
+          or ( n.xid is null and (n.hpid is null or n.apid is null) and
                ((a.home_norm=n.lh and a.away_norm=n.la) or
                 (a.home_norm=n.la and a.away_norm=n.lh)) and
                a.kickoff::date between coalesce(n.idate,a.kickoff::date)-p_window_days
@@ -399,7 +537,15 @@ begin
     from matched mt
   ),
   legrows as (
-    select f.leg_no, f.canonical_event_id, f.home_canonical, f.away_canonical,
+    select f.leg_no,
+           -- FINDING 6: never surface a guessed event id when not uniquely RESOLVED
+           case when f.identity_status = 'RESOLVED' then f.canonical_event_id else null end
+             as canonical_event_id,
+           case when f.identity_status = 'RESOLVED' then f.home_canonical else null end
+             as home_canonical,
+           case when f.identity_status = 'RESOLVED' then f.away_canonical else null end
+             as away_canonical,
+           f.n_cand, coalesce(f.cand_ids,'[]'::jsonb) as candidates,
            f.identity_status, f.m0, f.s0, f.ln, f.team_side, f.ind, f.grp, f.tto,
            f.src_in, f.competition_id,
       -- canonical market projection
@@ -428,7 +574,7 @@ begin
   into v_legs
   from (
     select leg_no, canonical_event_id, home_canonical, away_canonical, competition_id,
-           identity_status,
+           identity_status, n_cand, candidates,
            m0 as canonical_market, canonical_side, canonical_line, team_scope,
            ind as individual_odds, grp as same_game_price, tto as ticket_total_odds,
            odds_source, leg_valid, leg_ev_available
@@ -470,9 +616,24 @@ begin
   from jsonb_array_elements(coalesce(v_legs,'[]'::jsonb)) leg;
   v_any_bad := coalesce(v_any_bad,true);
 
-  select max((leg->>'ticket_total_odds')::numeric)
-    into v_ticket_odds
-  from jsonb_array_elements(coalesce(v_legs,'[]'::jsonb)) leg;
+  -- FINDING 3: ticket-total-odds conflict fail-close. MAX() silently accepted
+  -- contradictions (leg1=5.71 + leg2=750 -> 750). Instead, ALL non-null ticket-
+  -- total prices must AGREE within an explicit tolerance; otherwise the ticket is
+  -- TICKET_PRICE_CONFLICT -> NEEDS_REVIEW, payout=NULL, is_canonical_reto13m=false.
+  select min(x), max(x), count(x)
+    into v_tto_min, v_tto_max, v_tto_n
+  from ( select (leg->>'ticket_total_odds')::numeric as x
+           from jsonb_array_elements(coalesce(v_legs,'[]'::jsonb)) leg
+          where nullif(leg->>'ticket_total_odds','') is not null ) q;
+  -- explicit tolerance: absolute 0.01 OR 0.5% of the smallest quoted price
+  v_tto_tol := greatest(0.01, coalesce(v_tto_min,0) * 0.005);
+  v_price_conflict := coalesce(v_tto_n,0) > 0
+                      and (v_tto_max - v_tto_min) > v_tto_tol;
+  v_price_status := case when v_price_conflict then 'TICKET_PRICE_CONFLICT'
+                         when coalesce(v_tto_n,0) = 0 then 'NO_TICKET_PRICE'
+                         else 'AGREED' end;
+  -- On conflict do NOT smuggle a value through (never accept the larger price).
+  v_ticket_odds := case when v_price_conflict then null else v_tto_max end;
 
   -- FINDING 8: single snapshot / single percentage
   v_bankroll := v2.fn_parlay_bankroll_pct(p_stake, p_bankroll_snapshot);
@@ -489,7 +650,12 @@ begin
   -- FINDING 10: unresolved leg / invalid market / unknown joint => not canonical
   -- Joint probability is ALWAYS unknown (§25, iss038), so a fully-resolved ticket
   -- is still NOT a canonical RETO 13M parlay for EV; it is identity-resolved only.
-  if v_any_bad then
+  if v_price_conflict then
+    -- FINDING 3: contradictory ticket-total prices are unresolvable by the scanner
+    v_status := 'NEEDS_REVIEW'; v_is_canon := false;
+    v_canon_rsn := 'TICKET_PRICE_CONFLICT';
+    v_payout := null;                       -- never pay out on a contradictory price
+  elsif v_any_bad then
     v_status := 'NEEDS_REVIEW'; v_is_canon := false;
     v_canon_rsn := 'UNRESOLVED_OR_INVALID_LEG';
   else
@@ -519,8 +685,14 @@ begin
     -- FINDING 8
     'bankroll', v_bankroll,
     'bankroll_pct_count', 1,
-    -- FINDING 9
+    -- FINDING 3: ticket-total-odds agreement / conflict
     'ticket_total_odds', v_ticket_odds,
+    'ticket_price_status', v_price_status,
+    'ticket_price_conflict', coalesce(v_price_conflict,false),
+    'ticket_price_min', v_tto_min,
+    'ticket_price_max', v_tto_max,
+    'ticket_price_tolerance', v_tto_tol,
+    -- FINDING 9
     'bonus', v_bonus,
     'bonus_reason', v_bonus_rsn,
     'payout', v_payout,

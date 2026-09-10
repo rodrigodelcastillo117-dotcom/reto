@@ -21,6 +21,17 @@ create schema if not exists v2;
 -- Per-event gate status from the stored matrix + stored scalars + real odds context.
 -- Works on any surface that persists score_dist + scalars + odds (prod staged rows or
 -- the branch fixture rows), so the exclusion logic is identical everywhere.
+--
+-- 5620997108 A: RETIRE the OLD v3 signature. A CREATE OR REPLACE with the new 16-arg
+-- signature would leave the old signature as a coexisting OVERLOAD; a caller matching the
+-- old arg list would then silently run incomplete v3 logic. Drop it explicitly (CASCADE
+-- drops dependent views — the fixture views below and iss036's staged views recreate them)
+-- so EXACTLY ONE fn_event_gate_status signature exists after bootstrap. Idempotent on a
+-- clean bootstrap (no-op when the old signature is absent).
+drop function if exists v2.fn_event_gate_status(
+  jsonb, numeric, numeric, numeric, numeric, numeric, numeric,
+  numeric, numeric, numeric, numeric, numeric, numeric) cascade;
+
 create or replace function v2.fn_event_gate_status(
   p_dist jsonb, p_home numeric, p_draw numeric, p_away numeric,
   p_over numeric, p_under numeric, p_over_line numeric,
@@ -37,9 +48,29 @@ begin
     coherence_ok:=false; disc_flag:='NO_MATRIX'; suppress:=true; top_only_eligible:=false;
     gate_reason:='missing/empty score_dist'; return next; return;
   end if;
-  if abs(p_home - v2.fn_matrix_market(p_dist,'1X2','HOME')) > p_tol then coh:=false; reasons:=concat_ws('; ',reasons,'1X2_HOME'); end if;
-  if abs(p_draw - v2.fn_matrix_market(p_dist,'1X2','DRAW')) > p_tol then coh:=false; reasons:=concat_ws('; ',reasons,'1X2_DRAW'); end if;
-  if abs(p_away - v2.fn_matrix_market(p_dist,'1X2','AWAY')) > p_tol then coh:=false; reasons:=concat_ws('; ',reasons,'1X2_AWAY'); end if;
+  -- 5620997108 B: NULL/EMPTY BYPASS GUARD. `abs(field - derived) > p_tol` yields NULL
+  --   (not TRUE) when `field` IS NULL, so an UNPUBLISHED candidate field would otherwise
+  --   pass coherence and leak into TOP_ONLY. A published/candidate field that is NULL (or
+  --   an empty top_scores) is a coherence FAIL with reason NULL_FIELD:<name>. The row stays
+  --   visible in analysis but is EXCLUDED from candidates/TOP_ONLY.
+  if p_home is null     then coh:=false; reasons:=concat_ws('; ',reasons,'NULL_FIELD:p_home'); end if;
+  if p_draw is null     then coh:=false; reasons:=concat_ws('; ',reasons,'NULL_FIELD:p_draw'); end if;
+  if p_away is null     then coh:=false; reasons:=concat_ws('; ',reasons,'NULL_FIELD:p_away'); end if;
+  if p_btts_yes is null then coh:=false; reasons:=concat_ws('; ',reasons,'NULL_FIELD:btts_yes'); end if;
+  if p_btts_no is null  then coh:=false; reasons:=concat_ws('; ',reasons,'NULL_FIELD:btts_no'); end if;
+  if p_top_scores is null or jsonb_typeof(p_top_scores) <> 'array' or jsonb_array_length(p_top_scores)=0
+     then coh:=false; reasons:=concat_ws('; ',reasons,'NULL_FIELD:top_scores'); end if;
+  -- O/U is required ONLY when the provider line is a SUPPORTED fraction. An UNSUPPORTED
+  --   line legitimately fail-closes p_over/p_under to NULL (ou_supported=false, iss041 F3),
+  --   so a NULL there is expected, not a bug. fn_total_weights(...) returns NULL exactly
+  --   for unsupported fractions, so it classifies the line without a new parameter.
+  if p_over_line is not null and v2.fn_total_weights(0, p_over_line) is not null then
+    if p_over is null  then coh:=false; reasons:=concat_ws('; ',reasons,'NULL_FIELD:p_over'); end if;
+    if p_under is null then coh:=false; reasons:=concat_ws('; ',reasons,'NULL_FIELD:p_under'); end if;
+  end if;
+  if p_home is not null     and abs(p_home - v2.fn_matrix_market(p_dist,'1X2','HOME')) > p_tol then coh:=false; reasons:=concat_ws('; ',reasons,'1X2_HOME'); end if;
+  if p_draw is not null and abs(p_draw - v2.fn_matrix_market(p_dist,'1X2','DRAW')) > p_tol then coh:=false; reasons:=concat_ws('; ',reasons,'1X2_DRAW'); end if;
+  if p_away is not null and abs(p_away - v2.fn_matrix_market(p_dist,'1X2','AWAY')) > p_tol then coh:=false; reasons:=concat_ws('; ',reasons,'1X2_AWAY'); end if;
   if p_btts_yes is not null and abs(p_btts_yes - v2.fn_matrix_market(p_dist,'BTTS','YES')) > p_tol then coh:=false; reasons:=concat_ws('; ',reasons,'BTTS_YES'); end if;
   if p_btts_no  is not null and abs(p_btts_no  - v2.fn_matrix_market(p_dist,'BTTS','NO'))  > p_tol then coh:=false; reasons:=concat_ws('; ',reasons,'BTTS_NO'); end if;
   if p_over_line is not null then
