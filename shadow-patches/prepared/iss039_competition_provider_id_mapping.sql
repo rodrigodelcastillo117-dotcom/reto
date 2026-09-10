@@ -52,8 +52,31 @@ returns table(id_collisions bigint, label_collisions bigint) language sql stable
        group by 1 having count(distinct competition_id) > 1) y);
 $$;
 
--- 4) CONTRATO de cutover (§20): el builder debe mapear competencia por ag.liga_id
---    (numérico ESPN) vía fn_resolve_competition('espn', ag.liga_id, active_mapping_version),
---    dejando liga_alias(nombre) sólo como fallback/etiqueta. Nombres no mapeados por id
---    fail-close a NO_MODEL. Recomendación: sembrar competition_provider_map desde el
---    catálogo real ESPN en cutover; mientras, liga_alias(nombre) sigue como puente.
+-- 4) INMUTABILIDAD append-only (v2, corrige AUDIT 5610547890): la PK sólo impide una
+--    SEGUNDA fila con la misma clave, NO una mutación in-place de la fila histórica. Un
+--    UPDATE de competition_id dentro del MISMO mapping_version rompería replay. Se prohíbe
+--    UPDATE y DELETE por fila: un cambio de mapeo = NUEVA mapping_version (INSERT), nunca
+--    edición in-place. (TRUNCATE se revoca en prod; sólo para teardown de branch.)
+create or replace function v2.fn_competition_map_immutable() returns trigger language plpgsql as $$
+begin
+  raise exception 'COMPETITION_MAP_IMMUTABLE: % prohibido en competition_provider_map (append-only); un cambio de mapeo requiere una nueva mapping_version', tg_op;
+end $$;
+drop trigger if exists trg_competition_map_immutable on v2.competition_provider_map;
+create trigger trg_competition_map_immutable
+  before update or delete on v2.competition_provider_map
+  for each row execute function v2.fn_competition_map_immutable();
+
+-- 5) Puntero de versión activa (autoridad única de qué mapping_version usa el builder HOY).
+create table if not exists v2.competition_mapping_config (
+  singleton boolean primary key default true check (singleton),
+  active_mapping_version text not null
+);
+create or replace function v2.fn_competition_active_mapping() returns text language sql stable as $$
+  select active_mapping_version from v2.competition_mapping_config where singleton limit 1;
+$$;
+
+-- 6) WIRING REAL del builder (§20, end-to-end): iss033 `mapped` resuelve competition_id
+--    por PROVIDER-ID (ag.liga_id numérico ESPN) vía fn_resolve_competition('espn',
+--    ag.liga_id, fn_competition_active_mapping()); el NOMBRE queda sólo como etiqueta.
+--    provider-id no mapeado -> competition_id NULL -> NO_MODEL (fail-close). Un cambio de
+--    label con el MISMO provider-id NO altera la identidad resuelta.

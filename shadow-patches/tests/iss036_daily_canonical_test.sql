@@ -10,8 +10,11 @@ delete from public.v_momios_confiables where espn_event_id in ('EA','EB','EC','E
 delete from public.historico_partidos_espn where home_espn_id in ('HA','HD','HC') or away_espn_id in ('AA','AD','AC');
 delete from v2.soccer_prediction_v2_staged where espn_event_id in ('EA','EB','EC','ED');
 delete from v2.feature_snapshot where espn_event_id in ('EA','EB','EC','ED');
-insert into v2.liga_alias values ('Grecia SL',197) on conflict do nothing;
-insert into v2.competition_catalog values (197,true) on conflict do nothing;
+-- §20 (iss039): mapeo por PROVIDER-ID + versión activa
+insert into v2.competition_provider_map(provider,provider_competition_id,competition_id,competition_label,mapping_version)
+  values ('espn','197',197,'Grecia SL','compmap_v1') on conflict do nothing;
+insert into v2.competition_mapping_config(singleton,active_mapping_version) values (true,'compmap_v1')
+  on conflict (singleton) do update set active_mapping_version='compmap_v1';
 insert into v2.model_registry values ('soccer','reto_dc_v2','dc-2026.09.1',197,true) on conflict do nothing;
 insert into public.v_liga_promedios_futbol values (197,1.5,1.2) on conflict do nothing;
 insert into public.agenda_espn (espn_event_id,deporte,liga_id,liga_nombre,home_nombre,away_nombre,home_espn_id,away_espn_id,fecha) values

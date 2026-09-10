@@ -115,11 +115,13 @@ begin
     order by a.espn_event_id, a.fecha
   ),
   mapped as (
-    select ag.*, la.competition_id,
+    -- §20 (iss039): identidad de competencia por PROVIDER-ID numérico (no por nombre).
+    -- competition_id sale de fn_resolve_competition('espn', ag.liga_id, active_mapping);
+    -- el nombre es sólo etiqueta. provider-id no mapeado -> competition_id NULL -> NO_MODEL.
+    select ag.*, rc.competition_id,
            (r.approved is true) reg_ok
     from agenda ag
-    left join v2.liga_alias la on la.liga_source = ag.liga_nombre
-    left join v2.competition_catalog c on c.competition_id=la.competition_id and c.enabled=true
+    left join lateral v2.fn_resolve_competition('espn', ag.liga_id, v2.fn_competition_active_mapping()) rc on true
     left join v2.model_registry r on r.sport='soccer' and r.model_name=cfg.model_name
          and r.model_version=cfg.model_version and r.liga_id=ag.liga_id
   ),
