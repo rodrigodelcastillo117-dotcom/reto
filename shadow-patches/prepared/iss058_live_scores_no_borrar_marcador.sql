@@ -71,3 +71,28 @@ create trigger trg_preservar_marcador_live
 -- NOTA SOBRE EL DATO RESTAURADO: NE @ SEA 10-13 y SF @ LAR 10-7 no son valores inventados.
 -- Son los que se observaron directamente en `live_scores` a las 02:10 UTC, antes de que el
 -- sincronizador los borrara a las 02:12. Quedaron registrados en la sesión.
+
+-- ---------------------------------------------------------------------------
+-- CORRECCIÓN DE UN BUG MÍO, reportado por el owner ("se quedó parado el partido").
+--
+-- La primera versión del guardia rescataba `status` pero NO `status_detail`: sólo lo preservaba
+-- cuando el nuevo venía NULL. El sincronizador manda 'Programado', que no es NULL, así que se
+-- colaba. Resultado visible: un partido con `status='in'` y `status_detail='Programado'`, o sea
+-- una tarjeta que decía "Programado" con marcador congelado. Se leía como un partido atorado.
+--
+-- Ahora: si se rescató el status, el detalle que lo acompañaba se rescata también.
+--
+-- Y `updated_at`: cuando el guardia tiene que rescatar algo, ese UPDATE no trajo dato nuevo —
+-- es el latido de un escritor vacío. Conservar el `updated_at` viejo hace que esa columna mida
+-- LA ÚLTIMA VEZ QUE ENTRÓ DATO REAL, no el último latido. De ahí sale
+-- `nfl_tablero_semana.marcador_atraso_min`, para que la pantalla pueda decir "hace X min" en
+-- lugar de fingir que el marcador va al minuto.
+--
+-- COMPROBADO después del arreglo: el partido dejó de verse parado y avanzó de 10-7 a 17-7 con
+-- `marcador_atraso_min = 0`. O sea, el escritor bueno SÍ entrega datos; lo que había que
+-- impedir era que el escritor malo los pisara, y que su basura se colara por `status_detail`.
+--
+-- LECCIÓN, para que no se repita: `drop view ... cascade` sobre `nfl_tablero_semana` también
+-- tira `nfl_lock_semana` Y `v_prediccion_reto_canonico`. La segunda vez me llevé la matriz
+-- canónica por delante y lo detecté sólo porque volví a contar las filas de TODO lo que la app
+-- consume. Cualquier recreación de esta vista tiene que recrear las tres.
