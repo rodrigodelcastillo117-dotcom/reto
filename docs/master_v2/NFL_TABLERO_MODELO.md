@@ -170,3 +170,34 @@ retraso. Dos cosas quedan en pie de todas formas:
 2. Revisar por qué el escritor de `live_scores` pone `status='final'` sin los puntos — pinta a que
    escribe el estado y el marcador en pasos separados y el segundo falla en silencio.
 3. Borrar o marcar el 0-0 de `CHI @ TEN` como inválido en lugar de dejarlo como resultado.
+
+
+---
+
+# Props de jugador: `public.nfl_props_jugador`
+
+Una fila por **jugador × métrica**, resumiendo sus últimos 10 partidos: `n_ultimos10`,
+`promedio`, `mediana`, `minimo`, `maximo`, `desviacion`, `n_ultimos5`, `promedio_ultimos5`,
+`ultimo_partido`. Métricas: `pass_yards`, `pass_tds`, `interceptions`, `rush_yards`, `rush_tds`,
+`rush_attempts`, `receptions`, `rec_yards`, `rec_tds`, `targets`, `tds_totales`.
+
+**No trae probabilidad ni línea sugerida, a propósito.** No hay modelo de props validado; la
+columna `naturaleza` dice `HISTORIAL_SIN_MODELO` para que ninguna pantalla lo presente como
+pronóstico.
+
+Dos decisiones que cambian los números y por eso quedan escritas:
+
+- **NULL no es cero.** Un partido sin registro de esa métrica se excluye de la `n`. Promediarlo
+  como 0 arrastra el promedio hacia abajo y miente sobre el jugador.
+- **`tds_totales`**: si `rush_tds` y `rec_tds` son ambos NULL el partido no cuenta; si sólo uno
+  es NULL, suma el otro.
+
+Verificado contra jugadores reales: Mahomes 264.80 yardas de pase de promedio (mediana 268.5,
+rango 160–352), Jacobs 57.00 yardas por tierra (mediana 64, rango 3–87).
+
+## La advertencia de muestra, que importa más que la vista
+
+Al 11-sep-2026 `nfl_player_game_logs` tiene 6,291 filas y 939 jugadores, **pero sólo 20 filas de
+la temporada 2026** (el juego del jueves). Todo lo que una pantalla de props muestre hoy se
+sostiene en el **historial 2025**. Es dato real y sirve, pero presentarlo como "forma actual"
+sería falso: la temporada apenas arrancó.

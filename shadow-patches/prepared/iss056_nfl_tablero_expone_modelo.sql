@@ -103,3 +103,19 @@ grant select on public.nfl_tablero_semana to anon, authenticated, service_role;
 -- NO se cumple: el walk-forward 2025 tiene n=208 en UNA temporada y el mercado midió MEJOR
 -- (Brier 0.21822 vs 0.22702). Dos de dos condiciones fallan. Por eso aquí no hay monto ni EV.
 -- Definición completa aplicada en docs/master_v2/NFL_TABLERO_MODELO.md
+
+-- ---------------------------------------------------------------------------
+-- public.nfl_props_jugador — props por jugador y métrica, últimos 10 partidos.
+--
+-- HISTORIAL, NO PROYECCIÓN. No hay modelo de props validado, así que esta vista NO trae
+-- probabilidad ni línea sugerida: sólo lo que el jugador ha hecho. Inventar un número aquí
+-- sería exactamente lo que el contrato prohíbe.
+--
+-- Los NULL se EXCLUYEN de la n en vez de contarse como 0. Un partido sin registro de esa
+-- métrica promediado como cero arrastra el promedio hacia abajo y miente. Y para tds_totales:
+-- si rush_tds y rec_tds son ambos NULL el partido no cuenta; si sólo uno es NULL, suma el otro.
+--
+-- ADVERTENCIA DE MUESTRA: al 11-sep-2026 la tabla tiene 6,291 filas y 939 jugadores, pero sólo
+-- 20 filas de la temporada 2026 (el juego del jueves). Todo lo que se muestre hoy se sostiene
+-- en el historial 2025. Es dato real, pero hay que decirlo, no venderlo como forma actual.
+-- Definición completa aplicada en docs/master_v2/NFL_TABLERO_MODELO.md
