@@ -23,8 +23,9 @@
 -- inconsistencias se detectaron al ingerirla y quedan marcadas en nota_calidad en vez de
 -- resolverse en silencio:
 --   1. "Las Vegas Chargers" no existe. Herbert es Los Angeles Chargers (LAC). Corregido y anotado.
---   2. Drew Lock aparece como suplente de NYG y de SEA a la vez. Imposible. Ambas filas quedan
---      marcadas CONFLICTO hasta que el owner resuelva cuál es.
+--   2. Drew Lock aparecía como suplente de NYG y de SEA a la vez. Imposible. RESUELTO por el
+--      owner el 2026-09-11: Lock es de SEATTLE. El suplente de NYG queda NULL con nota, porque
+--      no se declaró reemplazo y aquí no se inventa un nombre para llenar el hueco.
 -- ============================================================================
 
 create schema if not exists v2;
