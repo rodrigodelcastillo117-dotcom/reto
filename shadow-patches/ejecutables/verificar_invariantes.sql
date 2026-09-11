@@ -109,3 +109,45 @@ begin
 
   raise notice 'OK: 6 invariantes nuevas (7-12) se cumplen.';
 end $$;
+
+-- ---------------------------------------------------------------------------
+-- Invariantes añadidas por iss092 (soccer 1X2 multiclase)
+-- ---------------------------------------------------------------------------
+do $$
+declare v_n int;
+begin
+  -- 13) Linaje en soccer.
+  select count(*) into v_n from public.calib_lambda_1x2
+   where greatest(asof_home, asof_away, asof_league) >= fecha;
+  if v_n > 0 then raise exception 'FUGA TEMPORAL soccer: % filas', v_n; end if;
+
+  -- 14) Las 3 clases de un 1X2 suman 1. Una distribucion que no suma 1 no es
+  --     una distribucion, y todo lo que se muestre encima seria mentira.
+  select count(*) into v_n from public.calib_eventos
+   where mercado='1X2' and p_raw_multi is not null
+     and abs( (p_raw_multi->>'home')::numeric + (p_raw_multi->>'draw')::numeric
+            + (p_raw_multi->>'away')::numeric - 1 ) > 0.000005;
+  if v_n > 0 then raise exception '1X2 NO SUMA 1: % filas', v_n; end if;
+
+  -- 15) Ninguna clase en 0 ni en 1: nada es imposible ni seguro.
+  select count(*) into v_n from public.calib_eventos
+   where mercado='1X2' and p_raw_multi is not null and (
+     (p_raw_multi->>'home')::numeric <= 0 or (p_raw_multi->>'home')::numeric >= 1 or
+     (p_raw_multi->>'draw')::numeric <= 0 or (p_raw_multi->>'draw')::numeric >= 1 or
+     (p_raw_multi->>'away')::numeric <= 0 or (p_raw_multi->>'away')::numeric >= 1);
+  if v_n > 0 then raise exception '1X2 FUERA DE RANGO: % filas', v_n; end if;
+
+  -- 16) Amistosos de club fuera: son el analogo de la pretemporada.
+  select count(*) into v_n from public.calib_lambda_1x2
+   where competencia = 'soccer/club.friendly';
+  if v_n > 0 then raise exception 'AMISTOSOS DENTRO: % filas', v_n; end if;
+
+  -- 17) La ventaja local no puede salir invertida (el bug cazado en iss092).
+  select count(*) into v_n from (
+    select avg(lam_home) lh, avg(lam_away) la, avg(home_score) rh, avg(away_score) ra
+    from public.calib_lambda_1x2) t
+   where (lh > la) is distinct from (rh > ra);
+  if v_n > 0 then raise exception 'VENTAJA LOCAL INVERTIDA en calib_lambda_1x2'; end if;
+
+  raise notice 'OK: invariantes 13-17 (soccer) se cumplen.';
+end $$;
