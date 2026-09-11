@@ -1,0 +1,90 @@
+-- iss083 — LA CALIBRACIÓN NO SABÍA DE QUÉ DEPORTE HABLABA
+-- 11-sep-2026
+--
+-- Disparador: el dueño vio "LO MEJOR DE HOY" con tres picks de MLB, dos de
+-- ellos con "LO QUE IMPLICA EL PRECIO: sin dato", y preguntó dos cosas:
+-- por qué salen sin dato, y si está 100% comprobado con el análisis.
+--
+-- ============================================================================
+-- 1) POR QUÉ "SIN DATO"  (esto está bien, es el candado funcionando)
+-- ============================================================================
+-- Hasta iss082, un pick sin precio de DraftKings se BORRABA de la pantalla.
+-- Eso era el mercado suprimiendo un pick nuestro, que es justo lo que el
+-- candado del dueño prohíbe. Ahora el pick se publica con su probabilidad y la
+-- casilla del precio dice "sin dato" porque, literalmente, la casa todavía no
+-- publica ese mercado. El pick no depende del precio; el precio es contexto.
+--
+-- ============================================================================
+-- 2) ¿ESTÁ 100% COMPROBADO?  NO. Y el respaldo que mostraba era prestado.
+-- ============================================================================
+-- zonas_confiables NO TENÍA COLUMNA DEPORTE. zona_realidad(mercado, prob)
+-- tampoco recibía deporte. Resultado: a un "Under 8.5" de los San Diego Padres
+-- le contestaba:
+--     "bien calibrado (1026 partidos, se desvía 0.53 pts)", nivel elite
+-- Esos 1,026 partidos son de FÚTBOL. Verificado contra
+-- apifootball_ligas_catalogo: modelo_backtest, la única fuente de
+-- zonas_confiables, contiene exclusivamente Liga Profesional Argentina (1260),
+-- MLS (1040), UEFA Conference (900), Brasileirão (870), Ecuador (785),
+-- Perú (765), Uruguay (755), Chile (545), Sudamericana (490), Bolivia (415),
+-- Libertadores (370) y Champions (250). CERO béisbol.
+--
+-- Es decir: la app respaldaba un pick de béisbol con la calibración del fútbol
+-- sudamericano y le ponía el sello "elite".
+--
+-- Las otras dos señales del sistema SÍ decían la verdad y nadie las miraba:
+--   filtro_pick_live(0.638, 1.84, 'Over/Under', 'baseball')
+--     -> {"pasa": false, "motivo": "La probabilidad cae fuera del rango
+--         donde se midio el motor. No se puede calificar."}
+--   v_reto13m_mejores para esos picks:
+--     -> muestra_calibracion = NULL, calibracion_confiable = false
+--
+-- LA TASA BASE REAL (historico_partidos_espn, 7,323 juegos de MLB 2023-2026):
+--   Under 8.5 pega 49.5%.   Over 8 pega 50.5%.   Promedio 9.12 carreras.
+-- El modelo decía 63.8% y 61.7%. Reclamaba +14 puntos sobre la realidad
+-- medida, sin una sola medición de béisbol detrás. Es el mismo patrón que ya
+-- había costado el 1-7 en la línea de ganador de MLB (58% prometido, 12.5%
+-- real, p = 1.17%).
+--
+-- ============================================================================
+-- LO QUE SE HIZO
+-- ============================================================================
+-- a) zonas_confiables.deporte: columna nueva, NOT NULL. Todas las filas
+--    existentes quedan marcadas 'soccer', que es lo que de verdad son.
+-- b) zona_realidad(mercado, prob, DEPORTE): sobrecarga nueva. Si el deporte
+--    del pick no tiene medición propia devuelve hay_medicion=false con la nota
+--    "NO hay calibracion medida de X en Y. La medicion que existe es de otro
+--    deporte y no se presta." No se cambió la firma de 2 argumentos porque la
+--    usan 8 objetos del núcleo (v_pick_canonico, kelly_stake__base,
+--    decision_economica_v1, entre otros).
+-- c) v_reto13m_mejores y v_reto13m_lo_mejor: candado nuevo. No se publica como
+--    "lo mejor del día" ningún pick cuyo PROPIO deporte+mercado no tenga
+--    calibración medida.
+-- d) Tope de 1 pick por deporte, como lo pidió el dueño.
+--
+-- ANTES:  3 picks de MLB encabezando LO MEJOR DE HOY, respaldados con fútbol.
+-- AHORA:  1 pick. Over 2.5 de fútbol, 72.9%, respaldo REAL de su propio
+--         deporte: "bien calibrado en soccer (1484 partidos, se desvia 0.85
+--         pts)", el tramo entrega 75.6% contra 72.9% dicho -- el modelo es si
+--         acaso conservador ahí. Brier 0.1832.
+--
+-- MLB desaparece de la pantalla. Es correcto: no hay con qué respaldarlo.
+--
+-- ============================================================================
+-- LO QUE FALTA PARA PODER PUBLICAR MLB (no se hizo, requiere trabajo real)
+-- ============================================================================
+-- Para calibrar totales de MLB hacen falta pares (probabilidad predicha,
+-- resultado real). Hoy no existen: mlb_shadow_predicciones sólo guarda línea
+-- de ganador (prob_home/prob_away), no totales. Lo que SÍ hay son los 7,323
+-- juegos con marcador de historico_partidos_espn.
+-- El trabajo pendiente es un backtest con partición temporal: correr el motor
+-- de totales sobre esos juegos, guardar (prob, acertó) e insertarlos en
+-- modelo_backtest con su deporte. Hasta que eso exista y muestre desviación
+-- medida, los totales de MLB no se publican.
+--
+-- ============================================================================
+-- PENDIENTE RELACIONADO
+-- ============================================================================
+-- Los 8 llamadores de zona_realidad de 2 argumentos siguen usando la versión
+-- sin deporte. Para picks de fútbol es correcta (toda la medición es de
+-- fútbol); para picks de otro deporte devuelve calibración prestada. Hay que
+-- migrarlos uno por uno a la versión de 3 argumentos.
