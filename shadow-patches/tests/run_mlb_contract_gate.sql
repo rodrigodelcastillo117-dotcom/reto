@@ -325,10 +325,10 @@ begin
 
   insert into v2.mlb_prediction_snapshot
     (espn_event_id, decision_time, model_version, scheduled_at, model_status, p_home_ml, p_away_ml)
-  values ('WF0001', timestamptz '2026-08-19 12:00:00+00','mlb-2026.09.1', timestamptz '2026-08-20 00:00:00+00','READY_UNVALIDATED',60.0,40.0),
-         ('WF0002', timestamptz '2026-08-19 12:00:00+00','mlb-2026.09.1', timestamptz '2026-08-20 00:00:00+00','READY_UNVALIDATED',60.0,40.0),
-         ('WF0003', timestamptz '2026-08-19 12:00:00+00','mlb-2026.09.1', timestamptz '2026-08-20 00:00:00+00','READY_UNVALIDATED',60.0,40.0),
-         ('WF0004', timestamptz '2026-08-19 12:00:00+00','mlb-2026.09.1', timestamptz '2026-08-20 00:00:00+00','READY_UNVALIDATED',60.0,40.0)
+  values ('WF0001', timestamptz '2026-08-19 12:00:00+00','mlb-fixture-v1', timestamptz '2026-08-20 00:00:00+00','READY_UNVALIDATED',60.0,40.0),
+         ('WF0002', timestamptz '2026-08-19 12:00:00+00','mlb-fixture-v1', timestamptz '2026-08-20 00:00:00+00','READY_UNVALIDATED',60.0,40.0),
+         ('WF0003', timestamptz '2026-08-19 12:00:00+00','mlb-fixture-v1', timestamptz '2026-08-20 00:00:00+00','READY_UNVALIDATED',60.0,40.0),
+         ('WF0004', timestamptz '2026-08-19 12:00:00+00','mlb-fixture-v1', timestamptz '2026-08-20 00:00:00+00','READY_UNVALIDATED',60.0,40.0)
   on conflict do nothing;
 
   insert into public.mlb_linescore (espn_event_id, competitor_id, lado, period, carreras) values
@@ -339,7 +339,7 @@ begin
 
   select brier_ml, brier_coinflip, skill_vs_coinflip, n_scored, verdict
     into num1, num2, txt2, n, txt1
-    from v2.fn_mlb_walk_forward(timestamptz '2026-08-01', timestamptz '2026-09-01','mlb-2026.09.1',4);
+    from v2.fn_mlb_walk_forward(timestamptz '2026-08-01', timestamptz '2026-09-01','mlb-fixture-v1',4);
   insert into v2.gate_run_log values (RUN,'S12B_WF_ARITHMETIC',s,
     case when num1=0.21 and num2=0.25 and txt2='0.16000' and n=4 then 'PASS' else 'FAIL' end,
     format('brier=%s coinflip=%s skill=%s n=%s verdict=%s', num1, num2, txt2, n, txt1),
@@ -359,7 +359,7 @@ begin
          ('WF0004',2.5,1.666667, timestamptz '2026-08-19 06:00:00+00', true,'UnitTest','baseball_mlb');
   select wf.verdict, wf.t_stat, wf.mean_gain, wf.n_with_market, wf.brier_market
     into txt1, num1, num2, n, num3
-    from v2.fn_mlb_walk_forward(timestamptz '2026-08-01', timestamptz '2026-09-01','mlb-2026.09.1',4) wf;
+    from v2.fn_mlb_walk_forward(timestamptz '2026-08-01', timestamptz '2026-09-01','mlb-fixture-v1',4) wf;
   insert into v2.gate_run_log values (RUN,'S13_NO_PROMOTION_ON_NOISE',s,
     case when txt1='NO_SKILL_VS_MARKET' and n=4
               and num2 > 0                         -- the model DID beat the market on raw Brier
@@ -390,10 +390,10 @@ begin
   alter table v2.mlb_prediction_snapshot drop constraint mlb_pred_snapshot_pre_first_pitch;
   insert into v2.mlb_prediction_snapshot
     (espn_event_id, decision_time, model_version, scheduled_at, model_status, p_home_ml, p_away_ml)
-  values ('WF0001', timestamptz '2026-08-20 06:00:00+00','mlb-2026.09.1',
+  values ('WF0001', timestamptz '2026-08-20 06:00:00+00','mlb-fixture-v1',
           timestamptz '2026-08-20 00:00:00+00','READY_UNVALIDATED', 99.0, 1.0);
   select verdict into txt1
-    from v2.fn_mlb_walk_forward(timestamptz '2026-08-01', timestamptz '2026-09-01','mlb-2026.09.1',1);
+    from v2.fn_mlb_walk_forward(timestamptz '2026-08-01', timestamptz '2026-09-01','mlb-fixture-v1',1);
   select count(*) into n from v2.v_mlb_post_first_pitch_violations;
   insert into v2.gate_run_log values (RUN,'S15_CORRUPTION_DETECTED',s,
     case when txt1='CORRUPT_SNAPSHOT_TABLE' and n=1 then 'PASS' else 'FAIL' end,
@@ -413,7 +413,7 @@ begin
    where conname='mlb_pred_snapshot_pre_first_pitch'
      and conrelid='v2.mlb_prediction_snapshot'::regclass;
   select verdict into txt1
-    from v2.fn_mlb_walk_forward(timestamptz '2026-08-01', timestamptz '2026-09-01','mlb-2026.09.1',4);
+    from v2.fn_mlb_walk_forward(timestamptz '2026-08-01', timestamptz '2026-09-01','mlb-fixture-v1',4);
   insert into v2.gate_run_log values (RUN,'S15B_INVARIANT_RESTORED',s,
     case when n=0 and n2=1 and txt1='NO_SKILL_VS_MARKET' then 'PASS' else 'FAIL' end,
     format('violations=%s constraint_present=%s verdict=%s', n, n2, txt1),

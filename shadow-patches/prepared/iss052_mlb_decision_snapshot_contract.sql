@@ -97,6 +97,17 @@ values
    18, 5.0, 0.60, 20, true)
 on conflict (sport, model_version) do nothing;
 
+-- model_version EXPLICITAMENTE no canonica para los fixtures del runner. Existe para que un
+-- fixture de prueba NUNCA comparta identidad con la distribucion canonica (ver el CHECK de
+-- gobernanza mas abajo y el hallazgo del auditor que lo motivo).
+insert into v2.mlb_model_config
+  (sport, model_name, model_version, feature_version, calibration_status, calibration_version,
+   max_runs, dispersion_r, readiness_floor, min_games, publish_authorized)
+values
+  ('baseball','mlb_test_fixture','mlb-fixture-v1','fixture','NOT_A_MODEL', null,
+   18, 5.0, 0.60, 20, false)
+on conflict (sport, model_version) do nothing;
+
 -- ── 2) point-in-time feature snapshot (immutable, hashed) ───────────────────
 create table if not exists v2.mlb_feature_snapshot (
   feature_snapshot_id uuid primary key default gen_random_uuid(),
@@ -164,7 +175,26 @@ create table if not exists v2.mlb_prediction_snapshot (
   -- database refuses to store a decision that is not strictly pre-first-pitch,
   -- so no window, cron schedule or future caller can reintroduce the defect.
   -- ========================================================================
-  constraint mlb_pred_snapshot_pre_first_pitch check (decision_time < scheduled_at)
+  constraint mlb_pred_snapshot_pre_first_pitch check (decision_time < scheduled_at),
+
+  -- ========================================================================
+  -- GOBERNANZA COMPLETA. Hallazgo del auditor (issue #4, comentario 5626963399):
+  -- dentro de la MISMA model_version canonica convivian 88 filas con
+  -- calibration_status='UNVALIDATED' y 4 con calibration_status y data_readiness
+  -- NULL. Esas 4 eran los fixtures WF0001..WF0004 del runner del gate. Mezclar
+  -- contratos dentro de una model_version rompe la semantica de UNA distribucion
+  -- canonica y vuelve ambiguo un replay. El arreglo de raiz es doble:
+  --   1. este CHECK, que hace IMPOSIBLE una fila READY sin su contrato completo;
+  --   2. el runner pasa a insertar sus fixtures bajo model_version
+  --      'mlb-fixture-v1' con calibration_status='NOT_A_MODEL'.
+  -- Una fila DATA_INCOMPLETE sigue permitida con todo NULL: asi debe ser, es el
+  -- fail-close honesto. Probado en rama: canonica-incompleta bloqueada,
+  -- DATA_INCOMPLETE permitida.
+  -- ========================================================================
+  constraint mlb_pred_gobernanza_completa check (
+    model_status <> 'READY_UNVALIDATED'
+    or (calibration_status is not null and feature_version is not null
+        and data_readiness is not null and data_asof is not null and provenance is not null))
 );
 create index if not exists ix_mlb_pred_snapshot_event
   on v2.mlb_prediction_snapshot (espn_event_id, decision_time desc);
