@@ -72,3 +72,48 @@
 --   select pg_get_viewdef('public.v_reto13m_lo_mejor'::regclass, true);
 -- Y el GRANT va EN SU PROPIA LLAMADA:
 --   grant select on public.v_reto13m_lo_mejor to anon, authenticated;
+
+-- ===== CORRECCIÓN: MI PRIMERA VERSIÓN VIOLABA EL CANDADO DEL OWNER =====
+--
+-- Apareció en el proyecto de Lovable, a las 17:02, una auditoría que NO vino de esta
+-- sesión, citando SHAs concretos y estableciendo el issue #4 owner lock:
+--   "El desacuerdo con el mercado (score_valor, discriminacion_pp, brecha_pp,
+--    implied-price gap, EV, etc.) puede mostrarse solo como contexto diagnóstico;
+--    NUNCA puede seleccionar, ordenar, autorizar, suprimir ni sustituir un pick
+--    de P_RETO."
+--
+-- Mi primera versión de esta vista lo violaba de dos formas:
+--   1. ORDENABA por discriminacion_pp.
+--   2. FILTRABA con `probabilidad_pct > prob_que_implica_el_precio_pct`, o sea
+--      SUPRIMÍA picks según el mercado.
+--
+-- Y el candado tiene razón. Ordenar por (nuestra probabilidad menos la del mercado)
+-- significa que el número de la casa es LA MITAD del criterio: si DraftKings mueve la
+-- línea, el ranking cambia aunque nuestro análisis no se haya movido ni un punto. Es
+-- dejar que el sportsbook elija, solo que más disimulado que el EV. Es exactamente lo
+-- que el owner prohibió desde el principio ("nunca sustituyas P_RETO con el implied /
+-- no-vig de DraftKings").
+--
+-- ORDEN CORREGIDO, solo con señales PROPIAS:
+--   1) H2H (dato histórico nuestro; si contradice, se descarta)
+--   2) Calibración y tamaño de muestra (qué tan bien le ha atinado el modelo)
+--   3) ventaja_sobre_azar = P_RETO menos la base ARITMÉTICA del mercado (33.3% con
+--      tres resultados, 50% con dos). Eso NO es un precio: es cuántos resultados tiene
+--      el mercado. Es lo que permite comparar un 60% de 1X2 con un 60% de un total.
+--   4) P_RETO a secas.
+-- FILTRO: probabilidad >= 55 y el H2H no puede contradecir. Se ELIMINÓ el filtro por
+-- precio implícito, porque suprimir según el mercado también está prohibido.
+-- discriminacion_pp y prob_que_implica_el_precio_pct SIGUEN en la vista como CONTEXTO.
+--
+-- CONSECUENCIA REAL, y hay que entenderla:
+--   FÚTBOL cambió de Seattle @ LA Galaxy (71.4%) a Portland @ FC Dallas Over 2.5
+--     (72.9%, respaldo ALTO, 2,026 de muestra). Este último ni siquiera tiene precio
+--     de casa (prob_que_implica_el_precio_pct es NULL): con el orden viejo quedaba
+--     fuera por no haber con qué compararlo. Ahora entra por su propio mérito.
+--   NFL cambió de Ravens @ Colts (60.9%, 21.8 de desacuerdo) a Browns @ Jaguars
+--     (78.4%). Y aquí está lo interesante: el mercado dice 78.7% y nosotros 78.4%,
+--     o sea CASI COINCIDIMOS (desacuerdo -0.3). Con el orden viejo lo habría
+--     descartado por "no hay ventaja". Con el candado entra de primero porque es lo
+--     que más probable vemos.
+--   Eso es literalmente lo que el owner pidió: "PURO % SEGÚN EL ANÁLISIS Y LOS DATOS",
+--   no "dónde le ganamos a la casa".
