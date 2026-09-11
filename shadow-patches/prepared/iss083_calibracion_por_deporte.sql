@@ -88,3 +88,25 @@
 -- sin deporte. Para picks de fútbol es correcta (toda la medición es de
 -- fútbol); para picks de otro deporte devuelve calibración prestada. Hay que
 -- migrarlos uno por uno a la versión de 3 argumentos.
+
+-- ============================================================================
+-- ADENDA (mismo día): el candado que puse arriba NO ERA SUFICIENTE
+-- ============================================================================
+-- Pedía "que haya medición". No pedía que la medición fuera BUENA.
+-- Al medir el fútbol por tramo aparecieron bandas propias peores que un volado:
+--
+--   BTTS tramo 7 (60-70%): dice 63.7%, ENTREGA 50.0%. n=204, Brier 0.2654.
+--                          NO estaba bloqueado por mercados_sin_modelo.
+--   BTTS tramo 4:          dice 36.0%, entrega 45.1%. n=195, Brier 0.2537.
+--   BTTS tramo 5:          dice 45.5%, entrega 51.0%. n=453, Brier 0.2530.
+--   Moneyline tramo 5:     dice 44.5%, entrega 49.5%. n=853, Brier 0.2500.
+--   Doble Oportunidad t.6: dice 55.5%, entrega 50.5%. n=854, Brier 0.2500.
+--   Corners (10 tramos):   ya bloqueado por mercados_sin_modelo (señal invertida).
+--
+-- Un BTTS a ~64% pasaba el candado con "hay medición = true" y en realidad es
+-- una moneda al aire con 204 partidos que lo demuestran.
+--
+-- CANDADO REFORZADO en v_reto13m_mejores y v_reto13m_lo_mejor:
+--   hay_medicion = true  Y  peor_que_volado = false
+-- (peor_que_volado es brier >= 0.25, ya lo calculaba zona_realidad y nadie lo
+--  estaba usando para filtrar nada.)
