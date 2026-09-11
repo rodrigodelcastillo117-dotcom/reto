@@ -119,3 +119,12 @@ grant select on public.nfl_tablero_semana to anon, authenticated, service_role;
 -- 20 filas de la temporada 2026 (el juego del jueves). Todo lo que se muestre hoy se sostiene
 -- en el historial 2025. Es dato real, pero hay que decirlo, no venderlo como forma actual.
 -- Definición completa aplicada en docs/master_v2/NFL_TABLERO_MODELO.md
+
+-- ---------------------------------------------------------------------------
+-- ACTUALIZACIÓN: `nfl_tablero_semana` ahora distingue EN VIVO, no sólo terminado.
+-- Un partido en curso se estaba pintando como "próximo" porque la vista sólo sabía de
+-- `terminado`. Columnas nuevas: `en_vivo`, y `orden_grupo` pasa a 1=en vivo, 2=por jugar,
+-- 3=terminado, para que lo que está pasando ahora salga hasta arriba.
+-- `marcador_confiable` ya no descarta un 0-0 cuando el partido está EN VIVO: ahí un 0-0
+-- recién arrancado sí es un marcador legítimo. Sólo se descarta en partidos no-en-vivo,
+-- que es donde el 0-0 es el placeholder del backfill.
