@@ -110,3 +110,52 @@ drop view if exists public.nfl_semana_actual;
 drop view if exists public.nfl_reto_modelo;
 drop function if exists v2.fn_fmt_spread(numeric);
 ```
+
+---
+
+# Dos bugs de ingesta encontrados al revisar NE @ SEA (11-sep-2026)
+
+El owner señaló que NE @ SEA ya se jugó. Tenía razón, y al verificarlo salieron dos problemas
+que **no son del modelo** sino de la ingesta de resultados.
+
+## 1. `nfl_partidos.estado` nunca se pone en `final` para 2026
+
+Medido: **0 de 273** partidos de la temporada 2026 tienen `estado = 'final'`, incluido uno cuyo
+`live_scores.status` ya dice `final`. El cierre de partidos no está escribiendo esa columna.
+
+Consecuencia: un partido de ayer seguía apareciendo como "programado".
+
+**Mitigado** (no arreglado en el origen): `public.nfl_tablero_semana` deriva `terminado` de
+`nfl_partidos.estado = 'final'` **O** `live_scores.status = 'final'`. La pantalla ya lo muestra
+como terminado. El arreglo de fondo es que vuelva a correr el cierre (`cerrar-partidos-espn` /
+`nfl-datos-sync`), y eso **no se puede hacer desde esta sesión**: el proxy de salida bloquea
+tanto `site.api.espn.com` como `*.supabase.co/functions/v1`, así que no hay forma de invocar la
+edge function ni de ir por el dato a ESPN.
+
+## 2. `live_scores` marca `final` con el marcador en NULL, y un 0-0 fabricado
+
+| Partido | `status` | marcador | `status_detail` |
+|---|---|---|---|
+| NE @ SEA (10-sep) | `final` | **NULL / NULL** | `Final` |
+| CHI @ TEN (29-ago, pretemporada) | `final` | **0 / 0** | `FT (recuperado del historico ESPN)` |
+
+El primero: el escritor marcó el cierre pero no escribió los puntos. El segundo es peor —
+**un 0-0 en NFL no existe en la práctica**, es un placeholder que el backfill del histórico
+guardó como si fuera un resultado. Cualquier cosa que calcule aciertos sobre eso cuenta un
+partido que nunca terminó 0-0.
+
+**Mitigado:** `nfl_tablero_semana` expone `marcador_confiable`, que es `false` cuando el marcador
+falta **o** cuando es exactamente 0-0. El frontend entonces escribe
+*"terminado · ESPN todavía no mandó el marcador"* en lugar de pintar un resultado inventado.
+
+**No inventé el marcador de NE @ SEA.** No está en ninguna tabla de la base (lo busqué en
+`historico_partidos_espn`, `marcadores_archivo`, `score_snapshots`, `live_scores` y
+`resultados_historicos`; lo único que hay es un 0-0 placeholder en `score_snapshots`) y no tengo
+salida de red para consultarlo.
+
+## Qué falta para cerrarlo de verdad
+
+1. Correr `nfl-datos-sync` / `cerrar-partidos-espn` desde un entorno con salida a ESPN.
+2. Revisar por qué el escritor de `live_scores` pone `status='final'` sin los puntos — pinta a que
+   escribe el estado y el marcador en pasos separados y el segundo falla en silencio.
+3. Borrar o marcar el 0-0 de `CHI @ TEN` como inválido en lugar de dejarlo como resultado.
