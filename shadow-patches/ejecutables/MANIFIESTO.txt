@@ -43,3 +43,24 @@ vista  a351a33bfe532945728c752d31a59606  v_picks_premium
 vista  d0b8b4efbc9bf29b02fe12f93dd54186  v_reto13m_lo_mejor
 vista  05d3c26d18ed5d3365ed4c90db164bec  v_reto13m_mejores
 vista  14ffa68d4c5073a99f9afdde343ae64d  v_super_pick
+
+# ---------------------------------------------------------------------------
+# Añadido por iss088 / iss089 / iss090 / iss091 — 11-sep-2026
+# ---------------------------------------------------------------------------
+aplicar_isotonica(p_params jsonb, p double precision)	d7445f582cbdccf45005eb7a91d9ae63
+bootstrap_mejora_metodo(p_model text, p_metodo text, p_params jsonb, p_desde timestamptz, p_hasta timestamptz, p_reps integer)	5370277a2b2eab8d86057dac749cfaf3
+bootstrap_mejora_por_partido(p_model text, p_params jsonb, p_desde timestamptz, p_hasta timestamptz, p_reps integer)	30fbdcc93ac04c75bca953608ac8d51e
+evaluar_calibrador(p_model text, p_metodo text, p_params jsonb, p_desde timestamptz, p_hasta timestamptz)	0fa614ee5789ab293d933a7d5abf16a8
+fit_isotonica_binned(p_model text, p_desde timestamptz, p_hasta timestamptz, p_bins integer)	d312ad92b451e7fed1111f7ca47c6486
+fit_platt(p_model text, p_desde timestamptz, p_hasta timestamptz)	a01b88686bbaede0f9d58109d5734141
+mlb_backfill_aplicar()	74f1e20cf42059279a4c122f5412cbd6
+mlb_backfill_cosechar()	3242d787f617f7ffd3a8e4092a286755
+mlb_backfill_encolar(p_desde date, p_hasta date, p_max integer)	4afb415c4fee2d5adf13e2aa677d940b
+normal_cdf(z double precision)	9b7d6eb6a4a1a059115d650382166b28
+normal_cdf(z numeric)	64700411fe3fddb2c06463daddc610fb
+
+# NOTA DE DEUDA HONESTA: iss087_sin_pretemporada.sql conserva en Git el bug de
+# ventanas hardcodeadas (36 months / 120 days para ambos deportes). NO se edita
+# a posteriori: es el registro de lo que se corrió ese día. iss089 lo corrige y
+# es el archivo que refleja producción. Correr iss087 después de iss089
+# REINTRODUCIRÍA el bug — el orden es iss088 -> iss089 -> iss090 -> iss091.

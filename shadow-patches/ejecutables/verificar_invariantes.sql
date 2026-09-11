@@ -62,3 +62,50 @@ begin
 
   raise notice 'OK: 6 invariantes se cumplen.';
 end $$;
+
+-- ---------------------------------------------------------------------------
+-- Invariantes añadidas por iss089/iss090/iss091
+-- ---------------------------------------------------------------------------
+do $$
+declare v_n int; v_t text;
+begin
+  -- 7) LINAJE: ningun feature puede mirar el dia del partido ni despues.
+  select count(*) into v_n from public.calib_lambda
+   where greatest(asof_home, asof_away, asof_league, asof_dispersion) >= fecha;
+  if v_n > 0 then raise exception 'FUGA TEMPORAL: % filas con un feature a la fecha del partido o posterior', v_n; end if;
+
+  select count(*) into v_n from public.calib_eventos
+   where data_asof_real >= fecha_partido;
+  if v_n > 0 then raise exception 'FUGA TEMPORAL en eventos: % filas', v_n; end if;
+
+  -- 8) VENTANAS POR DEPORTE: el bug de iss087 era declararlas y no usarlas.
+  --    Aqui quedan materializadas por fila, asi que se pueden verificar.
+  select count(*) into v_n from public.calib_lambda
+   where (deporte='baseball' and (vent_equipo <> '24 months' or vent_liga <> '30 days'))
+      or (deporte='football' and (vent_equipo <> '36 months' or vent_liga <> '120 days'));
+  if v_n > 0 then raise exception 'VENTANAS MAL APLICADAS: % filas no usan la ventana de su deporte', v_n; end if;
+
+  -- 9) PUSH: una linea .5 no puede empujar nunca.
+  select count(*) into v_n from public.calib_eventos
+   where not linea_entera and (resultado='PUSH' or p_push > 0.0001);
+  if v_n > 0 then raise exception 'PUSH FANTASMA: % eventos en linea .5 con push', v_n; end if;
+
+  -- 10) PRETEMPORADA fuera de todo backtest.
+  select count(*) into v_n from public.calib_lambda where tipo_temporada <> 'regular_o_playoffs';
+  if v_n > 0 then raise exception 'PRETEMPORADA DENTRO: % filas', v_n; end if;
+
+  -- 11) apto_para_lock no se regala: ningun calibrador lo tiene sin holdout
+  --     significativo. Si algun dia se enciende, tiene que ser explicito.
+  select count(*), coalesce(string_agg(calibration_version||'/'||deporte||'/'||metodo, ', '),'')
+    into v_n, v_t
+  from public.calibradores where apto_para_lock and not mejora_oos;
+  if v_n > 0 then raise exception 'LOCK REGALADO: % calibradores aptos sin mejora OOS: %', v_n, v_t; end if;
+
+  -- 12) Un solo calibrador elegido por (deporte, mercado) entre los vigentes.
+  select count(*) into v_n from (
+    select deporte, mercado from public.calibradores
+     where elegido and not invalidado group by 1,2 having count(*) > 1) d;
+  if v_n > 0 then raise exception 'CALIBRADOR AMBIGUO: % (deporte,mercado) con mas de un elegido', v_n; end if;
+
+  raise notice 'OK: 6 invariantes nuevas (7-12) se cumplen.';
+end $$;
