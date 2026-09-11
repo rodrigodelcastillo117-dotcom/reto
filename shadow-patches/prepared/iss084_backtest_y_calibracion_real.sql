@@ -1,0 +1,102 @@
+-- iss084 — CALIBRACIÓN REAL, POR DEPORTE, CON BACKTEST DE PARTICIÓN TEMPORAL
+-- 11-sep-2026 — "calibra todo, para eso tenemos toda la información"
+--
+-- iss083 tapó la mentira (dejó de prestarle la calibración del fútbol al
+-- béisbol) pero dejó a MLB y NFL sin medición. Esto los mide.
+--
+-- ============================================================================
+-- CÓMO SE HIZO HONESTO
+-- ============================================================================
+-- NO se puede llamar a motor_mlb() sobre partidos viejos: su parámetro es
+-- "últimos N meses" contado DESDE HOY, así que un partido de 2024 se
+-- alimentaría con datos de 2026. Eso es mirar el futuro y el backtest saldría
+-- bonito y falso.
+--
+-- Se reimplementó la lógica exacta del motor con corte temporal por partido:
+--   - perfil del local: sus juegos DE LOCAL en los 24 meses ANTERIORES
+--   - perfil del visita: sus juegos DE VISITA en los 24 meses ANTERIORES
+--   - base de liga: los 30 días ANTERIORES
+--   - encogimiento n/(n+20), ataque/defensa sobre la base, lambdas [1.5, 9.0]
+-- Ventanas SQL con RANGE ... '1 day' PRECEDING, así que ningún partido ve
+-- jamás un resultado posterior ni el suyo propio.
+--
+-- Atajo exacto: la suma de dos Poisson independientes es Poisson(l1+l2), así
+-- que los totales se calculan con una CDF 1-D en vez de la rejilla 26x26 de
+-- motor_mlb. Mismo resultado, ~600x más barato.
+--
+-- ============================================================================
+-- MLB TOTALES — 6,022 juegos usables de 7,323 (2023-2026), 48,098 filas
+-- ============================================================================
+--   dice 16.8%  entrega 35.9%   infla -19.2   Brier 0.2684
+--   dice 25.7%  entrega 38.2%   infla -12.5   Brier 0.2521
+--   dice 35.0%  entrega 41.5%   infla  -6.4   Brier 0.2466
+--   dice 44.9%  entrega 46.4%   infla  -1.5   Brier 0.2490
+--   dice 55.1%  entrega 53.6%   infla  +1.5   Brier 0.2490
+--   dice 65.0%  entrega 58.5%   infla  +6.4   Brier 0.2466   <-- el pick de hoy
+--   dice 74.3%  entrega 61.8%   infla +12.5   Brier 0.2521
+--   dice 83.2%  entrega 64.1%   infla +19.2   Brier 0.2684
+--
+-- VEREDICTO: sobreconfiado clásico. Estira las probabilidades lejos del 50%
+-- y la realidad se queda cerca del 50%. PERO no está invertido: 58.5% sigue
+-- siendo > 50%, hay señal. 4 de 8 tramos le ganan al volado. Es corregible.
+--
+-- ============================================================================
+-- NFL TOTALES — 1,986 juegos, 14,430 filas. MUCHO PEOR.
+-- ============================================================================
+--   dice  5.3%  entrega 29.0%   infla -23.7   Brier 0.2619
+--   dice 15.1%  entrega 37.6%   infla -22.6   Brier 0.2865
+--   dice 24.9%  entrega 41.8%   infla -16.9   Brier 0.2710
+--   dice 34.8%  entrega 44.4%   infla  -9.7   Brier 0.2565
+--   dice 45.0%  entrega 48.4%   infla  -3.4   Brier 0.2499
+--   dice 55.0%  entrega 51.6%   infla  +3.4   Brier 0.2499
+--   dice 65.2%  entrega 55.6%   infla  +9.7   Brier 0.2565
+--   dice 75.1%  entrega 58.2%   infla +16.9   Brier 0.2710
+--   dice 84.9%  entrega 62.4%   infla +22.6   Brier 0.2865
+--   dice 94.7%  entrega 71.0%   infla +23.7   Brier 0.2619
+--
+-- VEREDICTO: sólo 2 de 10 tramos le ganan al volado, y por 0.0001. Poisson no
+-- modela los puntos de NFL: un touchdown vale 7, no 1. El motor de totales de
+-- NFL NO sirve tal como está. Esto NO contradice lo del modelo de LÍNEA DE
+-- GANADOR de NFL (Brier 0.22702, que sí tiene habilidad): son dos mercados
+-- distintos y hay que medirlos por separado.
+--
+-- ============================================================================
+-- CAMBIOS
+-- ============================================================================
+-- 1) modelo_backtest.deporte (NOT NULL, default 'soccer'). Las 30,876 filas
+--    previas eran todas de fútbol y quedaron marcadas como tal.
+-- 2) zonas_confiables: PK ahora (deporte, mercado, tramo). Antes era
+--    (mercado, tramo) y por eso no cabían dos deportes en el mismo tramo.
+-- 3) recalcular_zonas_confiables() agrupa por deporte. 62 zonas: 11 elite,
+--    13 alta, 38 media.
+-- 4) backtest_mlb_totales y backtest_nfl_totales: tablas nuevas con el detalle
+--    partido por partido, para poder auditar o rehacer la medición.
+-- 5) v_reto13m_mejores RECONSTRUIDA: ahora publica
+--       probabilidad_calibrada_pct  <- lo que el tramo ENTREGA de verdad
+--       probabilidad_cruda_pct      <- lo que el motor DICE (para auditar)
+--       inflacion_pp                <- la diferencia
+--       calibracion_veredicto / calibracion_partidos / calibracion_nivel
+--    y ORDENA por la calibrada, no por la cruda. es_lock también usa la
+--    calibrada. El pick de MLB de hoy pasó de mostrar 63.8% a mostrar 58.5%.
+--
+-- ============================================================================
+-- ESTADO FINAL DE LA CALIBRACIÓN (tramos que le ganan al volado / total)
+-- ============================================================================
+--   soccer Over/Under      8/8   mejor Brier 0.1304   desv 1.2 pts
+--   soccer Total Equipo    6/6   mejor Brier 0.1320   desv 1.7 pts
+--   soccer Tarjetas        8/8   mejor Brier 0.1953   desv 5.3 pts
+--   soccer Moneyline       3/4   mejor Brier 0.1846   desv 2.3 pts
+--   soccer Doble Oport.    3/4   mejor Brier 0.1855   desv 2.3 pts
+--   baseball Over/Under    4/8   mejor Brier 0.2466   desv 9.9 pts
+--   football Over/Under    2/10  mejor Brier 0.2499   desv 15.2 pts
+--   soccer BTTS            1/4   mejor Brier 0.2457   desv 7.4 pts
+--   soccer Corners         0/10  mejor Brier 0.2502   desv 15.9 pts  (ya vetado)
+--
+-- El fútbol es, por mucho, lo único bien calibrado de la app.
+--
+-- ============================================================================
+-- PENDIENTE
+-- ============================================================================
+-- - MLB y NFL línea de ganador siguen sin backtest propio (esto midió totales).
+-- - El motor de totales de NFL necesita otro modelo, no Poisson sobre puntos.
+-- - recalcular_zonas_confiables() debería correr en cron tras cada jornada.
