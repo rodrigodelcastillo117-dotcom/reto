@@ -148,10 +148,21 @@ partido que nunca terminó 0-0.
 falta **o** cuando es exactamente 0-0. El frontend entonces escribe
 *"terminado · ESPN todavía no mandó el marcador"* en lugar de pintar un resultado inventado.
 
-**No inventé el marcador de NE @ SEA.** No está en ninguna tabla de la base (lo busqué en
+**No inventé el marcador de NE @ SEA.** Cuando revisé, no estaba en ninguna tabla (lo busqué en
 `historico_partidos_espn`, `marcadores_archivo`, `score_snapshots`, `live_scores` y
-`resultados_historicos`; lo único que hay es un 0-0 placeholder en `score_snapshots`) y no tengo
-salida de red para consultarlo.
+`resultados_historicos`; lo único que había era un 0-0 placeholder en `score_snapshots`), y no
+tengo salida de red para consultarlo: el proxy bloquea ESPN y las edge functions.
+
+**ACTUALIZACIÓN (misma sesión, ~1 hora después):** el marcador llegó solo a `live_scores` —
+**NE 10 – 13 SEA**, ganó Seattle. Alguien corrió la sincronización, o corre periódicamente con
+retraso. Dos cosas quedan en pie de todas formas:
+
+- `nfl_partidos.estado` **sigue** en `'scheduled'` y `nfl_partidos.marcador` sigue en NULL para
+  ese partido. Lo único que se llenó fue `live_scores`. O sea: el bug #1 es real y sigue abierto,
+  y la derivación de `terminado` desde `live_scores` es justo lo que hace que la tarjeta muestre
+  el resultado. Sin esa mitigación, ese partido seguiría saliendo como "programado" con el
+  marcador escondido.
+- El 0-0 fabricado de CHI @ TEN sigue ahí. Ese no se arregla solo.
 
 ## Qué falta para cerrarlo de verdad
 
