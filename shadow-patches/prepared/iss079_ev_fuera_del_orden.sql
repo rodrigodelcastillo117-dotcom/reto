@@ -51,3 +51,26 @@
 
 -- El cuerpo vigente se recupera con:
 --   select pg_get_viewdef('public.v_pick_canonico'::regclass, true);
+
+-- ===== BARRIDO COMPLETADO: v_mejores_picks_mlb era la última =====
+-- Ordenaba el DISTINCT ON por EV:
+--     ORDER BY espn_event_id, ((f ->> 'ev_pct')::numeric) DESC
+-- O sea, el EV elegía cuál es EL pick de cada juego de MLB.
+-- Esa vista YA calculaba `brecha_pp` (prob_calibrada menos el mercado sin comisión),
+-- que es exactamente la discriminación que usa el resto del sistema. Ahora ordena por
+-- eso. No hubo que inventar nada, el número ya estaba ahí sin usarse para decidir.
+-- Su columna de salida ev_pct también pasa a NULL.
+-- Y tenía el MISMO bug de procedencia que v_pick_canonico: 'model_version', NULL::text
+-- hardcodeado en las tres llamadas a economic_eligibility_v1, así que reason_code
+-- siempre decía MODEL_VERSION_PROVENANCE_MISSING. Ahora usa
+-- modelo_version_activa('baseball'), que devuelve NULL porque MLB genuinamente no
+-- tiene modelo versionado: el motivo sigue siendo el mismo, pero ahora es CIERTO, y
+-- el día que MLB tenga modelo esto se entera solo en vez de mentir para siempre.
+--
+-- VERIFICACIÓN FINAL DEL BARRIDO, sobre TODAS las vistas y matviews de public:
+--   select count(*) from pg_class c join pg_namespace ns on ns.oid=c.relnamespace,
+--        lateral regexp_split_to_table(pg_get_viewdef(c.oid,true), E'\n') l
+--   where ns.nspname='public' and c.relkind in ('v','m')
+--     and l ~* 'order by' and l ~* '\mev_pct\M';
+--   -> 0
+-- NINGUNA vista de la base ordena ya por EV.
