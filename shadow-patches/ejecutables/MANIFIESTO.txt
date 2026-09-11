@@ -1,0 +1,45 @@
+# Manifiesto de reproducibilidad — estado de producción al 11-sep-2026
+#
+# md5 de pg_get_viewdef / pg_get_functiondef de cada objeto tocado por
+# iss082, iss083, iss084 e iss085.
+#
+# PARA QUÉ SIRVE: si alguien reconstruye la base corriendo los archivos de
+# esta carpeta, puede correr `verificar.sql` y comparar contra estos hashes.
+# Si un hash no cuadra, la reconstrucción NO es idéntica a producción y hay
+# que averiguar por qué antes de seguir. Sin esto, "es reproducible" es una
+# afirmación sin forma de comprobarse.
+#
+# tipo     md5                               objeto
+funcion  d57901ec3512949019327d0a6c14d920  destacados_del_dia(integer,text,boolean)
+funcion  30bc8b6db4b17af4666a9da818b543a8  enrich_oraculo_prob_with_momio()
+funcion  0da84a0f0303af81118bf0900e9efd23  favoritos_bien_pagados(numeric,numeric,numeric)
+funcion  49984afcbd8448cdf7e2824d49401de3  generar_parlay_seguro(text,integer,numeric,text[])
+funcion  5e6d26f8916d91edf9b7cafaa1e5797f  mejor_oportunidad_hoy(integer)
+funcion  8773352049a507cf824fa2681b36b2ae  mejor_oportunidad_hoy_v2__base(integer,text)
+funcion  5db662c599537c8d7a50516c2db15c43  mejor_pick_hoy(numeric,numeric,numeric,numeric,numeric,integer)
+funcion  c3a9d71ba96aaa4a1657c7924dd62ce9  motor_mlb(text,text,integer,numeric)
+funcion  a2e92804492a2367455e32b883afcb57  normal_cdf(double precision)
+funcion  64700411fe3fddb2c06463daddc610fb  normal_cdf(numeric)
+funcion  112f00b9eca953e993a373a8fc9f19f7  parlay_del_dia_v3(integer)
+funcion  bcc2f991a8a5d8c51f02d556bd731932  prob_total_sobre(numeric,numeric,text)
+funcion  169e19ebe9e7c66e7becf7cbf966049b  recalcular_zonas_confiables()
+funcion  ad02a82c086e3b78a69d2947777fa6fd  refrescar_destacados(integer)
+funcion  7f4a4d4f835d5e7bfb1271272a9c397a  reto_13m_estado__base(text)
+funcion  2fcb102d5298430777cc05d6f55b67da  rongol_seleccionar_dia(integer,integer)
+funcion  c85785d36ed9ee26a224eed3d8e2d2ed  seleccionar_picks_seguro_valor(jsonb)
+funcion  6e130c27427864e67ff06f3169bc78de  tg_filtrar_pick_del_dia()
+funcion  08a17f864e3c891787cc98a2c1ae10b5  veredicto_lote__base(text)
+funcion  819959185b43ce79c0cb469e1d44e8d6  zona_realidad(text,numeric)
+funcion  94e8d2af369fed6814535ef2c15de348  zona_realidad(text,numeric,text)
+vista  9d213f14055f7da2e9f7f99a49251c94  picks_premium
+vista  2a416bc705e67bd6a8391d140db58d3a  v_mejor_pick_por_partido
+vista  f3c9383910d55fcfbcd97db768cb3c63  v_mejores_picks_mlb
+vista  40d994988e7dea60a6f713d9506281c4  v_oraculo_picks_activos
+vista  a8095a4ad124c784fe9cd4617f81ab64  v_pick_canonico
+vista  ea59273f06a194d6c9a62ce3067ac56f  v_picks_con_valor
+vista  b3387c2847c23b07bbbca8253a0fae15  v_picks_futbol_calc
+vista  1a4a096face3ae415ff51337433824a2  v_picks_para_parlay
+vista  a351a33bfe532945728c752d31a59606  v_picks_premium
+vista  d0b8b4efbc9bf29b02fe12f93dd54186  v_reto13m_lo_mejor
+vista  05d3c26d18ed5d3365ed4c90db164bec  v_reto13m_mejores
+vista  14ffa68d4c5073a99f9afdde343ae64d  v_super_pick
