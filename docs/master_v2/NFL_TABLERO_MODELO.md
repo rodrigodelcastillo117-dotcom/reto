@@ -201,3 +201,58 @@ Al 11-sep-2026 `nfl_player_game_logs` tiene 6,291 filas y 939 jugadores, **pero 
 la temporada 2026** (el juego del jueves). Todo lo que una pantalla de props muestre hoy se
 sostiene en el **historial 2025**. Es dato real y sirve, pero presentarlo como "forma actual"
 sería falso: la temporada apenas arrancó.
+
+
+---
+
+# El Prop Board: la pantalla existía, faltaba el backend
+
+`src/components/nfl/PropBoard.tsx` ya estaba escrito y bien hecho. Llamaba a los RPC
+`nfl_prop_board` / `nfl_prop_board_semana`, que **no existían**. Su hook tiene feature-detection:
+ante `PGRST202`/`42883` marca "no publicado" y la pantalla dice *"El tablero de props de la
+semana todavía no está publicado"*. El frontend llevaba tiempo esperando un contrato que nadie
+había escrito.
+
+## Lo que no tenemos
+
+**En toda la base no existe ni una línea de props de casa de apuestas.** El único objeto con
+`prop` en el nombre era `nfl_props_jugador`, que es historial. Sin precio no hay mercado.
+
+## Por qué se publica igual, y cómo queda honesto
+
+El contrato del frontend ya contemplaba este caso: `semantics` acepta `HISTORICAL_ORIENTATIVE`
+además de `CANONICAL_P_RETO`, y el adaptador lo trata distinto — lo etiqueta **"% orientativo"**,
+`chipPropBoard` le devuelve `null` (sin "TOP PROP" ni "FUERTE") y `ordenarPropBoard` lo pone
+después de lo canónico con el comentario *"nunca se mezclan como si fueran lo mismo"*.
+
+Tres salvaguardas encima:
+
+1. `bookmaker` = **"REFERENCIA RETO · no es linea de casa"**. La UI lo pinta justo después del
+   número, así que no se puede confundir con una línea real.
+2. `cobertura` lleva muestra, promedio, mediana y rango.
+3. `momio_justo_decimal` va **NULL a propósito**: publicar un precio justo invitaría a calcular
+   EV sobre historial, justo lo que el contrato de NFL prohíbe.
+
+## Dos decisiones de método, corregidas al ver los números reales
+
+- **La línea se centra en la MEDIANA, no en el promedio.** Con el promedio, un jugador con
+  mediana 3.5 y un partidazo de 11 quedaba con línea 5.5, donde casi nunca llega.
+- **Se publica el lado que históricamente pega más, no siempre OVER.** Forzar OVER daba filas
+  engañosas: *"Gibbs recepciones OVER 5.5 → 30%"*, cuando lo informativo es *"UNDER 5.5 → 70%"*.
+
+La línea siempre termina en `.5`, así que **nunca hay empate**.
+
+## Medido como `anon`, con los argumentos exactos del frontend
+
+`nfl_prop_board(1, 2026, null)` → **1,657 filas · 442 jugadores · 8 mercados**. Cero filas
+no-orientativas, cero sin probabilidad, todas ≥ 50 %.
+
+| Jugador | Mercado | Publicado | % |
+|---|---|---|---|
+| Mahomes | Intercepciones | UNDER 1.5 | 80 % |
+| Mahomes | Yardas de pase | OVER 269.5 | 50 % |
+| Jacobs | Recepciones | UNDER 2.5 | 70 % |
+| Jacobs | Anota TD | SÍ | 60 % |
+| Gibbs | Yardas recibidas | OVER 29.5 | 60 % |
+
+Rivales verificados: Jacobs GB vs MIN, Mahomes KC vs DEN, Gibbs DET vs NO.
