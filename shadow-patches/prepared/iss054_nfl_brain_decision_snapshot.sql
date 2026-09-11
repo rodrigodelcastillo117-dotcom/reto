@@ -100,6 +100,42 @@ values
    55, 8, true)
 on conflict (sport, model_version) do nothing;
 
+-- ── 1b) VERSION 2: la sd que MIDIO el backtest walk-forward de 2025 ─────────
+-- El backtest (shadow-patches/tests/run_nfl_backtest_2025.sql, 208 juegos) mostro que la
+-- distribucion de v1 es demasiado ANCHA: en el tramo 70%+ el modelo decia 74.5 y la realidad
+-- fue 92.9. Causa: sd_team_points = 9.897 es la sd CRUDA de puntos por equipo, pero los
+-- ratings ya explican parte de esa varianza. El residual medido es
+--     RMSE(margen) 13.399 / sqrt(2) = 9.474
+-- Ademas early_season_sd_inflation = 1.15 empujaba en la direccion EQUIVOCADA.
+-- Se registra como model_version NUEVA para no mover el blanco despues de medir. v1 queda
+-- intacta y auditable.
+--   v1 sd=9.897 -> Brier 0.22750, skill +9.00%
+--   v2 sd=9.474 -> Brier 0.22702, skill +9.19%     (mercado: 0.21822)
+-- La mejora es real y es CHICA, y el modelo sigue por debajo del mercado.
+--
+-- LIMITE QUE ESTA CORRECCION NO ARREGLA: el tramo 40-50% empeoro (+14.0 -> +14.7 pp). Eso
+-- demuestra que ese error NO es de varianza y que ningun ajuste de sd lo va a resolver. Es
+-- falta de features: el modelo no puede ver que equipo local esta realmente comprometido y
+-- por eso aplica ventaja de campo completa a equipos que no la merecen.
+insert into v2.nfl_model_config
+  (model_name, model_version, feature_version, calibration_status, league_mean_points, hfa_points,
+   sd_team_points, shrink_k, early_season_sd_inflation, max_points, min_rating_games, publish_authorized)
+values
+  ('nfl_points_lattice_v2', 'nfl-2026.09.2', 'nfl_ratings_asof_v1',
+   'BACKTESTED_2025_NO_EDGE_VS_MARKET',
+   23.013, 2.070,
+   9.474,   -- MEDIDO, no elegido
+   6.0,
+   1.00,    -- la inflacion de 1.15 estaba mal orientada segun el backtest
+   55, 8, true)
+on conflict (sport, model_version) do nothing;
+
+-- la malla empirica es identica: son los mismos 544 team-games reales
+insert into v2.nfl_points_shape (model_version, points, observaciones, fuente)
+select 'nfl-2026.09.2', points, observaciones, fuente
+from v2.nfl_points_shape where model_version = 'nfl-2026.09.1'
+on conflict (model_version, points) do nothing;
+
 -- ── 2) the EMPIRICAL NFL scoring lattice (real 2025 frequencies) ────────────
 -- Seeded from the 544 team-games of the 2025 regular season. This is what gives margins of
 -- 3 and 7 their real mass. Counts are raw observations; the pmf builder tilts this shape
