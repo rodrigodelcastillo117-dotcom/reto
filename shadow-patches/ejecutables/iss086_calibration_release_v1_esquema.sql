@@ -318,3 +318,77 @@ select jsonb_build_object(
 $function$;
 
 -- FIN iss086. Resultados en el reporte: shadow-patches/REPORTE_CALIBRACION_V1.md
+
+-- ===========================================================================
+-- iss086b — CORRECCIONES tras el NO-PASS (comentario 5640702130)
+-- ===========================================================================
+
+-- (1) SETTLEMENT CORRECTO: P(win) + P(push) + P(loss) = 1.
+--     Lo visible debe ser p_win_uncond; p_raw (condicional a no-push) es SOLO
+--     para evaluar. ERROR CORREGIDO: la formula con +-0.5 solo vale para lineas
+--     ENTERAS. En lineas .5 inventaba una banda de push fantasma e inflaba p_raw
+--     al dividir entre (p_win+p_loss) < 1.
+alter table public.calib_eventos
+  add column if not exists p_win_uncond  numeric,
+  add column if not exists p_push        numeric,
+  add column if not exists p_loss_uncond numeric,
+  add column if not exists data_asof_real timestamptz;
+
+update public.calib_eventos e
+set p_win_uncond = round((case when e.linea = trunc(e.linea)
+        then 1 - public.normal_cdf(((e.linea + 0.5 - c.lam)/c.sd_rodante)::double precision)
+        else 1 - public.normal_cdf(((e.linea       - c.lam)/c.sd_rodante)::double precision) end)::numeric, 6),
+    p_loss_uncond = round((case when e.linea = trunc(e.linea)
+        then public.normal_cdf(((e.linea - 0.5 - c.lam)/c.sd_rodante)::double precision)
+        else public.normal_cdf(((e.linea       - c.lam)/c.sd_rodante)::double precision) end)::numeric, 6),
+    p_push = round((case when e.linea = trunc(e.linea)
+        then greatest(0, public.normal_cdf(((e.linea + 0.5 - c.lam)/c.sd_rodante)::double precision)
+                       - public.normal_cdf(((e.linea - 0.5 - c.lam)/c.sd_rodante)::double precision))
+        else 0 end)::numeric, 6),
+    data_asof_real = c.data_asof_real
+from public.calib_lambda c
+where c.espn_event_id = e.espn_event_id and c.deporte = e.deporte
+  and e.model_version in ('mlb_totales_normal_v1','nfl_totales_normal_v1');
+
+update public.calib_eventos
+set p_raw = round(greatest(0.0001, least(0.9999,
+      p_win_uncond / nullif(p_win_uncond + p_loss_uncond, 0)))::numeric, 6)
+where model_version in ('mlb_totales_normal_v1','nfl_totales_normal_v1');
+
+-- (2) feature_cutoff REAL: el max(fecha) de los partidos que de verdad entraron
+--     a las ventanas. Antes era "partido - 1 dia", que es una fecha escrita y
+--     no una prueba de que datos uso el modelo.
+alter table public.calib_lambda add column if not exists data_asof_real timestamptz;
+update public.calib_lambda c set data_asof_real = r.asof
+from (
+  select deporte, espn_event_id,
+         max(fecha) over (partition by deporte order by fecha
+                          range between unbounded preceding and interval '1 day' preceding) asof
+  from public.calib_lambda
+) r
+where r.deporte=c.deporte and r.espn_event_id=c.espn_event_id;
+
+-- (3) Indice para que los ajustes por fold no se vayan a timeout
+create index if not exists idx_ce_fit on public.calib_eventos (model_version, fecha_partido)
+  where resultado in ('WIN','LOSS') and p_raw is not null;
+
+-- (4) El NFL BUENO registrado aparte del Poisson rechazado.
+insert into public.modelo_registry (model_version, deporte, mercado, familia, estado, motivo_estado, evidencia)
+values ('nfl-2026.09.2', 'football', 'Moneyline', 'modelo_propio_nfl', 'PRODUCCION',
+  'ES EL CEREBRO NFL BUENO. NO confundir con nfl_ml_poisson_v1, que es el motor Poisson generico y esta MODEL_REJECTED. Apagar uno no debe apagar el otro.',
+  'Walk-forward 2026, 208 partidos: Brier 0.22702 contra 0.25 de un volado. Verificado 11-sep-2026: modelo_version_activa(football)=nfl-2026.09.2 y opina en 51 partidos.')
+on conflict (model_version) do update set estado=excluded.estado,
+  motivo_estado=excluded.motivo_estado, evidencia=excluded.evidencia, actualizado_at=now();
+
+-- (5) Tabla de ajustes por fold (seleccion de metodo ANTES de mirar el holdout)
+create table if not exists public.calib_fits (k text primary key, mv text, fold int,
+  tr_hasta timestamptz, va_desde timestamptz, va_hasta timestamptz, params jsonb);
+
+-- NOTA SOBRE EL BOOTSTRAP. El cluster es el PARTIDO: primero se promedia el
+-- Brier dentro de cada partido y luego se remuestrean esos promedios. Remuestrear
+-- filas trataria varias lineas del mismo partido como observaciones
+-- independientes, que es justo el error que el auditor marco.
+--   Resultado MLB temporada 2026, 2,377 partidos, 1000 remuestreos:
+--   mejora media 0.003900, IC95 [0.001838, 0.005914], no cruza cero.
+
+-- FIN iss086b. Numeros en shadow-patches/REPORTE_CALIBRACION_V1_2.md
