@@ -527,3 +527,69 @@ La envoltura de cuarentena LEE la definición vigente de producción, igual que
 iss099. Es exactamente la deuda que marcaste como bloqueante del clean bootstrap.
 No queda cerrada aquí. El siguiente bloque es el volcado de la capa origen
 transitiva.
+
+================================================================================
+RONDA ISS101 — inventario temporal explícito de Under 3.5 (2026-09-12)
+================================================================================
+
+ERROR MÍO EN ISS100, ENCONTRADO AL CERRAR ESTO
+----------------------------------------------
+Mi gate buscaba la fecha por NOMBRE entre 6 candidatos y se perdió `match_date`,
+`fecha_utc`, `fecha_seleccion` e `intended_game_date`. Por eso reporté "328 filas
+sin columna de fecha" cuando las 10 vistas SÍ tenían columna temporal. Adivinar
+por nombre fue el error, igual que el gate de ajustes ocultos que ya habíamos
+reemplazado por uno conductual. Lo sustituí por una declaración explícita.
+
+Y un segundo error del mismo parche: filtré 4 vistas ENTERAS en vez de por fila.
+En las dos que tenían filas pasadas eso borró registro histórico. Corregido a
+filtro por fila. `picks_premium` y `picks_recomendados_hoy` resultaron 100%
+prospectivas (0 filas pasadas), así que ahí no hubo daño.
+
+LA DISTINCIÓN QUE HACE EL TRABAJO
+---------------------------------
+Fecha de EVENTO vs sello de REGISTRO. `created_at`, `updated_at`, `calculado_at`,
+`congelado_at`, `momio_leido_en`, `momio_capturado_at`, `clv_registrado_at` y
+`occurred_at` dicen cuándo se escribió la fila, no cuándo se juega. Un pick creado
+ayer puede ser de un partido de mañana. La assertion 2 prohíbe que cualquiera de
+esos se declare como columna de evento.
+
+`superficie_temporalidad`: 32 superficies declaradas, 27 con fecha de evento real,
+5 sin ninguna.
+
+SEGUNDA VÍA DE PRUEBA: LIQUIDACIÓN
+----------------------------------
+Para las 5 sin fecha de evento encontré otra prueba que no depende de fechas: si
+la fila está LIQUIDADA, el evento ocurrió. `track_record_historial` y `v_tr_base`
+tienen `resultado='perdido'` en sus 8 filas → históricas probadas.
+
+Pero `track_record_detalle` tiene 24 con `resultado='pendiente'`. Eso no prueba
+nada, y es un hallazgo en sí: son selecciones de entre el 2026-08-19 y el
+2026-09-11 que nunca se liquidaron. No las filtro porque cambiaría el denominador
+del track record, y no las declaro históricas porque 'pendiente' no es prueba.
+Hay que liquidarlas o anularlas; es decisión de producto.
+
+RESULTADO
+---------
+  MERCADO_EN_CUARENTENA_CANDIDATO                = 0     bloqueante, limpio
+  MERCADO_EN_CUARENTENA_SIN_CLASIFICAR           = 0     bloqueante, limpio
+  SUPERFICIE_CON_PICK_SIN_DECLARAR_TEMPORALIDAD  = 0     bloqueante, limpio
+  en_cuarentena_historico_por_fecha              = 201   preservado
+  en_cuarentena_historico_por_liquidacion        = 8     preservado
+  en_cuarentena_pendiente_sin_liquidar           = 24    ABIERTO
+
+93 predicciones Under 3.5 sobre eventos futuros que seguían visibles tras ISS100
+ahora son 0: ai_picks_historial 24, v_picks_medibles 24, v_oraculo_picks_activos
+21, v_picks_para_parlay 16, v_motor_valor_proximos 8. Todas filtradas a nivel de
+fila, sin tocar sus filas históricas.
+
+NOTA HONESTA SOBRE LA HUELLA DE v_pick_canonico
+-----------------------------------------------
+Entre la huella que tomé en ISS100 (ac7e1258…) y la de ahora (9acd1c66…) el
+conteo sigue en 284 pero el md5 cambió. No toqué esa vista ni sus insumos en ese
+intervalo, así que lo más probable es que sea dato vivo (momios y partidos que
+arrancan). No puedo probarlo retroactivamente, así que lo reporto como lo que es:
+sin explicación verificada.
+
+SIGUIENTE, según el orden fijado: volcar la capa origen transitiva (que cierra la
+deuda de los wrappers que leen definiciones de producción), luego la llave real de
+las 302 filas sin defaults, luego disposable con el candidato exacto.
