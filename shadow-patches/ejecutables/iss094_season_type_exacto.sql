@@ -1,0 +1,96 @@
+-- iss094 — A. SEASON_TYPE EXACTO DE MLB
+-- Responde al AUDIT_NO_PASS del dueño. Las tres afirmaciones eran ciertas y el
+-- problema era PEOR de lo reportado: la contaminación iba en AMBAS direcciones.
+--
+-- ===========================================================================
+-- LO QUE ESTABA ROTO
+-- ===========================================================================
+-- `historico_partidos_espn.tipo_temporada` sólo tenía dos valores de texto
+-- ('pretemporada' / 'regular_o_playoffs'), así que:
+--   1. Era IMPOSIBLE separar temporada regular de postseason.
+--   2. Mi `cosechar` DESCARTABA los season_type=1, de modo que una fila mal
+--      etiquetada como regular en la base NUNCA podía ser detectada: no había
+--      con qué contradecirla.
+--
+-- MEDIDO, confirmando al dueño y ampliándolo:
+--   53 partidos etiquetados `regular_o_playoffs` que ESPN dice son type 1
+--      (Spring Training): 2023-03-26..29 y 2024-03-26..27. El dueño vio los 14
+--      de 2024; había 39 más en 2023. Estaban DENTRO de mis backtests como
+--      temporada regular.
+--    2 partidos etiquetados `pretemporada` que ESPN dice son type 2:
+--      2024-03-20 y 2024-03-21. Es la Serie de Seúl, temporada regular de
+--      verdad, y estaba FUERA.
+--   Y la Serie de Tokio 2025 (2025-03-18/19), también regular, NO EXISTÍA.
+--
+-- ===========================================================================
+-- EL ARREGLO
+-- ===========================================================================
+-- * Se persiste `season_type` y `season_year` en historico_partidos_espn.
+--   `tipo_temporada` ahora se DERIVA del entero. Nunca se infiere por fecha.
+-- * `cosechar` guarda TODOS los season_type, con `descartado_motivo` explicando
+--   por qué una fila no entra al backtest. Guardar el type 1 es lo que permite
+--   DETECTAR etiquetas malas; descartarlo era el bug de diseño.
+-- * Cada corrección de etiqueta queda en `mlb_season_type_conflictos`. No se
+--   pisa nada en silencio.
+-- * El universo del backtest de MLB ahora filtra `season_type in (2,3)`, el
+--   entero real, en vez de la etiqueta de texto.
+--
+-- Re-bajada completa: 1,306 fechas (2023-02-15 .. 2026-09-12), 0 errores HTTP.
+--
+-- ===========================================================================
+-- COBERTURA, AHORA SEPARADA DE VERDAD
+-- ===========================================================================
+--   año   pretemporada   REGULAR (type 2)   POSTSEASON (type 3)
+--   2023       459            2,431                41
+--   2024       454            2,430                43
+--   2025       458            2,431                47
+--   2026       448            2,202 (al 11-sep)    --
+--
+-- La regular cuadra exacta contra las 2,430 reales. Antes reporté
+-- 2,431/2,426/2,429 comparando una VENTANA DE FECHAS contra un bucket MEZCLADO:
+-- el número parecía bien por la razón equivocada. Las fronteras también quedaron
+-- correctas: 2024 regular arranca 2024-03-20 (Seúl) y 2025 arranca 2025-03-18
+-- (Tokio).
+--
+-- ===========================================================================
+-- "0 DUPLICADOS" MATIZADO, COMO PIDIÓ EL DUEÑO
+-- ===========================================================================
+-- El staging tiene 11,661 filas para 11,647 eventos únicos: 14 de exceso porque
+-- un evento puede volver en respuestas de fechas contiguas. Eso NO es un error
+-- del pipeline, pero el pipeline ahora DEDUPLICA EXPLÍCITAMENTE por
+-- espn_event_id antes del apply y reporta las dos cosas por separado:
+--     duplicados_colapsados_antes_de_aplicar = 14
+--     duplicados_aplicados                   = 0
+-- Ya no se dice "0 duplicados" a secas.
+--
+-- Resultado del apply: 10,512 filas con season_type escrito, 55 conflictos de
+-- etiqueta registrados y corregidos, 932 filas nuevas insertadas.
+--
+-- ===========================================================================
+-- EFECTO EN LA CONCLUSIÓN CIENTÍFICA: NINGUNO, Y HAY QUE DECIRLO
+-- ===========================================================================
+-- Universo MLB: 8,657 -> 8,630 partidos con lambda (se fueron los 53 de Spring
+-- Training, entraron Seúl y Tokio). Recalculado TODO desde cero:
+--   fold 1  identity 0.246468  platt 0.241669  ECE 0.092485->0.064229
+--           IC95 [0.003760, 0.005905]  SIGNIFICATIVO
+--   fold 2  identity 0.242284  platt 0.238797  ECE 0.053934->0.009671
+--           IC95 [0.001443, 0.006008]  SIGNIFICATIVO
+--   HOLDOUT 2026: 2,090 partidos
+--           Brier 0.239357 -> 0.237823   ECE 0.040765 -> 0.018021
+--           IC95 [-0.000472, 0.003893]  CRUZA CERO   92.3% a favor
+--   Platt final: a=-0.23279583  b=0.79521991
+--
+-- Antes de la corrección el holdout daba IC95 [-0.000608, 0.004084] y 93%. O sea:
+-- la contaminación era real y había que quitarla, pero NO estaba sosteniendo la
+-- conclusión. MLB sigue elegido=platt y apto_para_lock=FALSE. Lo digo porque lo
+-- contrario (que el arreglo "mejorara" el resultado) sería lo sospechoso.
+--
+-- ===========================================================================
+-- DEFECTO GEMELO QUE QUEDA ABIERTO EN NFL
+-- ===========================================================================
+-- NFL sigue filtrando por la etiqueta de texto porque su `season_type` NO se ha
+-- recuperado: sólo bajé MLB. Si NFL tiene la misma contaminación de frontera,
+-- mis conclusiones de NFL arrastran el mismo defecto que acabo de arreglar en
+-- MLB. No lo escondo y no lo arreglo aquí por el orden que fijó el dueño (NFL es
+-- el punto F), pero hay que hacerlo ANTES de dar por buena cualquier conclusión
+-- de NFL.
