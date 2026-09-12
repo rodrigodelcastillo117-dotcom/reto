@@ -322,3 +322,21 @@ begin
     end if;
   end loop;
 end $$;
+
+-- =====================================================================
+-- GATE 20 (ISS113): UNA PATA PENDIENTE LO ESTA POR UNA RAZON LEGITIMA
+-- =====================================================================
+do $$
+declare g record; v_fail int := 0;
+begin
+  for g in select * from public.gate_pata_calificable() loop
+    if g.estado = 'PASS' then raise notice 'GATE20 % : PASS', g.gate;
+    elsif g.estado = 'INFO' then raise notice 'GATE20 % : INFO % -> %', g.gate, g.cuenta, g.detalle;
+    else v_fail := v_fail + 1;
+         raise warning 'GATE20 % : FAIL % -> %', g.gate, g.cuenta, left(g.detalle,250);
+    end if;
+  end loop;
+  if v_fail > 0 then
+    raise warning 'ABIERTO: % compuertas de GATE20. Las 19 patas sin evento y el tenis no declarado son decisiones de producto, no parches de vista.', v_fail;
+  end if;
+end $$;
