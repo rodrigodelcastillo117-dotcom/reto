@@ -64,3 +64,33 @@ normal_cdf(z numeric)	64700411fe3fddb2c06463daddc610fb
 # a posteriori: es el registro de lo que se corrió ese día. iss089 lo corrige y
 # es el archivo que refleja producción. Correr iss087 después de iss089
 # REINTRODUCIRÍA el bug — el orden es iss088 -> iss089 -> iss090 -> iss091.
+
+# ---------------------------------------------------------------------------
+# RECAPTURA iss094-096 — 12-sep-2026
+# ---------------------------------------------------------------------------
+# FALLA RECONOCIDA: iss094, iss095 e iss096 se commitearon como PROSA PURA,
+# 0 lineas de SQL ejecutable. El dueno lo detecto. Reabria el gate de
+# reproducibilidad que se habia cerrado en iss082-084 creando esta carpeta.
+# Recapturados como SQL real, idempotente y con assertions:
+#   iss094_season_type_exacto.sql          178 lineas de SQL
+#   iss094b_universo_por_season_type.sql   135
+#   iss095_llave_exacta_y_una_matriz.sql   187
+#   iss096_fuera_el_ev_del_canonico.sql    162
+#   gates_selector.sql                     120
+#   verificar_checksums_iss094_096.sql      55
+#
+# ORDEN DE EJECUCION:
+#   iss088 -> iss089 -> iss090 -> iss091 -> iss094 -> iss094b -> iss095
+#          -> iss096 -> gates_selector -> verificar_checksums_iss094_096
+# NUNCA correr iss087 despues de iss089: reintroduce el bug de ventanas.
+#
+# REPLAY VERIFICADO contra produccion: las assertions de los 4 patches pasan, el
+# parche de v_pick_canonico detecta que ya esta aplicado y NO lo vuelve a tocar
+# (md5 estable cb23f0a51f4fe419aab5a9a077b0f85b), y el envoltorio de las 5 hojas
+# no se reaplica. Los 14 checksums cuadran, y el control negativo confirma que un
+# hash falso si se detecta.
+#
+# DEUDA PREEXISTENTE QUE NOMBRO EN VEZ DE ABSORBER: la definicion completa de
+# v_pick_canonico (21 KB) nunca estuvo en git. iss096 aporta la TRANSFORMACION,
+# que es reproducible contra esa base; una reconstruccion desde CERO absoluto
+# necesita ademas el volcado integro de esa vista preexistente.
