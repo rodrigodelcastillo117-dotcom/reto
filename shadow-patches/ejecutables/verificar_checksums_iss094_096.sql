@@ -14,16 +14,21 @@
 do $$
 declare
   esperados jsonb := '[
-    {"tipo":"vista",  "nm":"v_pick_canonico",                "md5":"d12fd2437bba938a4ab90f8d833afce4"},
-    {"tipo":"vista",  "nm":"v_mejor_pick_por_partido",       "md5":"6287055fc7ecd3b1ac4a71d6d3b9ad52"},
-    {"tipo":"vista",  "nm":"v_reto13m_mejores",              "md5":"526776eab7017dd2edd0a6ed2ef21d62"},
-    {"tipo":"vista",  "nm":"v_reto13m_lo_mejor",             "md5":"58712a800c56073cd5997be776273395"},
-    {"tipo":"vista",  "nm":"v_reto13m_analisis_experimental","md5":"36d3c73832eb96f2a954fb24fb29da41"},
+    {"tipo":"vista",  "nm":"v_pick_canonico",                "md5":"91e5c718dd4f592543fae9aea238c4e6"},
+    {"tipo":"vista",  "nm":"v_mejor_pick_por_partido",       "md5":"09652b7d9128bb8b358e8d16e33e9d3b"},
+    {"tipo":"vista",  "nm":"v_reto13m_mejores",              "md5":"1099de3d8e229e1b07b200cddb10fcc4"},
+    {"tipo":"vista",  "nm":"v_reto13m_lo_mejor",             "md5":"d3845436a0b22e37d2b2f3f86be85c27"},
+    {"tipo":"vista",  "nm":"v_reto13m_analisis_experimental","md5":"00b6180da80841323c79d70c44d5c66f"},
     {"tipo":"funcion","nm":"modelo_de_pick",                 "md5":"00504f3d312c91508b7d53dbe68a4770"},
-    {"tipo":"funcion","nm":"estado_respaldo",                "md5":"d6615a96fb8d1d88f0f2e3be154cf96f"},
+    {"tipo":"funcion","nm":"estado_respaldo",                "md5":"a2b7efbb058eeb8f6187d40ec120a1ef"},
     {"tipo":"funcion","nm":"linea_es_canonica",              "md5":"5072bf25fe60e894a5b4f60885279eec"},
-    {"tipo":"funcion","nm":"mercado_apto_para_lock",         "md5":"ee3d0847d9e037fa6e0f96cccd8242ff"},
-    {"tipo":"funcion","nm":"elegibilidad_no_economica_v1",   "md5":"59b3a0d1e5cd6f87a0fde22cc5949987"},
+    {"tipo":"funcion","nm":"mercado_apto_para_lock",         "md5":"3747826a3766d6670e8f40eee27c3490"},
+    {"tipo":"funcion","nm":"elegibilidad_no_economica_v1",   "md5":"82b475eb7a63dec019636c202b00f2c8"},
+    {"tipo":"funcion","nm":"calibracion_de_pick",           "md5":"452aa06d3d9eef81ab1cee8e7aae6991"},
+    {"tipo":"funcion","nm":"model_skill",                   "md5":"3f9064c5476c9194a692e881d8af9dcb"},
+    {"tipo":"funcion","nm":"datos_listos",                  "md5":"f2cc18587057bda37cc7d106e625104d"},
+    {"tipo":"funcion","nm":"identidad_valida",              "md5":"a1664b9c0d48e1b352761da6223e0cb4"},
+    {"tipo":"funcion","nm":"gate_ajustes_escondidos",       "md5":"023ac118d208743ca90ad6d8f47fce7c"},
     {"tipo":"funcion","nm":"mlb_backfill_cosechar",          "md5":"e3779f24dd62d27f5e0a74465b423a32"},
     {"tipo":"funcion","nm":"mlb_season_type_aplicar",        "md5":"d68a88db545e1507db45b995f18996f4"},
     {"tipo":"funcion","nm":"mlb_backfill_encolar",           "md5":"fd950e8e9fa3af7ed3043bd78125a323"},
@@ -58,7 +63,7 @@ begin
   if malos <> '' then
     raise exception 'CHECKSUMS NO CUADRAN. La reconstruccion NO es identica a produccion:%', malos;
   end if;
-  raise notice 'CHECKSUMS OK: 18 objetos identicos a produccion';
+  raise notice 'CHECKSUMS OK: 23 objetos identicos a produccion';
 end $$;
 
 -- Conteos de referencia. No son checksums pero detectan una carga incompleta.
@@ -78,4 +83,16 @@ begin
 
   select count(*) into v_n from public.superficie_usuario;
   if v_n < 80 then raise warning 'superficie_usuario: % vistas (referencia 83). Registro chico = falso verde.', v_n; end if;
+end $$;
+
+-- El ajuste escondido a P_RETO no puede volver sin registro
+do $$
+declare r jsonb;
+begin
+  r := public.gate_ajustes_escondidos();
+  if (r->>'AJUSTE_NO_REGISTRADO_A_P_RETO')::int <> 0 then
+    raise exception 'AJUSTE NO REGISTRADO A P_RETO = % : %',
+      r->>'AJUSTE_NO_REGISTRADO_A_P_RETO', r->'detalle';
+  end if;
+  raise notice 'OK: ningun ajuste a P_RETO sin registro, llave y validacion OOS';
 end $$;

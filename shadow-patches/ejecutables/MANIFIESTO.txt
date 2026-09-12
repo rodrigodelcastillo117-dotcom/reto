@@ -138,3 +138,60 @@ normal_cdf(z numeric)	64700411fe3fddb2c06463daddc610fb
 #   iss088 -> iss089 -> iss090 -> iss091 -> iss094 -> iss094b -> iss095
 #          -> iss096 -> baseline/v_pick_canonico.sql -> gates_selector
 #          -> verificar_checksums_iss094_096
+
+# ---------------------------------------------------------------------------
+# TERCERA RONDA — 12-sep-2026 (AUDIT_NO_PASS 5643661236)
+# ---------------------------------------------------------------------------
+# Los 4 bloqueadores eran ciertos. El mas grave no era ninguno de los tres de
+# orden: era el 4.
+#
+# 4. MODIFICACION ESCONDIDA DE P_RETO. v_pick_canonico llamaba a
+#    ajuste_h2h_over25() en Soccer Over 2.5, que sumaba +2.9 pp con H2H caliente
+#    y restaba -5.4 pp con H2H frio. El filtro x.fecha < ev.fecha SI es causal,
+#    asi que no habia lookahead en la feature; el problema es que la MAGNITUD se
+#    estimo in-sample sobre 3,725 partidos, sin model_version, sin
+#    calibration_version y sin holdout. Medido antes de retirarlo: 2 de 67
+#    candidatos de Over 2.5 estaban recibiendo +2.9 pp.
+#    RETIRADO de la ruta canonica. Registrado en ajustes_a_p_reto con
+#    habilitado=false y el motivo completo. Gate nuevo
+#    gate_ajustes_escondidos() = AJUSTE_NO_REGISTRADO_A_P_RETO, que exige
+#    registro + habilitado + validado_fuera_de_muestra + llave completa.
+#    Yo lo pase por alto dos rondas seguidas.
+#
+# 3. LLAVE EXACTA SIEMPRE. mercado_apto_para_lock tenia
+#    p_calibration_version DEFAULT NULL y NULL actuaba de comodin, asi que
+#    cualquier calibracion valida del mismo model_version autorizaba. Se elimino
+#    el default: ahora son 4 argumentos obligatorios y NULL en cualquiera falla
+#    cerrado. La cadena lleva calibration_version por fila.
+#
+# 1. CICLO EN EL ARRANQUE. iss096 parcheaba v_pick_canonico (necesitaba que
+#    existiera) pero el baseline final invoca funciones que iss095/096 crean.
+#    Resuelto separando definicion de transformacion: orden/ORDEN_DE_ARRANQUE.md
+#    crea v_pick_canonico UNA sola vez desde su definicion final, despues de sus
+#    funciones. Los iss0xx quedan como registro historico del cambio.
+#
+# 2. iss094 MEZCLABA bootstrap con assertions. Dividido:
+#      iss094                          -> solo esquema + funciones
+#      orden/50_bootstrap.sql          -> define y arranca la descarga
+#      orden/60_espera_bootstrap.sql   -> BLOQUEA hasta que termine de verdad
+#      orden/70_universo.sql           -> construye el universo
+#      orden/80_assertions.sql         -> recien entonces comprueba
+#    Antes, en una base virgen, las assertions podian correr sobre datos a medio
+#    cargar y "pasar" sin probar nada.
+#
+# ENDURECIMIENTOS (los tres eran valores de adorno que nadie evaluaba):
+#   model_skill      -> model_skill() exige calibrador elegido + mejora_oos +
+#                       brier_cal < brier_raw. Verificado: MLB Platt SKILL_OK,
+#                       nfl_ml_poisson_v1 SKILL_RECHAZADO,
+#                       soccer_1x2_poisson_v1 SKILL_NO_DEMOSTRADO.
+#   data_readiness   -> datos_listos() comprueba agenda, identidad de equipos y
+#                       hora. Antes era la constante 'READY'.
+#   semantic_validity-> identidad_valida() valida evento, equipos, mercado, linea
+#                       canonica, lado correcto y proveniencia del motor. Antes
+#                       solo miraba si dos motores se contradecian.
+#                       DISCRIMINA DE VERDAD: 35 de 302 filas fallan
+#                       LINEA_NO_CANONICA, que el chequeo viejo nunca veria.
+#
+# CHECKSUMS a 23 objetos. BASELINE MARCADO COMO OBSOLETO a proposito: la
+# definicion cambio 3 veces despues de capturarlo, y prefiero decirlo a dejar un
+# volcado caducado pareciendo bueno.

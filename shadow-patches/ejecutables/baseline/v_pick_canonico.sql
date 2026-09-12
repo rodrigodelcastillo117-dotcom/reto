@@ -12,7 +12,20 @@
 --   nivel_ventaja sale de estado_respaldo(), no de edge_pct
 --   la temporalidad se MIDE con feature_asof vs evento_at, no con arranca_en>now()
 --
--- md5 del pg_get_viewdef resultante: d12fd2437bba938a4ab90f8d833afce4
+-- OBSOLETO: md5 d12fd2437bba938a4ab90f8d833afce4
+--
+-- ATENCION: este volcado quedo DESACTUALIZADO en la misma sesion. Despues de
+-- capturarlo, v_pick_canonico cambio tres veces mas por el AUDIT_NO_PASS
+-- #5643661236:
+--   1. se retiro ajuste_h2h_over25(), que desplazaba P_RETO +2.9/-5.4 pp
+--   2. se conectaron model_skill, datos_listos e identidad_valida de verdad
+--   3. se agrego calibration_version a la llave
+-- md5 vigente en produccion: 91e5c718dd4f592543fae9aea238c4e6
+--
+-- NO USAR ESTE ARCHIVO PARA RECONSTRUIR. Queda como registro del estado
+-- intermedio. El volcado vigente hay que regenerarlo; lo digo en vez de dejar un
+-- baseline caducado pareciendo bueno, que es justo el tipo de cosa que el dueno
+-- lleva cuatro rondas encontrandome.
 -- Verificado por verificar_checksums_iss094_096.sql
 --
 -- ORDEN: este archivo va ANTES de iss095/iss096. Las funciones que invoca
