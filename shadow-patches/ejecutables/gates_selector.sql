@@ -386,3 +386,24 @@ begin
     raise notice 'GATE23 % : % (%)', g.gate, g.estado, g.cuenta;
   end loop;
 end $$;
+
+-- =====================================================================
+-- GATE 24 (ISS120): NINGUNA PATA NUEVA DE UN DEPORTE SIN CONTRATO CANONICO
+-- Ultima clausula de la Decision 4 del dueno. Lo historico se preserva a
+-- proposito: aparece como INFO, no como FAIL. Borrarlo seria limpiar la
+-- historia para que una superficie se vea sana.
+-- =====================================================================
+do $$
+declare g record; v_fail int := 0;
+begin
+  for g in select * from public.gate_pata_con_contrato_canonico() loop
+    if g.estado = 'PASS' then raise notice 'GATE24 % : PASS %', g.gate, g.cuenta;
+    elsif g.estado = 'INFO' then raise notice 'GATE24 % : INFO % -> %', g.gate, g.cuenta, left(g.detalle,200);
+    else v_fail := v_fail + 1;
+         raise warning 'GATE24 % : FAIL % -> %', g.gate, g.cuenta, left(g.detalle,250);
+    end if;
+  end loop;
+  if v_fail > 0 then
+    raise exception 'GATE24 ABIERTO: % compuertas. Entro una pata nueva de un deporte sin contrato canonico, o alguien quito la guarda.', v_fail;
+  end if;
+end $$;
