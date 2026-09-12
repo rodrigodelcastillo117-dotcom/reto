@@ -30,11 +30,14 @@ begin
     raise exception 'CANDADO ROTO: el mercado volvio a decidir en: %', v_t;
   end if;
 
-  -- 2) Ningun pick publicado por debajo de la base aritmetica del mercado.
-  select count(*) into v_n from public.v_reto13m_mejores
-   where probabilidad_cruda_pct < case when deporte ~* 'soccer|futbol' and mercado='Moneyline'
-                                       then 33.3 else 50.0 end;
-  if v_n > 0 then raise exception 'PISO ROTO: % picks por debajo del azar', v_n; end if;
+  -- 2) DEROGADA por iss093 (AUDIT_NO_PASS 5642144970).
+  --    Decia 'PISO ROTO: % picks por debajo del azar', o sea EXIGIA el piso de
+  --    ventaja-sobre-azar que el dueno acaba de prohibir. Su orden textual:
+  --    «El usuario quiere lo que RETO cree que pasara, no lo que mas supera un
+  --    baseline artificial». Un empate al 38% DEBE poder salir si es el
+  --    resultado mas defendible. La sustituyen las 4 pruebas de
+  --    public.pruebas_selector_limpio(), que se ejecutan mas abajo.
+  --    No se borra el hueco en silencio: queda escrito que esta regla cambio.
 
   -- 3) NO-PASS del auditor: nada se declara validado fuera de muestra, y no
   --    hay LOCKs, hasta que exista la prueba temporal independiente.
@@ -150,4 +153,43 @@ begin
   if v_n > 0 then raise exception 'VENTAJA LOCAL INVERTIDA en calib_lambda_1x2'; end if;
 
   raise notice 'OK: invariantes 13-17 (soccer) se cumplen.';
+end $$;
+
+-- ---------------------------------------------------------------------------
+-- Las 4 pruebas obligatorias del selector limpio (iss093).
+-- Sustituyen a la invariante 2 derogada.
+-- ---------------------------------------------------------------------------
+do $$
+declare r jsonb;
+begin
+  r := public.pruebas_selector_limpio();
+  if (r->>'EV_FIELDS_USER_VISIBLE')::int <> 0 then
+    raise exception 'EV_FIELDS_USER_VISIBLE = % : %', r->>'EV_FIELDS_USER_VISIBLE', r->'EV_FIELDS_detalle';
+  end if;
+  if (r->>'UNIFORM_BASELINE_PICK_GATE')::int <> 0 then
+    raise exception 'UNIFORM_BASELINE_PICK_GATE = % : %', r->>'UNIFORM_BASELINE_PICK_GATE', r->'BASELINE_detalle';
+  end if;
+  if (r->>'SPORT_QUOTA')::int <> 0 then
+    raise exception 'SPORT_QUOTA = % : %', r->>'SPORT_QUOTA', r->'SPORT_QUOTA_detalle';
+  end if;
+  if (r->>'IN_SAMPLE_PROB_MUTATION')::int <> 0 then
+    raise exception 'IN_SAMPLE_PROB_MUTATION = % : %', r->>'IN_SAMPLE_PROB_MUTATION', r->'IN_SAMPLE_detalle';
+  end if;
+  raise notice 'OK: las 4 pruebas del selector limpio estan en cero (cadena de % vistas).', r->>'cadena_revisada';
+end $$;
+
+-- 18) Ningun pick se declara LOCK si su mercado no tiene apto_para_lock.
+do $$
+declare v_n int;
+begin
+  select count(*) into v_n from public.v_reto13m_mejores
+   where not public.mercado_apto_para_lock(deporte, mercado);
+  if v_n > 0 then raise exception 'LOCK SIN AVAL: % filas en Reto13M cuyo mercado no es apto_para_lock', v_n; end if;
+
+  -- 19) La superficie experimental nunca se declara validada.
+  select count(*) into v_n from public.v_reto13m_analisis_experimental
+   where coalesce(es_lock,false) or coalesce(validado_fuera_de_muestra,false);
+  if v_n > 0 then raise exception 'EXPERIMENTAL SE DECLARA VALIDADO: % filas', v_n; end if;
+
+  raise notice 'OK: invariantes 18-19 se cumplen.';
 end $$;
