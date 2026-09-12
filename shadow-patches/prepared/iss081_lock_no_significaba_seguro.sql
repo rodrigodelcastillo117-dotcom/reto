@@ -1,0 +1,60 @@
+-- iss081 · "LOCK" nunca significó seguro. Significaba "aquí le llevamos puntos a
+--          DraftKings". Por eso el pick del día no le hacía sentido al owner.
+--
+-- El owner mandó la pantalla "⭐ LO MEJOR DE HOY" y dijo "no sé si me hace sentido el
+-- pick de hoy". Tenía razón. Lo que encabezaba, con badge LOCK:
+--     LOCK · ML Miami Marlins   · NOSOTROS 46.3%
+--     LOCK · ML Athletics       · NOSOTROS 50.1%
+--            ML Baltimore Orioles · NOSOTROS 49.8%
+--            Gana local (Tigres)  · NOSOTROS 49.3%
+-- Un "LOCK" al 46.3% es una contradicción: lock quiere decir seguro, y estamos
+-- diciendo que NO va a pasar.
+--
+-- ===== LA CAUSA, EN TRES LÍNEAS =====
+-- v_reto13m_mejores es un envoltorio delgado de v_mejor_pick_por_partido, y lo único
+-- que agregaba era esto:
+--     discriminacion_pp >= 5::numeric AS es_lock,
+--     row_number() OVER (PARTITION BY deporte ORDER BY discriminacion_pp DESC),
+--     WHERE discriminacion_pp >= 3::numeric;
+--
+--   es_lock  = 5+ puntos de desacuerdo con el mercado
+--   el orden = desacuerdo con el mercado
+--   el filtro= desacuerdo con el mercado
+--
+-- LA VISTA NO MIRABA NUESTRA PROBABILIDAD EN NINGÚN MOMENTO. Sin piso, sin nada.
+-- Miami Marlins salía como LOCK porque la casa dice 37% y nosotros 46.3%: 9.3 puntos
+-- de diferencia. El badge premiaba la DISCREPANCIA, no la confianza.
+--
+-- Es triple violación del candado del owner (issue #4): el desacuerdo de mercado
+-- SELECCIONABA, ORDENABA Y ETIQUETABA los picks.
+--
+-- ===== LO QUE QUEDÓ =====
+--   es_lock  = probabilidad >= 65 Y calibración confiable.
+--              "Lock" vuelve a significar seguro: lo vemos muy probable Y el modelo
+--              ya demostró que le atina a ese mercado en el pasado.
+--   el orden = calibración, luego tamaño de muestra, luego ventaja sobre la base
+--              ARITMÉTICA del mercado (33.3% si hay tres resultados, 50% si hay dos),
+--              luego la probabilidad. Todo señal propia; ningún precio de casa.
+--   el filtro= probabilidad >= 55, y fuera lo declarado en mercados_sin_modelo
+--              (eso saca la línea de ganador de MLB, que perdió 7 de 8, y NFL).
+-- discriminacion_pp se CONSERVA en la vista: es contexto útil para el usuario, pero
+-- ya no decide nada.
+--
+-- ===== MEDIDO COMO anon, antes -> después =====
+--   filas                    21 -> 15
+--   por debajo del 50%        3 ->  0   (mínimo ahora: 55.2%)
+--   moneylines de MLB         4 ->  0
+--   "LOCKs"                  13 ->  2
+--
+-- Los DOS locks que quedan, y por qué lo son:
+--   Seattle Sounders @ LA Galaxy · Under 3.5 · 71.4% · calibrado con 2,026 partidos
+--   Austin @ Vancouver Whitecaps · Under 3.5 · 70.1% · calibrado con 2,026 partidos
+-- Los dos arriba del 70% Y con calibración real. Eso sí es un lock.
+-- MLB ya no tiene ningún lock, y es correcto: no tiene calibración (0 de 120 filas).
+--
+-- NOTA: el top 3 de baseball ahora son los tres totales (Over 8, Over 7.5, Over 7) a
+-- 61.7 / 60.4 / 57.9, ordenados por NUESTRA probabilidad. Antes el orden lo daba el
+-- desacuerdo y por eso encabezaban dos moneylines por debajo del 51%.
+
+-- El cuerpo vigente se recupera con:
+--   select pg_get_viewdef('public.v_reto13m_mejores'::regclass, true);

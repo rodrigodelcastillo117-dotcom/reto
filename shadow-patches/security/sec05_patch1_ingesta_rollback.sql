@@ -1,0 +1,43 @@
+-- ROLLBACK de sec05_patch1_ingesta.sql — restaura el estado previo (anon podía ejecutar).
+-- NO EJECUTAR salvo incidente: reabre la superficie de agotamiento de cuota de APIs.
+\set ON_ERROR_STOP on
+BEGIN;
+GRANT EXECUTE ON FUNCTION public.absorber_agenda_espn() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.absorber_detalle_espn() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.absorber_detalle_espn(p_limite integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.absorber_historico_espn() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.absorber_tenis_espn() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.futbol_arbitro_pedir(p_limite integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.futbol_arbitro_recoger() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.futbol_clima_pedir(p_limite integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.futbol_clima_recoger() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.futbol_jugador_pedir(p_limite integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.futbol_jugador_recoger() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_bat_pedir(p_limite integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_bat_recoger() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_batazos_pedir(p_limite integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_batazos_recoger() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_boxscore_pedir(p_limite integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_boxscore_recoger() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_calendario_pedir(p_desde date, p_hasta date) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_calendario_recoger() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_clima_pedir(p_desde date, p_hasta date) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_clima_pedir(p_desde date, p_hasta date, p_limite integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_clima_recoger() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_linescore_pedir(p_limite integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_linescore_recoger() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_lineup_pedir(p_horas integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_lineup_recoger() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_pit_pedir(p_limite integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_pit_recoger() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_pitcheo_pedir(p_limite integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_pitcheo_recoger() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_saber_pedir(p_temporada integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_saber_recoger() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_ump_pedir(p_limite integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.mlb_ump_recoger() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.nfl_clima_pedir(p_desde date, p_hasta date, p_limite integer) TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.nfl_clima_recoger() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.tenis_ls_pedir() TO PUBLIC;
+GRANT EXECUTE ON FUNCTION public.tenis_ls_recoger(p_max integer) TO PUBLIC;
+COMMIT;

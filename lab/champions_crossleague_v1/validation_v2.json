@@ -1,0 +1,97 @@
+{
+  "estado": "APPROVABLE_STAGED / FINAL_VALIDATION_PENDING",
+  "leakage": {
+    "n": 826,
+    "max_fecha": "2026-09-08",
+    "live_rows": 0
+  },
+  "walk_forward": [
+    {
+      "test_desde": "2025-02-01",
+      "n_train": 212,
+      "n_val": 163,
+      "n_test": 144,
+      "brier": 0.6031,
+      "logloss": 1.0042,
+      "dBrier": 0.0074,
+      "dLogLoss": 0.0132,
+      "ci": [
+        -0.0173,
+        0.0344
+      ]
+    },
+    {
+      "test_desde": "2025-08-01",
+      "n_train": 375,
+      "n_val": 144,
+      "n_test": 186,
+      "brier": 0.5929,
+      "logloss": 0.9946,
+      "dBrier": 0.0242,
+      "dLogLoss": 0.0311,
+      "ci": [
+        0.0042,
+        0.0444
+      ]
+    },
+    {
+      "test_desde": "2026-03-01",
+      "n_train": 519,
+      "n_val": 210,
+      "n_test": 92,
+      "brier": 0.6156,
+      "logloss": 1.0254,
+      "dBrier": -0.008,
+      "dLogLoss": -0.0117,
+      "ci": [
+        -0.0486,
+        0.0316
+      ]
+    }
+  ],
+  "por_competencia": {
+    "UCL": {
+      "n": 207,
+      "brier": 0.6069,
+      "logloss": 1.0118,
+      "dBrier_vs_base": 0.0166,
+      "ece": 0.018
+    },
+    "UEL": {
+      "n": 136,
+      "brier": 0.5979,
+      "logloss": 1.0006,
+      "dBrier_vs_base": 0.0285,
+      "ece": 0.028
+    },
+    "Concacaf": {
+      "n": 54,
+      "brier": 0.6045,
+      "logloss": 1.0058,
+      "dBrier_vs_base": -0.0051,
+      "ece": 0.119
+    },
+    "Conference": {
+      "n": 32,
+      "brier": 0.6121,
+      "logloss": 1.0233,
+      "dBrier_vs_base": -0.0113,
+      "ece": 0.037
+    },
+    "FIFA CWC": {
+      "n": 21,
+      "brier": 0.5324,
+      "logloss": 0.9062,
+      "dBrier_vs_base": -0.0116,
+      "ece": 0.166
+    },
+    "AFC Elite": {
+      "n": 1,
+      "brier": 0.9256,
+      "logloss": 1.4414,
+      "dBrier_vs_base": -0.0475,
+      "ece": null
+    }
+  },
+  "floor_optimo": 15
+}

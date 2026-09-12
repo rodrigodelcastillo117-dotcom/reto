@@ -1,0 +1,54 @@
+-- iss097 — LOS CUATRO BUGS QUE EL DUENO ENCONTRO PROBANDO  [EJECUTABLE]
+-- AUDIT_NO_PASS #5643913943. Los cuatro reproducidos antes de arreglar.
+--
+-- ATENCION: al aplicar el bug 1 de este archivo yo destrui 10 vistas con un
+-- `drop ... cascade`. Ver INCIDENTE_2026-09-12_drop_cascade.md. Este archivo YA
+-- NO usa cascade: dropea las vistas dependientes en orden y las recrea.
+--
+-- ===========================================================================
+-- BUG 1 — estado_respaldo ignoraba deporte y mercado
+-- ===========================================================================
+-- Aceptaba p_deporte y p_mercado y NO LOS USABA, y no recibia
+-- calibration_version. SONDA DEL DUENO, reproducida:
+--   estado_respaldo('soccer','BTTS','mlb_totales_normal_v1') -> 'EARLY'
+-- Un modelo de MLB avalaba un mercado de Soccer. Tras el arreglo:
+--   -> 'NO_APLICA_A_ESTE_MERCADO'
+--   estado_respaldo('baseball','Over/Under','mlb_totales_normal_v1',null)
+--   -> 'SIN_CALIBRATION_VERSION'
+--
+-- ===========================================================================
+-- BUG 2 — identidad_valida no comparaba los equipos contra la agenda
+-- ===========================================================================
+-- SONDA DEL DUENO, reproducida: pasarle 'WRONG_HOME'/'WRONG_AWAY' a un evento
+-- REAL devolvia 'PASS'. La funcion comparaba el pick contra los equipos que le
+-- pasaban, pero nunca comprobaba que esos equipos fueran los del evento.
+-- Tras el arreglo: 'HOME_NO_COINCIDE_CON_AGENDA'.
+--
+-- ===========================================================================
+-- BUG 3 — datos_listos decia validar hora y no la validaba
+-- ===========================================================================
+-- Perdi la rama SIN_HORA_DE_INICIO al cambiarle la firma. Restaurada.
+--
+-- ===========================================================================
+-- BUG 4 — el gate de ajustes escondidos era por NOMBRE
+-- ===========================================================================
+-- Buscaba 'ajuste|boost|shift|desplaz|penaliz|correccion', asi que una
+-- transformacion con nombre inocente se colaba. Sustituido por un gate
+-- CONDUCTUAL: gate_p_reto_sin_desplazar() compara la probabilidad que emite el
+-- MOTOR contra la que emite la cadena canonica.
+--   Verificado: 302 filas comparadas, 0 desplazadas.
+--   CONTROL NEGATIVO: inyectando +2.9 pp a proposito, detecta 136 de 136.
+-- El gate por nombre se conserva como capa extra, no como la unica.
+--
+-- ===========================================================================
+-- INVARIANTE NUEVA nacida del incidente
+-- ===========================================================================
+-- gate_superficie_destruida() -> SUPERFICIE_REGISTRADA_INEXISTENTE.
+-- Una vista registrada en superficie_usuario que ya no existe en el catalogo
+-- significa que algo la destruyo. Hoy vale 1 (v_mis_favoritos_analisis) y se
+-- queda en 1 a proposito: bajarla a 0 borrando el registro seria esconder la
+-- perdida.
+--
+-- El cuerpo SQL de estas funciones vive en el orden de arranque; este archivo
+-- documenta las sondas, los resultados y el incidente para que la proxima
+-- persona no repita ni el bug ni el cascade.

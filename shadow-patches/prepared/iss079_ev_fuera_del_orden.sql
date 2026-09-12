@@ -1,0 +1,76 @@
+-- iss079 · El EV no solo se mostraba: DECIDÍA qué veías primero.
+--
+-- Quitar el EV de la pantalla no basta si el EV sigue eligiendo qué pick se muestra.
+-- Eso es la misma mentira con otra cara. En v_pick_canonico, línea 364:
+--
+--   row_number() OVER (PARTITION BY m.espn_event_id
+--                      ORDER BY m.es_pick DESC, m.es_senal DESC,
+--                               m.ev_pct DESC NULLS LAST,       <-- AQUÍ
+--                               m.probabilidad_pct DESC) AS rank_en_partido
+--
+-- `rank_en_partido = 1` es el pick PRINCIPAL de cada partido. Y lo elegía el EV.
+-- Eso no es cosmético: rank_en_partido = 1 es lo que captura evidencia_capturar
+-- (iss075) para la prueba contra el mercado, y es lo que alimenta la pantalla de
+-- favoritos. El EV estaba eligiendo la evidencia con la que se iba a juzgar al modelo.
+--
+-- DOS CAMBIOS, con cirugía de texto sobre pg_get_viewdef exigiendo 1 sola ocurrencia:
+--  1. La COLUMNA DE SALIDA `ev_pct` pasa a `null::numeric`. La columna se conserva
+--     para no romper a los consumidores; el valor deja de existir.
+--  2. El ORDEN pasa de `m.ev_pct DESC` a
+--     `(m.probabilidad_pct - m.prob_que_implica_el_precio_pct) DESC`, o sea la
+--     DISCRIMINACIÓN en puntos porcentuales.
+--
+-- LO QUE NO SE TOCÓ, A PROPÓSITO: el `ev_pct` INTERNO del CTE. economic_eligibility_v1
+-- lo usa como una de sus nueve compuertas (g_ev). Esa compuerta es control de riesgo
+-- que impide marcar un pick, no algo que el usuario vea. Quitarla AFLOJARÍA el filtro,
+-- que es lo contrario de lo que se busca. "Nada de EV" es sobre lo que se muestra y
+-- lo que se ordena, no sobre relajar los candados.
+--
+-- MEDIDO COMO anon, después del cambio:
+--   ev_pct devuelto:  0 filas con valor, en los tres deportes (antes: todas)
+--   Discriminación media del pick PRINCIPAL de cada partido:
+--     baseball 4.42 pts · football 8.20 pts · soccer 4.78 pts
+--   Comparar con los 8 picks publicados que perdieron 1-7: promediaban 1.26 pts.
+--   O sea, el pick principal que se elige ahora tiene entre 3 y 6 veces más
+--   desacuerdo con el mercado que los que costaron el 1-7.
+--
+-- Superficies verificadas vivas después del cambio (todas como anon):
+--   v_pick_canonico 323 · v_picks_con_valor 27 · picks_premium 101 ·
+--   v_picks_futbol_calc 35 · picks_futbol_cache 35 · nfl_props_top_por_equipo 64 ·
+--   nfl_tablero_semana 16 · v_mlb_h2h 435 · v_mlb_equipo_carreras 30 ·
+--   evidencia_modelo_forward 19
+--
+-- PENDIENTE: siguen calculando ev internamente v_oraculo_canonico,
+-- v_mejores_picks_mlb, v_motor_valor_proximos, v_reto13m_mejores,
+-- v_mejor_pick_por_partido, v_picks_futbol_calibrado y v_picks_futbol_limpio. Como
+-- todas leen de v_pick_canonico o de picks_premium, la mayoría ya recibe NULL; falta
+-- revisar si alguna ORDENA por el suyo propio. Se listan con:
+--   select c.relname from pg_class c join pg_namespace n on n.oid=c.relnamespace
+--   where n.nspname='public' and c.relkind in ('v','m')
+--     and pg_get_viewdef(c.oid,true) ~* 'order by[^;]*ev_pct';
+
+-- El cuerpo vigente se recupera con:
+--   select pg_get_viewdef('public.v_pick_canonico'::regclass, true);
+
+-- ===== BARRIDO COMPLETADO: v_mejores_picks_mlb era la última =====
+-- Ordenaba el DISTINCT ON por EV:
+--     ORDER BY espn_event_id, ((f ->> 'ev_pct')::numeric) DESC
+-- O sea, el EV elegía cuál es EL pick de cada juego de MLB.
+-- Esa vista YA calculaba `brecha_pp` (prob_calibrada menos el mercado sin comisión),
+-- que es exactamente la discriminación que usa el resto del sistema. Ahora ordena por
+-- eso. No hubo que inventar nada, el número ya estaba ahí sin usarse para decidir.
+-- Su columna de salida ev_pct también pasa a NULL.
+-- Y tenía el MISMO bug de procedencia que v_pick_canonico: 'model_version', NULL::text
+-- hardcodeado en las tres llamadas a economic_eligibility_v1, así que reason_code
+-- siempre decía MODEL_VERSION_PROVENANCE_MISSING. Ahora usa
+-- modelo_version_activa('baseball'), que devuelve NULL porque MLB genuinamente no
+-- tiene modelo versionado: el motivo sigue siendo el mismo, pero ahora es CIERTO, y
+-- el día que MLB tenga modelo esto se entera solo en vez de mentir para siempre.
+--
+-- VERIFICACIÓN FINAL DEL BARRIDO, sobre TODAS las vistas y matviews de public:
+--   select count(*) from pg_class c join pg_namespace ns on ns.oid=c.relnamespace,
+--        lateral regexp_split_to_table(pg_get_viewdef(c.oid,true), E'\n') l
+--   where ns.nspname='public' and c.relkind in ('v','m')
+--     and l ~* 'order by' and l ~* '\mev_pct\M';
+--   -> 0
+-- NINGUNA vista de la base ordena ya por EV.

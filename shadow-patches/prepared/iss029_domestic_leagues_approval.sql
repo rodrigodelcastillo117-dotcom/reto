@@ -1,0 +1,49 @@
+-- ============================================================================
+-- iss029 — APROBACIÓN DE LIGAS DOMÉSTICAS (BLOQUE 2 / 2b) · STAGED, NO APLICAR
+-- ============================================================================
+-- Validación FINAL con el MODELO EXACTO DE PRODUCCIÓN (v2.fn_score_dist Dixon-Coles
+-- determinista sobre features AS-OF idénticas a v2.fn_soccer_features_asof / iss033),
+-- no un fit de laboratorio. Evaluación OOS por construcción (el modelo no ajusta
+-- parámetros por liga). Baseline A = tasas base AS-OF de la competencia.
+-- Evidencia: shadow-patches/reports/BLOQUE2b_domestic_walkforward_2026-09-09.md
+--            shadow-patches/reports/BLOQUE2b_queries.sql (read-only, reproducible)
+--
+-- NO va en supabase/migrations. NO aplicar bajo freeze. NADA con approved=true aquí.
+-- ============================================================================
+--
+-- REVERSIÓN HONESTA vs el BLOQUE 2 previo (lab-fit): el fit de laboratorio medía
+-- un modelo distinto al de producción; al evaluar el modelo REAL sólo Grecia
+-- sobrevive. Bélgica (que el lab daba como la más fuerte) es PEOR que la tasa base.
+--
+-- RESULTADOS OOS (VERIFICADO 2026-09-09, ganancia de Brier vs Baseline A, IC95%):
+--   197 Grecia    n=409  gain +0.0477  IC[+0.0144,+0.0811]  ECE 0.0508  -> APPROVABLE_STAGED
+--   119 Dinamarca n=465  gain +0.0126  IC[-0.0155,+0.0406]  ECE 0.0914  -> NOT_APPROVABLE
+--   103 Noruega   n=530  gain +0.0116  IC[-0.0156,+0.0388]  ECE 0.0999  -> NOT_APPROVABLE
+--   179 Escocia   n=331  gain +0.0039  IC[-0.0371,+0.0450]  ECE 0.1571  -> NOT_APPROVABLE
+--   144 Belgica   n=777  gain -0.0113  IC[-0.0365,+0.0140]  ECE 0.1577  -> NOT_APPROVABLE
+--
+-- Sólo Grecia vence a la tasa base AS-OF con IC enteramente > 0, está bien calibrada
+-- (ECE 0.05) y es estable en las 2 temporadas con historia AS-OF completa (2025/2026).
+-- Calibración NO rescata a las demás: su problema es discriminación (IC cruza 0),
+-- no sobreconfianza (coincide con issue #191: Platt no crea información faltante).
+--
+-- DECISIÓN: sólo Grecia (197) queda APPROVABLE_STAGED / FINAL_VALIDATION_PENDING.
+-- El resto FAIL_CLOSED. NINGÚN INSERT approved hasta autorización de cutover.
+-- ============================================================================
+
+-- INSERT de aprobación (PREPARADO, comentado — requiere autorización de cutover).
+-- Sólo Grecia; el resto permanece sin fila approved (fail-closed por ausencia).
+--
+-- insert into v2.model_registry (sport, model_name, model_version, liga_id, approved, note)
+-- values ('soccer','reto_dc_v2','dc-2026.09.1', 197, true,
+--   'Grecia Super League: OOS gain +0.0477 IC[+0.0144,+0.0811], ECE 0.0508 (BLOQUE 2b, prod model)')
+-- on conflict do nothing;
+--
+-- NOTA: model_registry es la autoridad de publicación (§47). enabled/approved por
+-- (sport,model_name,model_version,liga_id). El builder staged (iss033) exige
+-- r.approved is true; sin fila -> el evento sale con P_RETO=NULL / model_status
+-- 'Competencia no aprobada para el modelo' (fail-closed, NO desaparece).
+
+-- Identidad competencia/proveedor: liga_id de ESPN es la clave canónica
+-- (v_futpro_v2 e historico_partidos_espn comparten liga_id). Las 5 son single-country
+-- (un solo liga_id por competencia) => sin ambigüedad de proveedor.

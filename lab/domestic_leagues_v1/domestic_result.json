@@ -1,0 +1,110 @@
+{
+  "Belgica/Jupiler": {
+    "liga_id": 144,
+    "n": 913,
+    "n_train": 638,
+    "n_test": 275,
+    "cut": "2025-10-04",
+    "live_rows": 0,
+    "brier": 0.6217,
+    "logloss": 1.0343,
+    "acc": 0.462,
+    "base_brier": 0.6595,
+    "base_logloss": 1.0877,
+    "dBrier": 0.0378,
+    "dLogLoss": 0.0534,
+    "ece": 0.011,
+    "estabilidad": {
+      "2025": 0.6369,
+      "2026": 0.6146
+    },
+    "floor_val": 15,
+    "decision": "APPROVABLE"
+  },
+  "Noruega/Eliteserien": {
+    "liga_id": 103,
+    "n": 714,
+    "n_train": 497,
+    "n_test": 217,
+    "cut": "2025-09-20",
+    "live_rows": 0,
+    "brier": 0.5608,
+    "logloss": 0.9496,
+    "acc": 0.594,
+    "base_brier": 0.6152,
+    "base_logloss": 1.0217,
+    "dBrier": 0.0544,
+    "dLogLoss": 0.0721,
+    "ece": 0.12,
+    "estabilidad": {
+      "2025": 0.5333,
+      "2026": 0.5751
+    },
+    "floor_val": 15,
+    "decision": "NOT_APPROVABLE"
+  },
+  "Grecia/SuperLeague": {
+    "liga_id": 197,
+    "n": 530,
+    "n_train": 370,
+    "n_test": 160,
+    "cut": "2025-12-13",
+    "live_rows": 0,
+    "brier": 0.6108,
+    "logloss": 1.0203,
+    "acc": 0.469,
+    "base_brier": 0.6746,
+    "base_logloss": 1.1177,
+    "dBrier": 0.0638,
+    "dLogLoss": 0.0974,
+    "ece": 0.097,
+    "estabilidad": {
+      "2026": 0.6147
+    },
+    "floor_val": 15,
+    "decision": "NOT_APPROVABLE"
+  },
+  "Dinamarca/Superliga": {
+    "liga_id": 119,
+    "n": 571,
+    "n_train": 396,
+    "n_test": 175,
+    "cut": "2025-09-28",
+    "live_rows": 0,
+    "brier": 0.6379,
+    "logloss": 1.0596,
+    "acc": 0.503,
+    "base_brier": 0.6564,
+    "base_logloss": 1.0831,
+    "dBrier": 0.0185,
+    "dLogLoss": 0.0235,
+    "ece": 0.05,
+    "estabilidad": {
+      "2025": 0.6235,
+      "2026": 0.6442
+    },
+    "floor_val": 15,
+    "decision": "APPROVABLE"
+  },
+  "Escocia/Premiership": {
+    "liga_id": 179,
+    "n": 425,
+    "n_train": 297,
+    "n_test": 128,
+    "cut": "2026-01-20",
+    "live_rows": 0,
+    "brier": 0.5665,
+    "logloss": 0.9592,
+    "acc": 0.547,
+    "base_brier": 0.6308,
+    "base_logloss": 1.0461,
+    "dBrier": 0.0643,
+    "dLogLoss": 0.0869,
+    "ece": 0.06,
+    "estabilidad": {
+      "2026": 0.5665
+    },
+    "floor_val": 15,
+    "decision": "APPROVABLE"
+  }
+}

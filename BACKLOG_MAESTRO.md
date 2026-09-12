@@ -1,0 +1,4195 @@
+# BACKLOG MAESTRO — RETO 13M
+Censo numerado. Protocolo: Regla 360° (Backend + Frontend + Validación + Cierre).
+Última actualización: 2026-09-05.
+
+> Regla de este archivo: nada entra aquí sin estar **medido**. Si un número no se
+> midió contra producción, va marcado como `[SIN MEDIR]`.
+
+---
+
+## A. CERRADAS HOY (evidencia, no memoria)
+
+- ~~**A1. Saturación del haircut de Kelly en N≥300.**~~ El factor `sqrt(N/300)` daba
+  1.0000 exacto para los dos tramos vivos (n=853, n=1963), o sea cero recorte.
+  Medido: la alternativa `ln(1+N)/ln(1+500)` tiene el MISMO defecto movido a N≥500
+  (también 1.0000 en 853 y 1963) — habría sido un no-op. Implementado el **límite
+  inferior de Wilson**: 0.9067 (187), 0.9562 (853), 0.9711 (1963), 0.9749 (2612).
+  Nunca satura. Exposición autorizada $311.36 → $185.37.  *(commit 3a74e6a)*
+- ~~**A2. Deadlocks de `nfl-sync-cdn` (#35) con SKIP LOCKED.**~~ `sync_nfl_cdn_tick()` y
+  `espejar_nfl_a_live()` tomaban candados de `live_scores` en órdenes distintos.
+  Ambos ordenan ya por `espn_event_id` y pre-candan con `FOR UPDATE SKIP LOCKED`
+  (no se puede pegar a un `INSERT ... ON CONFLICT`). **Medido: 0 deadlocks en 7 días**;
+  los 18 fallos eran `job startup timeout` (#88). Es prevención para el kickoff.
+  De paso, un solo vocabulario de `deporte`.  *(commit 3a74e6a)*
+- ~~**A3. Línea de cierre CLV a T-5, aislando el live.**~~ `v_odds_prematch` (identidad
+  canónica `espn_event_id, mercado, linea, casa, snapshot_at`) y `v_linea_de_cierre`.
+  Medido: solo 0.93% de los snapshots ligables son en vivo, pero **76% de los cierres
+  están a más de 6h del saque** (mediana 18h) y solo 10 caen en T-5. T-5 quedó como
+  ETIQUETA de calidad, no filtro: filtrarlo dejaría el CLV en n=10.  *(commit 3a74e6a)*
+- ~~**A4. Sizing invertido: el monto lo decidía el momio (#208).**~~
+- ~~**A5. El EV de la tarjeta no era el EV que dimensiona (#209).**~~
+- ~~**A6. Abridor visitante vacío por caché vencido (#210).**~~ 29 vencidos → 4.
+- ~~**A7. "Gana local" en vez del nombre del equipo (#211).**~~
+- ~~**A8. La pantalla ofrecía lo que RONGOL rebota (#212).**~~
+- ~~**A9. Sin techo de cartera; 24.8% del bankroll en 8 apuestas (#213).**~~ CDaR 20%.
+- ~~**A10. Botón "Apostar en Playdoit" no abría nada.**~~ `window.open` con `noopener`
+  devuelve `null` por especificación; la pestaña nunca se navegaba.
+
+---
+
+## B. ABIERTAS — LOTE 1 (en ejecución ahora)
+
+~~1. **Oráculo: `limpieza-nocturna` borra el marcador antes de calificar (#181).**~~ **CERRADO**
+   MEDIDO: 185 picks sin calificar; 59 ya jugados; **42 sin fila en `live_scores`**
+   (borrada) y 6 con marcador final disponible que nadie calificó.
+   Causa: `DELETE FROM live_scores WHERE status IN ('post','final') AND updated_at <
+   now() - interval '72 hours'` (cron 32, 11:00 UTC). Un pick no calificado en 72h
+   pierde su marcador para siempre. Es pérdida de datos irreversible.
+
+~~2. **404 de ESPN: ni registro ni evasión.**~~ **CERRADO — DIAGNÓSTICO RETRACTADO**
+   MEDIDO: 235 respuestas 404 en 2 horas = **13.5% de todo el tráfico saliente**.
+   El 100% cae en minuto ≡ 0 mod 10 → cron `futbol-jugadores-pedir` (`*/10`,
+   `futbol_jugador_pedir(60)`): 35-45 de cada 60 peticiones son 404. Nada registra
+   qué id murió, así que se reintenta el mismo id para siempre (~6,500 llamadas
+   desperdiciadas al día).
+
+~~3. **RETO 13M: 5 de los 7 motivos de bloqueo no tienen insignia.**~~ **CERRADO**
+   `bloqueado_por` devuelve `abstencion | sin_datos | rongol | kelly | ev_negativo |
+   bajo_minimo | exposicion`. La UI solo pinta insignia para `rongol` y `exposicion`.
+   Hoy 14 de 16 picks caen en "descartado" y el usuario ve un muro sin taxonomía.
+   (Hueco que yo mismo dejé al desplegar A8/A9 — entra por la Regla 360°.)
+
+---
+
+## C. ABIERTAS — SIGUIENTES (por prioridad, con su número histórico)
+
+~~4. **#193** El 0.55 hardcodeado.~~ **CERRADO.** La escritura ya estaba muerta: última
+    fila con 0.5500 el **1-sep**; del 2 al 5-sep hay 0. Lo que seguía vivo era la
+    contaminación del corpus (935 filas) y que **el termómetro no las excluía**.
+    Backfill de la marca (935/935) + `v_termometro_motor` ahora filtra
+    `prob_placeholder`. Efecto medido en el veredicto:
+    | ventana | mercado | t antes | t después | veredicto |
+    |---|---|---|---|---|
+    | 90d | Over/Under | −2.97 | **−1.14** | PIERDE → EMPATE |
+    | 90d | TODOS | −3.27 | **−1.93** | PIERDE → EMPATE |
+    | todo | TODOS | −4.20 | **−3.24** | sigue PIERDE |
+    | todo | Corners | — | **−4.27** | PIERDE (el perdedor real) |
+
+5.  **#191 — NO EJECUTADO, premisa falsificada.** La orden era vetar MLB Moneyline
+    "dado que el Brier Score es peor que la tasa base". Con el corpus limpio (#193)
+    eso ya no se sostiene: **MLB Moneyline n=1074, exceso de confianza −0.020,
+    Brier motor 0.25114 vs base 0.24728, ventaja −0.00385, t = −1.35.** No es
+    significativo a ningún umbral convencional. Moneyline global: t=−0.71 (90d, n=851)
+    y t=−0.30 (todo, n=1253). El dinero ya está bloqueado por el veto RONGOL
+    (ROI −41.3% en 42 picks), así que **no hay exposición mientras se decide**.
+    Requiere confirmación explícita del usuario para vetar sobre otra base.
+~~6. **#202** Cobertura del torniquete.~~ **CERRADO. Auditoría de las puertas de dinero:**
+    | puerta | RONGOL | CDaR | abstención | techo |
+    |---|---|---|---|---|
+    | `reto_picks_hoy` | ✅ | ✅ | ✅ | vía kelly |
+    | `revisar_apuesta` | ✅ | ✅ | **✅ (era ❌ — cerrado hoy)** | ✅ |
+    | `tamano_apuesta` | ❌ | ❌ | ❌ | ❌ |
+    | `devils_advocate` | ❌ | ❌ | ❌ | ❌ |
+    | `devils_advocate_parlay` | ❌ | ❌ | ❌ | ❌ |
+    | `autodiagnostico` | ✅ | ❌ | ❌ | ❌ |
+    (`kelly_stake`, `stake_techo`, `rongol_veto`, `kelly_fraccion_pct` NO son puertas:
+    son las guardas mismas.) El hueco real era **`revisar_apuesta` sin abstención**: un
+    mercado vetado pasaba sin que nadie lo dijera. Cerrado — no bloquea, **exige razón
+    escrita**, porque un betslip escaneado es una apuesta YA COLOCADA y rechazarla
+    rompería el registro contable. Verificado: O/U → `advertencia` + `requiere_razon`;
+    ML normal → `ok`; MLB → `bloqueado` por RONGOL.
+~~7. **#176** Isotónica aplastada.~~ **CERRADO: SUSPENDIDA.** Medido: las 15 anclas se
+    ajustaron el **30-ago**, y el ancla `ai_pro:OU` `0.547 → 0.452` con muestra **1059**
+    ES la constante 0.55 — la curva de Over/Under aprendió del relleno. Además aplasta:
+    en `ai_pro` la entrada va de 0.241 a 0.769 (52.8 pp) y la salida de 0.299 a 0.511
+    (**21.2 pp**); dice 76.9% y entrega 51.1%. `ai_pro:ML` topa en 0.454 → 0.454 (identidad).
+    `calibrar_probabilidad` devuelve NULL mientras `updated_at` sea anterior al 5-sep;
+    **la suspensión se levanta sola** al reajustar con datos limpios. No se borró la tabla.
+    Verificado sin romper nada: 16 picks con dinero, 2 apostables (igual que antes).
+~~8. **#182** Piso de muestra + reloj.~~ **CERRADO.** Medido: de 16 picks, **1 nunca
+    medido** (kelly_stake usaba n=30 como PRIOR, que no es medición sino "no sé") y
+    **0 con n<30 real**. Nuevo valor `bloqueado_por = 'muestra_chica'` con su propio
+    motivo, para que la pantalla no diga "el precio no compensa" cuando lo que pasa es
+    que no hay con qué compararlo. Reloj: `horaCorta` YA guardaba contra NaN y el eje
+    de la gráfica ya tenía su arreglo de Infinity; lo que faltaba era la fecha en el
+    **pasado**, que se pintaba como hora normal (ESPN reprograma y la fila queda vieja).
+    Ahora dice "ya comenzó". Dinero intacto: 2 apostables, $159.29.
+9.  **#158** El chip GANA de MLB enseñaba la probabilidad previa con el partido en vivo.
+~~10. **#159** Cartelera de MLB.~~ **CERRADO — Y MI PROPIO DIAGNÓSTICO CORREGIDO.**
+    Son **5 filtros, no 3**. Embudo: 416 → 34 (no muy viejo) → 19 (corte de día) →
+    15 (no final) → 15 (con momio) → 15 salida.
+    Parecía que el corte de día era el cuello (34→19), pero al quitar **todo tope
+    superior el resultado sigue siendo 15**: lo que ese corte quitaba ya estaba
+    `final` o sin momio. El filtro de momios tampoco corta (15→15).
+    **La causa real es cobertura de precios:** el 6-sep hay 17 juegos cargados y
+    **solo 3 con momio**; el 7-sep, 1 juego y 0 con momio. Es la clase de #40, y se
+    llena solo conforme avanza el día.
+    Cambios hechos igual, por higiene: (a) el corte de día dependiente de zona horaria
+    → ventana rodante de 36h, más simple y sin sorpresas de DST; (b) nueva columna
+    `over_en_abstencion` para que el radar no pinte Over/Under como accionable cuando
+    el mercado está vetado (15 de 15 filas marcadas).
+11. **#120** Tenis: 112 de 163 partidos de ATP con marcador imposible.
+~~12. **#205** Partidos fantasma.~~ **CERRADO (candado preventivo).**
+    Medido hoy: de 282 filas canónicas, **0 sin fila en `live_scores`, 0 con estado
+    no apostable y 0 con deriva > 12h** (deriva máxima 0.0h). El fantasma no se está
+    manifestando. Igual se armó el candado en `reto_picks_hoy`, que ahora hace
+    LEFT JOIN a `live_scores` y manda a `partido_fantasma` cuando el estado ya no es
+    `pre/scheduled/in/live` o cuando la hora que traemos se separó más de 12h de la
+    oficial de ESPN. Sin efecto colateral: 2 apostables y $159.29, igual que antes.
+~~13. **#206** Discrepancia entre motores.~~ **CERRADO — Y EL UMBRAL NO SE RELAJÓ.**
+    Medido en `contraste_motores_futbol`: el umbral vivo es **10.0 pp**, más estricto
+    que los 15 pp del ticket. Estados: 107 `ok` (media 4.3 pp), **43 `discrepancia`**
+    (media 14.4, máx 25.4) y 390 `sin_contraste`. De las 43, solo 18 pasan de 15 pp:
+    **subir el umbral a 15 habría dejado pasar 25 picks que hoy están frenados.**
+    No se tocó.
+    El hueco real: `v_pick_canonico` SÍ llama a `pick_sin_discrepancia_motores`
+    (0 picks con dinero en discrepancia), pero **`revisar_apuesta` NO lo checaba** —
+    la ruta manual (AddPickForm / betslip) pasaba por encima, con 43 discrepancias
+    vivas en partidos por jugar. Cerrado con un parámetro nuevo `p_espn_event_id`
+    (DROP+CREATE, porque un parámetro nuevo crea una SOBRECARGA, no reemplaza).
+    Verificado: 1 sola versión de la función, la llamada vieja de 8 args sigue en `ok`,
+    y con evento en discrepancia devuelve `advertencia` + `requiere_razon=true`.
+~~14. **#175** Orquestación de crons.~~ **CERRADO.** Auditoría empírica sobre
+    `cron.job_run_details` (7 días), no sobre mi lectura del cron. Dos colisiones reales:
+    | cuándo | crons | frecuencia |
+    |---|---|---|
+    | 08:00 diario | `calibrar-ai-sql-12h` + `calificar-oraculo-madrugada` + `oraculo-madrugada` | 7 de 7 días |
+    | cada 15 min | `capturar-clv-oraculo` (7,22,37,52) vs `grade-oraculo-picks` (7-59/15 → 7,22,37,52) | **100%: horarios idénticos** |
+
+    Nueva malla:
+    - `capturar-clv-oraculo` 7,22,37,52 → **12,27,42,57**
+    - `calibrar-ai-sql-12h` `0 8,20` → **`3 8,20`**
+    - `calificar-oraculo-madrugada` `0 8` → **`6 8`**
+    - `oraculo-madrugada` se queda en `0 8` (ancla)
+    Ninguno de los tres toca dinero: son medición y aprendizaje.
+15. **#200** Residuales de #179/#180: pisos de muestra y el veto blando de Uruguay.
+16. **#169** Calibración sobre picks publicados: primero descartar el confundidor.
+~~17. **#174** Poisson sobredisperso.~~ **CERRADO — PREMISA DEL TICKET INVERTIDA.**
+    Re-medido sobre 365 días:
+    | deporte | partidos | media | varianza | var/media | veredicto |
+    |---|---|---|---|---|---|
+    | FÚTBOL (goles) | 10,939 | 2.826 | 2.871 | **1.016** | Poisson es razonable |
+    | MLB (carreras) | 2,611 | 9.124 | 22.482 | **2.464** | SOBREDISPERSO |
+    La sobredispersión está en **MLB, no en fútbol**. Pasar fútbol a Binomial Negativa
+    habría metido un parámetro de dispersión donde el ajuste es 1.016: inflar colas sin
+    evidencia. NO SE HIZO.
+    Tampoco se tocó `v_termometro_motor`: es el **instrumento de medición** (Brier vs
+    tasa base), no el modelo de goles. "Limitar el peso del Brier" ahí sería corromper
+    el único termómetro honesto que hay.
+    MLB O/U ya está cubierto por el veto global `over/under` en `mercados_en_abstencion`,
+    así que **no fluye dinero por el modelo sobredisperso**.
+18. **#203** Poblar el hueco: cargar segundas divisiones (ya en `ligas_master`, apagadas).
+19. **#204** FUT PRO usa otro motor y otro formato que Favoritos.
+20. **#189** `v_goles_equipo_futbol` creada (528 equipos, 29 ligas): falta conectarla.
+21. **#188** Mapeo de ligas, escritor Tier 1, `v_poisson_picks`.
+22. **#155** Notificaciones de marcador: dos sistemas mandando lo mismo.
+23. **#145** Fútbol: carga de stats por jugador desde ESPN (ligado al punto 2 de arriba).
+24. **#133** Llevar clima, sabermetría y contexto a NFL, fútbol y NBA.
+25. **#87**  FANTASY/NFL: falta ADP.
+26. **#118** NFL: picks apagados hasta medir (revisar después del 10-sep).
+27. **#123** Bono: dos convenciones distintas y un parlay de $1,194 por confirmar.
+28. **#42**  Acotar columnas del Feed de Comunidad.
+29. **#38**  Bloqueantes para publicar: apodo, funciones rotas, correo.
+30. **#36**  Verificar caché de análisis y decidir la UI de Batallas.
+31. **#98 / #100** Cierres de día pendientes de redactar.
+32. **#63**  Llaves legacy: sigue en `in_progress`; requiere acción del usuario, no mía.
+33. **#105** Seguridad: 2 vistas de dinero cerradas; queda revisar los 43 respaldos.
+34. **#113** Marcadores cruzados en pantalla (tenis congelado, MLB al revés).
+35. **#67 / #70** Equipos favoritos con estrella; historial por equipo A-F sin consumir.
+36. **Deep-link de Playdoit:** `build_bookmaker_link` devuelve solo la raíz
+    (`deep_link_quality: home_only`). No se pudo verificar una ruta `/login` porque
+    Playdoit responde 403 a todo lo que no sea navegador real (Cloudflare).
+    Requiere que el usuario pegue la URL exacta.
+37. **Prueba de humo en navegador** del candado de dinero (#207): mi proxy bloquea
+    `reto13.lovable.app`.
+
+---
+
+## D. HALLAZGOS NUEVOS (anotados sin desviarse)
+
+38. **El grader del Oráculo salta el 100% de los pendientes, y hace bien.**
+    `grade-oraculo-picks` respondió 200 con `graded:0, voided:0, skipped:185`.
+    Al mirar los 6 que yo había contado como "recuperables": 3 son de **Corners**
+    (`af_*`) y `live_scores` solo guarda goles, nunca tiros de esquina — ese mercado
+    **no se puede calificar desde ahí, nunca**. Los otros 3 son el evento `401874394`
+    con marcador final 0-0 y picks "Over 36.5 Goles" / "Over 37.5 Puntos" en el mismo
+    partido: dato basura de origen. Saltarlos es lo correcto.
+    → **Corrección a mi propia medición del punto 1:** los 6 no eran recuperables.
+    Lo recuperable de verdad son 0. Falta: una fuente de corners para calificar ese
+    mercado, o marcar Corners del Oráculo como no calificable.
+
+39. **`v_salud_espn_404` reporta "AVISO: hay 429 (cuota)".** 11 respuestas 429 en la
+    ventana de 2h. Cuota de ESPN rozada mientras se drena el padrón de jugadores.
+    No es urgente (el drenado termina solo) pero hay que vigilarlo.
+
+40. **40 picks del Oráculo perdidos sin remedio.** Ya jugados, sin fila en
+    `live_scores` y sin fila en `historico_partidos_espn`. NO los toqué: marcarlos
+    a mano cambia el corpus de aprendizaje y eso es decisión del usuario, no mía.
+    Opciones: dejarlos `pendiente` para siempre (hoy) o marcarlos `nulo`.
+
+
+~~41. **La isotónica hay que reajustarla, no solo suspenderla.**~~ **CERRADO.** Filtro
+    inyectado como sub-consulta en las **4 lecturas** de `oraculo_picks_tracking`
+    (2 por función), así no depende del `WHERE` particular de cada una.
+    Muestra que vería el reajuste: **2,776 → 1,894** filas (882 placeholders fuera, 31.8%).
+    NO se corrió el reajuste a propósito: correrlo movería `updated_at` y levantaría
+    la suspensión de #176, desplegando una curva nueva sin visto bueno.
+42. **El termómetro cambió de veredicto al limpiar el corpus.** Toda conclusión previa
+    basada en `t = −2.97` para Over/Under queda invalidada. Corners es el único mercado
+    que pierde de verdad (t = −4.27, n=119) y ya está en abstención.
+43. **El contador `omitidos_por_candado` es invisible donde importa.** `sync_nfl_cdn_tick()`
+    lo devuelve en su texto de retorno, pero pg_cron guarda `return_message = "1 row"` para
+    un `SELECT`, así que en `cron.job_run_details` nunca se ve. Verificado el 5-sep:
+    11 corridas, 1 solo mensaje distinto, y es literalmente "1 row". Si en el kickoff
+    empiezan a omitirse filas por contención, nadie se va a enterar. Arreglo: que la
+    función escriba el contador en una tabla de salud (o `RAISE LOG`), no solo en el
+    retorno. NO urgente: la omisión es segura por diseño y se recupera al tick siguiente.
+
+~~44. **Puertas crudas.**~~ **CERRADO. Auditoría de UI (grep sobre `src/`):**
+    | función | ¿llega a la UI? | dónde |
+    |---|---|---|
+    | `tamano_apuesta` | **SÍ** | `components/reto/CalculadoraMonto.tsx:42` |
+    | `devils_advocate` | **SÍ** | `hooks/useDevilsAdvocate.ts:43` → `AddPickForm` |
+    | `devils_advocate_parlay` | **SÍ** | `components/reto/CalificarIAModal.tsx:251` |
+    | `autodiagnostico` | **NO** | solo en `types.ts` (tipos generados) |
+
+    **Corrección a mi propia nota:** dije "CERO guardas" y era falso. `tamano_apuesta`
+    YA traía el tope 0.52 por tasa base (#191), techo de 2% del bankroll y aviso de
+    ventaja negativa. Lo que le faltaba era el **CDaR**: con la cartera al 20% seguía
+    sugiriendo montos. Cerrado — se recorta a `exposicion_viva(...).disponible` y
+    devuelve `recortado_por_cartera` + veredicto propio.
+    Los dos `devils_advocate` **no emiten monto**: devuelven un semáforo, y
+    `CalificarIAModal.tsx:326` ya los trata como informativos con su propio gate Kelly.
+    No se renombró nada: renombrar una función que la UI llama la rompe.
+
+
+45. **`sin_contraste` es el 72% de la tabla de contraste.** 390 de 540 filas en
+    `contraste_motores_futbol` no tienen medición (`prob_af` o `prob_espn` ausente),
+    así que la guarda de discrepancia no puede opinar sobre ellas: pasan por defecto.
+    No es una fuga de dinero (el resto de las puertas siguen aplicando), pero la
+    cobertura real del contraste es 28%, no 100%.
+
+---
+
+## E. AUDITORÍA DEL CEREBRO PREDICTIVO (5-sep-2026) — solo medición, cero cambios
+
+46. **`features_json` NO guarda ni una sola variable de entrada.** Barrido de las 1,178
+    filas de `oraculo_picks_tracking` de los últimos 45 días: las claves son
+    `prob`, `edge`, `momio_justo`, `momio_ia`, `ev_estimado`, `confianza`, `razon`…
+    es decir **salidas**. No hay xG, ni abridor, ni clima, ni descanso, ni muestra.
+    Consecuencia: el inventario de variables NO se puede reconstruir desde el registro
+    del pick; hubo que rearmarlo leyendo el código de cada motor. Tampoco se puede
+    hacer atribución (qué variable movió la probabilidad) ni auditar un pick viejo.
+
+47. **NFL no tiene modelo: `nfl_predecir` devuelve el precio del mercado sin vig.**
+    Líneas 40-47 y 57-62: la `probabilidad` de Moneyline y Total sale de `g.ml_home` /
+    `g.over_odds` normalizados, con `'fuente','mercado'` escrito literal en el JSON.
+    Por construcción el EV contra ese mismo mercado es ≈ 0 menos la comisión.
+    Concuerda con el dato: **15 de 15** picks NFL de los últimos 45 días traen
+    `prob_placeholder = true`.
+
+48. **El clima de NFL está desconectado del motor.** `nfl_clima_hora` tiene 1,541,736
+    filas y dos crons vivos, pero `nfl_predecir` lee `nfl_partidos.temperatura` /
+    `viento_rafaga` / `techado`, que **nadie llena**: 100% nulo en 2025, 99.3% en 2026,
+    100% en 2027. Las alertas de frío/calor/viento del motor nunca han disparado.
+
+49. **MLB: alineación real 65% ausente, clima 35% ausente.** Muestra de 40 juegos
+    (3-sep a 6-sep): `fuerza_alineacion()` devuelve NULL en 26 → cae al fallback 1.0;
+    `clima_partido_mlb()` NULL en 14 → fallback 1.0. Además `mlb_stats_cache`:
+    FIP/ERA del abridor 15.3% local / 14.6% visita nulos, mano del abridor 15.3% /
+    13.9%, y con ella los splits vs zurdo/derecho. Bullpen, park factor y últimos-10
+    están bien (1.4%). **El 71.5% del caché está vencido** aun con el cron de #210.
+
+50. **Fútbol es el motor mejor alimentado y el más pobre en variables.** Muestra de
+    60 partidos de las próximas 72h: 0% sin perfil de equipo, 0% de ligas sin base,
+    muestra mínima promedio 17.2 partidos, solo 6.7% por debajo de 8.
+    Pero `motor_probabilidades` solo consume **goles a favor / goles en contra** de
+    `historico_partidos_espn` (vía `equipo_perfil`/`liga_base`), el factor de descanso
+    y el H2H. xG, clima, árbitro, lesiones y rotación **tienen peso literal 0**: sus
+    únicos lectores son funciones de contexto para el LLM (`contexto_para_llm`,
+    `bloque_equipo_futbol`, `dossier_contexto`), ninguna toca la probabilidad.
+    `xg_modelo_coef` está en **0 filas**.
+
+51. **NO hay look-ahead bias.** Barrido de los 7 objetos que mencionan
+    `clv_pct|odds_cierre|momio_cierre`: 34 menciones, **0 no triviales** — todas son
+    columnas de proyección, ninguna entra en un `WHERE`, `CASE` ni expresión de
+    probabilidad. `sync_pick_to_learning_data` solo escribe con el resultado ya
+    definitivo, y de los 4 lectores de `pick_learning_data` ninguno lee un campo de
+    cierre. La regla T-5 como variable post-mortem se está respetando.
+
+52. **Lo que la app llama "CLV" en la pantalla NO es CLV.**
+    `capturar_clv_oraculo` calcula `(odds_apertura / cierre − 1)`: eso es el
+    **movimiento de la línea**, no el valor del precio capturado. Y el "cierre" es
+    flojo por dos lados: acepta snapshots de hasta `match_date + 5 minutos`
+    (precio EN VIVO) y no exige recencia mínima (la ventana abre en `−10 días`).
+    Medición sobre `v_linea_de_cierre`: de 1,040 cierres, **3.8% son T-5 de verdad**,
+    10.2% T-30, 6.6% T-6h y **79.3% son "lejanos", con mediana de 1,801 minutos
+    (30 horas) antes del saque** — o sea una apertura disfrazada de cierre.
+    Los dos números viven al mismo tiempo y tienen signo opuesto:
+    `oraculo_picks_tracking.clv_pct` = **+1.57%** (n=699, es el que ve el usuario en
+    `reto_13m_estado`) contra `clv_tracking.clv_pct` = **−7.54%** (n=30, este sí mide
+    `momio_apostado` contra el cierre). El mensaje "le estamos ganando al cierre" se
+    apoya en el número equivocado.
+
+53. **`calibracion_coef` era un vector de look-ahead vivo, y el arreglo destapó un
+    SEGUNDO lector sin compuerta.** La tabla no tenía ninguna noción de tiempo: 7
+    filas, 3 vigentes, cero columnas de versionado. `calibrar_prob_motor` elegía con
+    `ORDER BY ajustado_at DESC LIMIT 1`, así que un coeficiente ajustado DESPUÉS de un
+    partido cambiaba el EV de ese partido pasado (medido: `ev_local_pct` −17.51% →
+    +64.80%). Se separaron dos conceptos que se estaban confundiendo:
+    `effective_from` (desde cuándo el coeficiente existía y podía usarse) y
+    `data_cutoff_at` (hasta qué fecha llegan los datos con que se estimó).
+    Solo el coeficiente de fútbol (id 7) tiene evidencia documental del rango de datos
+    ("jul-2023 a sep-2026") y quedó `data_cutoff_verificado = true`. Los demás quedan
+    **NO verificables**, sin fecha inventada: la única afirmación defendible es la cota
+    `data_cutoff_at <= ajustado_at` (no se puede ajustar sobre datos que aún no existen),
+    y usar esa cota como puerta es estrictamente conservador — puede excluir un
+    coeficiente válido, nunca admitir uno contaminado.
+    Al re-correr la prueba adversarial apareció el segundo defecto: `predecir_mlb`
+    tenía **otro** `SELECT` a `calibracion_coef` (`ORDER BY c.ajustado_at DESC LIMIT 1`)
+    que alimenta `rango_medido_pct` y el texto de `motivo_sin_ev` **que ve el usuario**.
+    No movía el EV, pero sí cambiaba el rango mostrado de un partido pasado
+    ({43.2–62.2, n=1056} → {0.0–100.0, n=999}) y podía describir un coeficiente
+    DISTINTO del que realmente se aplicaba. Quedó alineado al mismo orden y a las
+    mismas dos condiciones que `calibrar_prob_motor`.
+    Impacto productivo medido: **30 de 30 partidos próximos conservan calibración**
+    (cero efecto sobre dinero vivo); 263 de 303 partidos de los últimos 30 días la
+    pierden, que es lo correcto — son anteriores al coeficiente y llamarlos
+    "calibrados" era ficción retroactiva.
+    Regresión propia detectada y corregida en el mismo turno: `effective_from` quedó
+    NOT NULL y el INSERT de `reajustar_calibracion` no la llenaba, así que el
+    recalibrado semanal habría reventado. Se parchó el **escritor** (no se puso un
+    DEFAULT que permitiera omitirla): ahora declara `effective_from = now()` y
+    `data_cutoff_at = max(match_date)` de los mismos picks que estiman `a` y `b`.
+
+54. **El candado temporal final: la contradiccion que impedia cerrar Fase 1.5.**
+    En el punto 53 declare como "riesgo residual" que `filtro_pick` usaba `now()`.
+    Ese residual no era teorico: la inspeccion 360 de todos los consumidores de
+    `filtro_pick` y `calibrar_prob_motor` encontro **una ruta historica real y
+    alcanzable**, `calibracion_publica_kpis`, que alimenta la pantalla publica
+    "¿LA IA DICE LA VERDAD?" y reconstruia el Brier calibrado de 3,136 picks YA
+    JUGADOS usando el coeficiente de hoy — ajustado, en parte, sobre esos mismos
+    picks. Medido: **1,661 picks se calibraban con un coeficiente que no existia
+    cuando se hicieron**; ahora solo los 24 posteriores al coeficiente vigente.
+    La correccion no fue pasar la fecha en un lugar, sino hacer imposible el olvido:
+    `calibrar_prob_motor` y `filtro_pick` ya no tienen NINGUN valor por omision, asi
+    que una llamada incompleta falla con `42883: function does not exist` en vez de
+    caer callada en el presente. El tiempo real pasa por `calibrar_prob_motor_live`
+    y `filtro_pick_live`, que dicen en su nombre lo que hacen. Verificado con cuatro
+    intentos de omision, los cuatro rechazados.
+    De paso aparecio el ultimo desvio silencioso: `predecir_mlb` tenia **siete**
+    `COALESCE(m.game_date, now())`. Con la fecha nula, todos los cortes temporales se
+    movian a hoy. Hoy son 0 de 1,224 filas sin fecha, asi que la guarda no apaga nada;
+    existe para que no vuelva a ser silencioso.
+    Sobre los coeficientes legacy: `track_commit_timestamp` esta apagado, no hay sello
+    fisico. Para los ids 6 y 7 `pg_stat_statements` conserva el INSERT que los creo y
+    su lista de columnas no incluye `ajustado_at`, o sea que lo puso `DEFAULT now()`
+    y no pudo ser backdateado. Para el **id 3 (NFL) no hay evidencia**: es anterior a
+    la ventana. No se inventa una fecha; se declara no verificable y se mide la
+    exposicion, que es **cero picks de NFL resueltos**.
+
+55. **Hardening post-cierre: los invariantes ya no dependen de que alguien los corra.**
+    `invariantes_temporales()` codifica las tres reglas que la auditoria comprobo a
+    mano (sin defaults en la API temporal, sin `coalesce(fecha, now())` en el motor)
+    y `tg_candado_temporal`, un event trigger sobre `CREATE/ALTER FUNCTION`, rechaza
+    el DDL que las rompa. Probado en las tres direcciones: DDL benigno pasa, los dos
+    intentos de regresion se rechazan con el invariante y la regla exacta en el
+    mensaje, y la salida `app.mantenimiento_candado_temporal='on'` permite migraciones
+    legitimas en dos pasos. Limite declarado: no cubre un DROP suelto, que de todas
+    formas revienta a la vista.
+    Y la evidencia de procedencia salio de `pg_stat_statements` (memoria, se resetea)
+    a `evidencia_procedencia`, con las dos sentencias copiadas verbatim — ninguna
+    incluye `ajustado_at`, o sea que lo puso el DEFAULT — y con la **ausencia** del
+    id 3 registrada con la misma formalidad que la prueba, para que nadie la
+    confunda manana con "no busque".
+
+56. **#209 CERRADO en la pantalla del RETO 13M; #208 confirmado en el efecto pero
+    REFUTADO en el mecanismo.** La tarjeta si muestra el EV que dimensiona
+    (`ev_pct`, etiquetado "EV real") junto a "Prob. que decide"; `ev_pct_declarado`
+    esta tipado pero no se pinta. Importa, porque los dos divergen fuerte: Dortmund
+    marca +16.6% declarado contra **-19.4%** real.
+    Sobre #208: el monto YA NO lo decide solo el momio — el tope plano que causaba
+    eso se reemplazo el 5-sep. Pero tampoco lo decide el modelo. **Lo decide la
+    frontera de tramo de `zonas_confiables`.** Medido con el momio fijo en 2.20:
+    subir la probabilidad declarada de 49 a 50 tira el monto de **$110.07 a $0**, y
+    de 59 a 60 lo tira de **$145.70 a $0**, porque al cruzar de tramo el sesgo pasa
+    de +4.9 a +1.2 y el recorte de 2.2 a 4.6. Y con el EV declarado fijo en +10%,
+    el stake es **$0 en 10 de 12 momios**: solo hay dinero donde la probabilidad
+    cae en el unico tramo con sesgo positivo grande.
+    Causa raiz: el sesgo por tramo se aplica como desplazamiento aditivo constante
+    dentro de la banda, y la banda se elige con la probabilidad declarada, asi que
+    `p_decide(p)` es escalonada y **no monotona**. Peor caso medido: BTTS, salto de
+    **-15.9 pp** y **-$235.91** al subir la probabilidad un punto.
+    Esto explica mecanicamente el sintoma viejo de #126 (el motor solo produce
+    no-favoritos). Diagnostico completo, cero modificaciones a produccion.
+
+57. **HAY TRES EV, y la segunda pantalla mas usada publica picks que el motor de
+    dinero rechaza.** `mejor_oportunidad_hoy` (109 llamadas reales en 3 dias)
+    calcula su propio EV sobre una SEGUNDA calibracion
+    (`calibrar_prob_motor_live` encima de la del deporte) y **filtra y ordena por
+    el**. Medido hoy: 7 de 16 picks vivos tienen contradiccion de signo entre
+    EV_CAL y EV_DECIDE, y **4 salen ahi con EV positivo** — Dortmund en el puesto
+    #7 con **+12.9% mostrado contra -19.4% real**. En dos de ellos la pantalla
+    publica ademas un `kelly_pct` positivo. Y 5 de 19 filas traen
+    `fuera_de_rango=true`, o sea que la calibracion devolvio NULL y la funcion cae
+    a la probabilidad cruda: una de ellas es el **orden #2 del dia con +22.5%**.
+    #209 pasa a **CERRADO EN RETO13M / FALLA GLOBALMENTE**.
+
+58. **`zonas_confiables` es 100% futbol, y el 62.5% de los picks de hoy son de
+    beisbol.** `modelo_backtest`, su unica fuente, tiene 30,876 filas de 20 ligas y
+    **todas son soccer: cero de baseball, cero de football**. La correccion de
+    Moneyline se estimo sobre 5,406 picks de futbol y se aplica tal cual a MLB.
+    El tramo que gobierna la banda 50-60% tiene **187 partidos**.
+    Ademas: sin cutoff temporal en el codigo (implicito, los datos paran el
+    26-ago), **sin train/test**, sin versionado (`DELETE` + reconstruccion), y sin
+    columna de deporte. `nivel` y `brier` se calculan y **el dinero no los lee**.
+    Diagnostico: **hace calibracion Y haircut de sizing en el mismo objeto**, y ese
+    solapamiento es la causa raiz de la no monotonicidad — `zona_realidad` bandea
+    con `width_bucket(p,0,1,10)`, deciles fijos, asi que las fronteras caen exactas
+    en 0.50 y 0.60, justo donde medimos los saltos.
+
+59. **`zonas_confiables` NO sobrevive fuera de muestra, y MLB tiene sesgo propio de
+    signo contrario al que recibe.** Walk-forward con 4 cortes sobre 18,418
+    observaciones: la mejora de Brier es significativa en **un solo mercado,
+    Corners** (t=4.93) — que tiene el dinero apagado. Moneyline t=1.40,
+    Over/Under **t=-1.83 (negativo)**, BTTS t=0.35. **Quitando Corners la mejora
+    global es -0.00023: negativa.**
+    Del detalle: el sesgo ML t5 (+4.9) sí sobrevive 3/3 pliegues, pero **ML t6
+    (+1.2) no sobrevive** — y es justo el tramo que produce la peor discontinuidad
+    de dinero (el que tira el stake de $145.70 a $0): un pliegue, n=45 en test,
+    SE 7.2 pp y el signo invertido.
+    **Corrijo mi hipotesis previa sobre MLB**: NO esta sin evidencia. Hay 2,152
+    picks resueltos, 1,101 de Moneyline — mas que los 853 de futbol que hoy los
+    gobiernan. Y su walk-forward propio dice lo contrario que futbol: MLB Moneyline
+    40-50% mide **-0.4 / -3.4 / -4.0** en 3 pliegues y le aplicamos **+4.9** de
+    futbol; MLB Over/Under 50-60% mide **-3.4 / -9.5 / -9.8** (3/3, la senal mas
+    estable del sistema) y le pasamos **+0.3**. **6 de los 10 picks de MLB de hoy
+    reciben una correccion de ~7.5 pp en la direccion equivocada.**
+    El veredicto no es MLB_SIN_EVIDENCIA: es MLB_TIENE_EVIDENCIA_Y_LA_CORRECCION_VA_AL_REVES.
+
+60. **Retiro mi propia recomendacion de 2A.9.** La formula
+    `P_MERCADO + s(n)*(CAL - P_MERCADO)` es arquitectura de ensemble con el
+    mercado, y **no se puede demostrar hoy**: P_MARKET_FAIR verificable existe para
+    **401 partidos de MLB** (overround mediano 1.78%) y **197 de futbol con los tres
+    lados de 1X2**; 87 de 284 casos de futbol no tienen empate, o sea que no se
+    puede quitar el vig. Contra 2,152 picks de MLB y 30,876 filas de backtest, la
+    cobertura es minoritaria. Se recomienda en su lugar la arquitectura A:
+    calibracion monotona por deporte y mercado, y la incertidumbre reduciendo
+    EXPOSICION (`confidence`) en vez de reescribir la probabilidad.
+    Nota de metodo: `badrino_partidos.ml_home/ml_away` son momios AMERICANOS
+    enteros. Mi primera medicion dio "0 partidos con ambos lados" por no convertir;
+    el dato estaba bien y la consulta mal.
+
+61. **SI existe el universo completo de MLB, y el sesgo de seleccion es enorme.**
+    `bt_mlb_ml` (1,056 juegos, lado local de cada partido, sin seleccion) y
+    `badrino_backtest` (2,580) son las poblaciones correctas. Comparadas con los
+    picks publicados: la probabilidad media baja de **52.3% a 42.8%** y la
+    dispersion se **duplica** — el sistema publica casi solo no-favoritos, que es la
+    explicacion mecanica de #126. Y sobre todo: **en el universo el motor esta
+    practicamente insesgado (-0.41 pp)**, mientras que en los publicados marca
+    +2.01 pp. **El auditor tenia razon**: el -4% de MLB que medi el turno anterior
+    es sesgo condicional a seleccion y NO puede ir al codigo como calibrador.
+    Sigue siendo prueba de que el +4.9 de futbol es indefendible.
+
+62. **El P_CAL actual no merece ser P_FAIR en NINGUN deporte.** MLB Moneyline sobre
+    el universo completo: la calibracion **pierde en 3 de 3 ventanas** (Brier raw
+    0.24732 vs cal 0.24850) y empeora el sesgo de -0.41 a -1.49 pp. Futbol,
+    evaluado **en muestra** (el coeficiente se ajusto sobre ese mismo periodo, o sea
+    en condiciones favorables): mejora global **-0.00019**, es decir empeora; y el
+    sesgo crudo de Moneyline es **0.00 pp exacto** — el motor ya esta insesgado y
+    calibrarlo lo desvia a -0.87.
+    Conclusion: **P_FAIR = P_RAW** hoy, con `calibration_status` explicito
+    (`CALIBRACION_RECHAZADA_OOS` en MLB ML, `SIN_CALIBRACION_DEMOSTRADA` en el
+    resto). Identidad explicita no es un error: es el resultado de medir.
+    Dato que conviene no perder: en futbol el motor SI discrimina (Brier 0.2146
+    contra tasa base 0.2494); en MLB apenas (0.24732 contra 0.24964). Son dos
+    motores de calidad muy distinta, y eso es lo que `confidence` debe reflejar,
+    no la banda de probabilidad.
+
+63. **V2 construido EN PARALELO: Kelly puro aislado, monotonicidad demostrada y
+    aislamiento entre deportes bit a bit.** `kelly_full_v2` se declara IMMUTABLE, y
+    eso hace que Postgres **le prohiba consultar tablas**: el aislamiento respecto de
+    `zonas_confiables`, Wilson, Beta, bankroll y CDaR es una propiedad del motor, no
+    una promesa del comentario. Malla de 2,475 filas y 2,450 pasos: **cero
+    violaciones** de monotonicidad. Las tres regresiones obligatorias desaparecen —
+    ML 49->50 pasa de $110.07->$0 a $97.50->$125.00, y ML 59->60 de $145.70->$0 a
+    $300->$300. Prueba adversarial de aislamiento: mutar TODAS las fuentes de un
+    deporte deja al otro **idéntico bit a bit**, en las dos direcciones, y cada
+    mutación sí movió su propio deporte.
+    `confidence = 1.0` con estado `PENDIENTE_DE_VALIDACION`: no hay evidencia todavía
+    para elegir agregador y un 1.0 declarado es preferible a un haircut inventado.
+
+64. **AVISO DE SEGURIDAD del shadow: V2 dimensionaría 12.6 veces más que V1.**
+    Sobre 15 picks vivos: V1 autoriza $156.01 y V2 pondría $1,967.28. **Eso NO
+    significa que V2 sea mejor** — es la consecuencia directa de que su haircut aún
+    no existe. Y el desglose importa: **9 de las 13 divergencias no son del modelo,
+    son de la capa de cartera** (RONGOL, $1,322.43) que V2 todavía no tiene. La
+    divergencia atribuible a la probabilidad son 4 picks, $523.88.
+    Conclusión operativa: **V1 está mal construido pero está conteniendo
+    exposición**. Apagarlo antes de validar `confidence` y portar la capa de cartera
+    multiplicaría el riesgo. Es el argumento más fuerte para respetar el orden
+    C -> D -> E y no adelantarlo.
+
+65. **CORRECCION: IMMUTABLE no demuestra pureza.** Sobreafirme que "Postgres le
+    prohibe consultar tablas". Es falso: IMMUTABLE es una declaracion al
+    planificador. Y peor: `kelly_full_v2` tenia **cuerpo de cadena**, con lo que
+    Postgres **no registraba ninguna dependencia**, asi que un `pg_depend` vacio
+    habria dado falso PASS para cualquier funcion. Reescrita con cuerpo SQL estandar
+    (`RETURN`), que si se parsea y si registra: su unica dependencia es el esquema
+    `public`. `inv_kelly_puro_v2()` hace siete comprobaciones y se conecta al event
+    trigger como regla I4. Probado en las tres direcciones: version legitima
+    aceptada; version impura con cuerpo estandar **rechazada** (`clases_halladas:
+    pg_class`); y la via astuta —cuerpo de cadena leyendo la misma tabla, que evade
+    k3— **rechazada por k2**.
+
+66. **RONGOL no es una capa de cartera, y bloquea con n=6.** Corrijo mi lectura del
+    turno anterior. `rongol_veto` es una lista de bloqueo por patron historico,
+    pick a pick, sin acumulacion y **sin depender del orden**. Solo hay **3**
+    lecciones con bloqueo total activas: MLB/OU **3-3 en n=6**, MLB/ML 15-27 en
+    n=42, y MLB/ML **4-4 en n=8**. Dos de las tres son 50/50 exactos. Y el criterio
+    es ROI historico, justo lo que el mandato prohibe como base de sizing.
+    Atribucion exacta del delta V1 vs V2 sobre 15 picks: S1 (Kelly puro) $2,008.64,
+    S2 (+techo/piso) $1,985.29, S3 (+RONGOL) $644.85, S0 (V1 real) $156.01.
+    **RONGOL explica el 72.4% del delta** (-$1,340.44); el techo y el piso el 1.3%;
+    el haircut de V1 mas el tope de exposicion, el 26.4%.
+    Ademas: `exposicion_viva` **no es CDaR** — no hay variable aleatoria, horizonte,
+    distribucion, escenarios, correlacion ni nivel de confianza. Es un tope de
+    exposicion bruta del 20% con llenado greedy **por monto y no por ventaja**.
+    Y la exposicion viva real esta en los parlays: **$1,003.36 en 2 parlays contra
+    $156.01 en sencillas**, sin ningun control de dependencia entre patas.
+
+---
+
+## FASE 2 — BLOQUE 2A.40–2A.50 (5-sep-2026). PARLAYS COMO P0
+
+67. **CORRECCION DE MI PROPIO REPORTE: los $156.01 NO son exposicion viva.**
+    `exposicion_viva('rodelcast')` devuelve `picks_vivos = 0`, `detalle.picks = 0`.
+    No hay UNA sola sencilla pendiente. Los $156.01 son el `monto_autorizado` que
+    `reto_picks_hoy` **recomienda** (2 picks de MLS), dinero que todavia no sale.
+    La exposicion REAL es **$1,003.36, 100% en parlays**.
+    En mis reportes anteriores contrapuse "$156.01 en sencillas" contra "$1,003.36
+    en parlays" como si fueran dos bolsas del mismo tipo. No lo son: una es
+    propuesta y la otra es dinero ya entregado a la casa.
+
+68. **SI, los parlays cuentan dentro del 20% — pero el 20% no es 20%.**
+    Cadena verificada extremo a extremo:
+    `exposicion_viva` -> `stake_techo(apodo,false)->bankroll` -> `bankroll_disponible`
+    -> `get_bankroll_actual - bankroll_expuesto`. Y `bankroll_expuesto` **si suma
+    parlays pendientes**. Numeros vivos: contable $7,003.36; expuesto $1,003.36
+    (2 parlays, 0 sencillas); disponible $6,000.00; limite 20% = $1,200.
+    **El defecto**: el limite se mide contra un bankroll del que YA se resto la
+    exposicion. Con `E` expuesto y `C` contable:
+    `E >= 0.20*(C - E)  <=>  1.2E >= 0.20C  <=>  E >= C/6`.
+    El tope efectivo es **16.667% del bankroll contable**, nunca 20%. Con C=$7,003.36
+    el techo real es **$1,167.23**, no $1,400.67.
+    Y `disponible` miente: reporta **$196.64** cuando el margen real hasta el punto
+    de corte es **$163.87** (`C/6 - E`). Sobrestima 20%.
+    Verificado contra los datos del test: E=$1,096.61 -> bankroll $5,906.75, limite
+    $1,181.35 (no alcanzado, C/6=$1,167.23 aun por encima); E=$1,503.36 -> bankroll
+    $5,500, limite $1,100, alcanzado. El punto de cruce cae exactamente en C/6.
+    Detalle adicional: `expuesto_pct` = 16.7% es `E/D`, no `E/C` (14.33%). La pantalla
+    dice "16.7% de un limite de 20%" cuando en realidad va al **86% de su capacidad**.
+
+69. **P0 GRAVE: el limite del 20% NO SE APLICA AL ESCRIBIR. Es solo informativo.**
+    `exposicion_viva` tiene exactamente 3 consumidores: `reto_picks_hoy`,
+    `revisar_apuesta` y `tamano_apuesta`. **Ninguno es trigger.** El unico candado
+    de escritura es `tg_autoridad_stake`, que compara contra `stake_techo`
+    (techo POR APUESTA), nunca contra la exposicion total.
+    Prueba adversarial (INSERT real con rollback transaccional, base y final
+    identicos en $1,003.36):
+    - CASO 1 sencilla $93.25 -> **ACEPTADA**, exposicion 18.6%
+    - CASO 2 parlay $500 -> **ACEPTADO**, exposicion **27.3%**, `limite_alcanzado=true`
+    - CASO 3 sencilla $93.25 + parlay $500 sobre el MISMO evento -> **ACEPTADOS**
+    - CASO 4 dos parlays mas ($500 + $400) -> **ACEPTADOS**, exposicion **37.3%**
+    - CASO 5 parlay $1,200 -> **RECHAZADO** ("supera el techo de $900.00, 15.0%")
+    Lo unico que rebota es el techo POR APUESTA. La cartera no tiene puerta.
+
+70. **Por que los dos parlays de $500 pasaron sin firma.**
+    `config_staking.stake_max_pct_reto = 15.0` y ambos traen `es_reto_13m=true`,
+    asi que `stake_techo` autorizo 15% del disponible ($1,050 y luego $975), no el
+    5% general ($350). `stake_techo_al_guardar` y `stake_sobre_techo_razon` estan
+    NULL porque nunca hizo falta firmar. El candado #207 funciono como fue escrito.
+    Consecuencia estructural: con techo por apuesta de 15% y tope de cartera de
+    16.667%, **caben 1.1 apuestas RETO antes de agotar la cartera entera**.
+
+71. **Anatomia de los parlays vivos: el sistema los califico D y se apostaron igual.**
+    - `b848fb29` $500, momio 7.5048, 3 patas de La Liga, `ai_prob_combinada` 7.22%,
+      `ai_ev_pct` **-45.80%**, `ai_calificacion` **D**, semaforo ambar.
+    - `6c033d7d` $503.36, momio 9.7331, 5 patas (Liga MX, Premier, Bundesliga,
+      Danish, MLS), `ai_prob_combinada` 5.89%, `ai_ev_pct` **-42.70%**, **D**, ambar.
+    8 patas en total, **100% futbol**, **7 de 8 al equipo LOCAL**. Ninguna de las 8
+    patas paso por `kelly_stake`, `rongol_veto`, `mercado_en_abstencion` ni por la
+    puerta de calibracion: `tg_autoridad_stake` **salta explicitamente** las patas
+    (`if v_pata then return NEW`) y el parlay se juzga como un solo objeto.
+    **CERO funciones SQL escriben `ai_prob_combinada`**: viene de un LLM.
+
+72. **CORRELACION_NO_MODELADA (conclusion obligatoria).**
+    Existen dos maquinarias y ninguna sirve para estos parlays:
+    - `parlay_ev_real`: solo aplica factores de `correlacion_mercados` a pares
+      **del MISMO evento** (`a->>'evento' = b->>'evento'`). `correlacion_mercados`
+      tiene 20 filas (n=1,860), todas de pares intra-partido (BTTS x Over, etc.),
+      **cero filas de dependencia entre eventos distintos**. Los dos parlays vivos
+      tienen 0 pares del mismo evento -> la funcion devolveria independencia exacta.
+    - `simular_parlay` / `evaluar_parlay`: un factor comun gaussiano con
+      **`p_rho` = 0.12 hardcodeado como DEFAULT**, sin ninguna medicion detras;
+      ademas parte de `1/momio` (precio de la casa) dividido por un overround
+      **asumido de 1.05**, o sea nunca ve la probabilidad del modelo.
+    Barrido de 5 valores de rho, 40,000 sims, 5 repeticiones, CTE MATERIALIZED:
+    | rho | EV parlay $500 | EV parlay $503.36 |
+    |-----|----------------|-------------------|
+    | 0.00 | -12.95% | -22.19% |
+    | 0.05 | -12.88% | -20.68% |
+    | 0.12 | **-9.13%** | **-16.33%** |
+    | 0.25 | **+3.05%** | **+11.75%** |
+    | 0.40 | +27.26% | +57.40% |
+    **El signo del veredicto cambia entre rho=0.12 y rho=0.25 en los dos parlays.**
+    Una constante no medida decide si la apuesta es buena o mala. Ausencia de
+    evidencia, no independencia: **CORRELACION_NO_MODELADA**.
+    (Nota de metodo: el primer barrido salio incoherente porque `random()` dentro
+    de una subconsulta escalar se re-evalua por cada agregado. Se repitio con
+    `WITH ... AS MATERIALIZED`; los numeros de arriba son los buenos.)
+
+73. **Duplicacion de riesgo: hoy 0, pero la metrica no existe y el candado tampoco.**
+    Definidas y medidas sobre el libro vivo:
+    - `stake_equivalente_por_evento` (prorrateo `apuesta/n_patas`)
+    - `max_loss_expuesta_por_evento` (la apuesta COMPLETA, porque una sola pata
+      mata el parlay entero)
+    8 eventos, cada uno tocado por 1 sola apuesta -> **sin duplicacion hoy**.
+    Pero `sum(max_loss) = $4,016.80` sobre $1,003.36 realmente en riesgo, y sobre
+    todo: **cada uno de los 8 partidos puede destruir $500 o $503.36 por si solo**
+    (7.1% a 8.4% del bankroll contable), cuando una sencilla sobre ese mismo partido
+    tendria techo de $300 (5%). El envoltorio de parlay convierte 8 eventos de <=5%
+    de riesgo autorizado en 8 eventos con su propio gatillo de 7-8%.
+    El CASO 3 del test demuestra que sencilla + pata sobre el MISMO evento se
+    aceptan y **nada en el sistema lo nota**.
+
+74. **RONGOL: el veto ignora el rango de momio en el que fue medido.**
+    En `rongol_veto` la variable `v_rango` se calcula y **nunca se usa**:
+    `la.rango_momio` no aparece en el WHERE. Ademas el vocabulario de buckets del
+    veto (`<1.40`, `1.40-1.80`, `1.80-2.50`, `2.50-4.00`, `>4.00`) es distinto del
+    de `rango_momio()` que guarda las lecciones (`1.01-1.50`, `1.50-1.80`,
+    `1.80-2.20`, `2.20-3.00`, `3.00-5.00`): aunque se usara, no cruzaria.
+    El filtro de liga tambien es un no-op: `(la.liga IS NULL OR p_liga IS NULL OR
+    la.liga = p_liga OR liga_es_de_deporte(la.liga, p_deporte))` — el ultimo
+    termino ya es verdadero por el AND anterior.
+    **Efecto medido** (`oraculo_picks_tracking`, ai_pro, MLB, ML, 120 dias):
+    | rango de momio | n | ROI | IC95 | medido por la regla |
+    |---|---|---|---|---|
+    | 1.01-1.50 | 8 | -33.1% | [-83.0, +16.8] | SI |
+    | 1.50-1.80 | 42 | -41.3% | [-65.4, -17.1] | SI |
+    | 1.80-2.20 | 350 | -4.5% | [-15.2, +6.1] | NO |
+    | 2.20-3.00 | 504 | **+10.0%** | [-0.9, +20.9] | NO |
+    | 3.00-5.00 | 118 | **+35.4%** | [+5.7, +65.2] | NO |
+    | 5.00+ | 7 | +40.8% | [-192.4, +274.0] | NO |
+    Los 10 picks de MLB que RONGOL bloqueo hoy tienen momios 1.893 a 3.02:
+    **3 caen en 1.80-2.20, 6 en 2.20-3.00 y 1 en 3.00-5.00. NINGUNO en un rango
+    donde la regla fue medida.** RONGOL esta bloqueando el unico tramo con ROI
+    positivo estadisticamente significativo de su propia fuente de datos.
+
+75. **RONGOL walk-forward: 1 de 3 reglas sobrevive.**
+    Corte por mediana temporal dentro de cada celda:
+    | celda | n train | ROI train | n test | ROI test | WR test |
+    |---|---|---|---|---|---|
+    | ML 1.50-1.80 | 21 | -37.7% | 21 | **-44.8%** | 33.3% |
+    | ML 1.01-1.50 | 4 | -63.8% | 4 | -2.5% | 75.0% |
+    | OU 1.01-1.50 | 3 | +23.3% | 3 | -100.0% | 0.0% |
+    Solo **ML 1.50-1.80 (n=42)** persiste fuera de muestra. Las otras dos son ruido
+    de n=8 y n=6. Y el veto se recalcula sobre una ventana movil de 120 dias con
+    la misma fuente que despues bloquea: **es in-sample por construccion**.
+    Extra: `extraer_lecciones_de_perdidas` **nunca escribe `bloqueo_total`** — ni
+    en el INSERT ni en el DO UPDATE. Las 3 filas con `bloqueo_total=true` fueron
+    marcadas a mano y sobreviven cada reconstruccion.
+    Clasificacion: **LEGACY_GUARD_NO_VALIDADO** salvo la celda ML 1.50-1.80.
+
+76. **El llenado greedy de produccion es un corte por PREFIJO, no un llenado.**
+    `reto_picks_hoy` ordena por `monto_cand desc` y descarta todo lo que cumpla
+    `expuesto + acumulado > limite_monto`. Si el candidato mas grande no cabe,
+    **mata a todos los que vienen detras**, aunque cupieran.
+    Medido con el conjunto real de hoy (9 candidatos con Kelly > 0, presupuesto
+    disponible $196.64):
+    | orden | picks financiados | monto | EV en pesos |
+    |---|---|---|---|
+    | **A. monto desc (PRODUCCION)** | **0** | **$0.00** | **$0.00** |
+    | B. monto asc | 3 | $187.99 | +$11.06 |
+    | C. EV desc | 0 | $0.00 | $0.00 |
+    | D. EV asc | 3 | $187.99 | +$11.06 |
+    | E. hora de arranque | 1 | $177.59 | **+$32.16** |
+    | F. prob que decide desc | 1 | $104.68 | +$8.98 |
+    El optimo de mochila con ese presupuesto es **+$35.71** (Washington $169.22).
+    La produccion captura **$0.00**. Hoy el defecto esta tapado porque RONGOL
+    borra 7 de los 9 candidatos y los 2 que quedan suman $156.01 < $196.64.
+
+77. **Nomenclatura: no es CDaR ni "limite de exposicion". Es `TOPE_EXPOSICION_BRUTA`.**
+    Propuesta (sin renombrar produccion todavia):
+    - `TOPE_EXPOSICION_BRUTA` = suma de stakes vivos / bankroll **contable**.
+      Es lo que hoy hace `exposicion_viva`, con el denominador corregido.
+    - `EXPOSICION_POR_EVENTO` = `max_loss_expuesta_por_evento`, sin equivalente hoy.
+    - `CDaR` queda **reservado** y sin usar hasta que exista distribucion,
+      horizonte y nivel de confianza.
+
+78. **Atribucion S0–S5 del dia (bankroll disponible $6,000, 16 picks candidatos).**
+    | escalon | monto | n picks | delta |
+    |---|---|---|---|
+    | S1 Kelly fraccional 0.25 sobre p_raw | $2,055.51 | 16 | — |
+    | S2 + techo 5% + piso $20 | $2,032.15 | 16 | -$23.36 (1.2%) |
+    | S3 + recorte V1 (sesgo + Wilson) | $1,161.35 | 9 | **-$870.80 (45.9%)** |
+    | S4 + RONGOL | $156.01 | 2 | **-$1,005.34 (52.9%)** |
+    | S5 + tope de exposicion (PRODUCCION) | $156.01 | 2 | -$0.00 (0%) |
+    Reduccion total **-$1,899.50 (-92.4%)**.
+    Correccion sobre mi atribucion anterior (que daba RONGOL 72.4%): ahi el recorte
+    V1 quedaba mezclado en el residual. Separado, **el recorte V1 y RONGOL pesan
+    casi lo mismo (46% y 53%)** y el tope de exposicion **no aporta nada hoy**.
+    **S_parlays = $1,003.36 y NO pasa por ningun escalon de S1–S5.** Es 6.4 veces
+    toda la autorizacion de sencillas y su unica puerta fue el 15% por apuesta.
+
+---
+
+79. **#215 REGISTRO DE REALIDAD: un boleto ya pagado afuera no puede ser rechazado.**
+    *(5-sep-2026. Necesidad operativa independiente de Fase 2. No es un cambio de
+    politica de sizing: ningun techo se aflojo.)*
+
+    **Donde estaba el bloqueo.** Ruta completa del Ticket Scanner:
+    `SmartUploadButton.tsx` -> `scan-betslip` (OCR) -> modal de confirmacion
+    (`SingleConfirmModal` / `ParlayConfirmModal`) -> `supabase.from("picks"|"parlays")
+    .insert()` via PostgREST -> trigger `zzz_autoridad_stake` -> `tg_autoridad_stake()`.
+    **El unico bloqueo real estaba ahi, en Postgres.** `revisar_tamano_apuesta`,
+    `tamano_apuesta` y `revisar_apuesta` devuelven jsonb y solo informan; el
+    `useTamanoApuesta` del modal solo pinta. `reto_picks_hoy` es una funcion de
+    LECTURA (SECURITY DEFINER, STABLE) y no escribe nada: el productor real es el
+    cliente contra las tablas.
+    El mensaje era `STAKE NO AUTORIZADO: $X supera el techo de $Y`, lanzado con
+    `errcode = check_violation`, y el cliente lo pintaba como un toast generico
+    "Error guardando pick" sin ofrecer salida.
+
+    **Que ya existia y que faltaba.** El escape hatch YA estaba (`stake_sobre_techo_razon`
+    >= 15 caracteres) pero el escaner nunca lo usaba, y no habia forma de distinguir
+    un boleto escaneado de una captura a mano: `boleto_path` esta en 0 de 32 picks y
+    0 de 53 parlays; `parlays.source` vale 'manual' en las 53 filas y ya lo leen
+    `capture_parlay_legs_to_ai_learning` y `sync_parlay_legs_to_learning_data`, asi
+    que sobrecargarlo habria roto el aprendizaje. `manual_override` tiene CERO
+    lectores SQL y ya significa otra cosa ("correccion manual del RESULTADO", 3 filas
+    con motivos de calificacion): tampoco se reutiliza.
+
+    **Cambio minimo.**
+    - `picks.origen` y `parlays.origen` (columna nueva, `text`, con CHECK sobre el
+      vocabulario `ticket_escaneado | app_manual | app_recomendacion`). NULL = filas
+      previas, procedencia desconocida.
+    - `tg_autoridad_stake()`: una sola rama nueva en el camino "por encima del techo".
+      Si `origen = 'ticket_escaneado'` **Y** hay evidencia (`bet_id_casa` o
+      `boleto_path`), no se lanza excepcion: se estampa `stake_techo_al_guardar` con
+      el cap vigente y se autogenera `stake_sobre_techo_razon` con el prefijo
+      `APUESTA_EXTERNA_YA_REALIZADA | fecha UTC | casa y folio | stake real y %% del
+      bankroll | techo recomendado`. Todo lo demas del trigger queda intacto.
+    - `v_stake_provenance` (vista, `security_invoker = true`, sin acceso anon):
+      separa `stake_real` / `cap_recomendado` / `origen` / `override_riesgo`.
+    - Frontend (`SmartUploadButton.tsx`): manda `origen: 'ticket_escaneado'` en los
+      dos inserts y pinta el aviso + boton "Registrar ticket de todos modos".
+
+    **La bandera NO es suelta.** Exige evidencia del boleto. `origen='ticket_escaneado'`
+    sin folio ni imagen sigue rebotando con `STAKE NO AUTORIZADO` (prueba C2).
+    Esto no debilita nada respecto de antes: el escape hatch previo (escribir 15
+    caracteres) era igual de accesible desde el cliente.
+
+    **Mapeo de campos pedidos vs campos usados** (no se invento ninguno de mas):
+    | pedido | campo real |
+    |---|---|
+    | `origen = 'ticket_escaneado'` | `picks.origen` / `parlays.origen` (NUEVO) |
+    | `stake_real` | `apuesta` (ya existia, se guarda el monto REAL sin recortar) |
+    | `cap_recomendado` | `stake_techo_al_guardar` (ya existia, lo estampa el trigger) |
+    | `override_riesgo = true` | derivado en `v_stake_provenance` |
+    | `override_motivo` | `stake_sobre_techo_razon` con prefijo `APUESTA_EXTERNA_YA_REALIZADA` |
+    | `override_timestamp` | `created_at` / `updated_at` + la fecha dentro del motivo |
+    | `stake_recomendado` | **NO se creo.** Para un boleto de OCR no hay probabilidad del modelo, asi que Kelly no tiene punto estimado que guardar. Crear la columna seria repetir la enfermedad de BTTS (columna que nadie llena). El separador honesto para auditar sizing es `cap_recomendado`, que si es un hecho. |
+
+    **Contabilidad de riesgo (PASO 4): la apuesta externa SI cuenta.** `bankroll_expuesto`
+    y `exposicion_viva` filtran por `resultado` y `es_prueba`, nunca por `origen`.
+    Medido: al registrar un parlay externo de $1,000 la exposicion pasa de $1,003.36
+    (16.7%) a **$2,003.36 (40.1%)**, `parlays_vivos` 2 -> 3.
+
+    **Pruebas A-H (INSERT reales, rollback transaccional, estado final $1,003.36 = inicial):**
+    | prueba | resultado |
+    |---|---|
+    | A) escaneado DENTRO del 5% | ACEPTADO sin marca de override (razon NULL, cap NULL) |
+    | B) escaneado $500 SOBRE el 5% | ACEPTADO, cap $300, motivo `APUESTA_EXTERNA_YA_REALIZADA ... stake real $500.00 = 8.3% ... techo recomendado $300.00 (5.0%)` |
+    | C) pick del sistema $500 sin `origen` | **SIGUE BLOQUEADO**: `STAKE NO AUTORIZADO: $500.00 supera el techo de $300.00` |
+    | C2) `origen` escaneado SIN folio ni boleto | **SIGUE BLOQUEADO** |
+    | D) parlay escaneado $1,000 sobre el techo RETO ($900) | ACEPTADO con override `[RETO 13M]` |
+    | E) exposicion viva | $1,003.36 (16.7%) -> **$2,003.36 (40.1%)** |
+    | F) `v_stake_provenance` | `stake_real=$500.00 | cap_recomendado=$300.00 | origen=ticket_escaneado | override_riesgo=t` |
+    | G) `kelly_stake` sin cambios | MLS 761781: $93.25 / EV 10.57% (identico); `reto_picks_hoy` total $156.01 (identico) |
+    | H) `EXP_OFF` | `constant numeric := 0.50` intacto |
+
+---
+
+## FASE 2A — HOTFIX P0 (5-sep-2026). LIMITE DE CARTERA CON CANDADO DE ESCRITURA
+
+80. **#216 2A.51 VOCABULARIO CANONICO. Un concepto, un nombre.**
+    Medido antes de definir: `get_bankroll_actual` solo suma `ganancia_neta` de
+    apuestas **YA RESUELTAS**, y `ganancia_neta` de una pendiente vale `0.00`
+    (verificado: los 2 parlays vivos tienen 0.00). **Por tanto el stake de una
+    apuesta viva SIGUE DENTRO de esa cifra**: es la equity total con las posiciones
+    abiertas valuadas a su costo.
+    | nombre canonico | funcion | hoy |
+    |---|---|---|
+    | `BANKROLL_TOTAL_RIESGO` | `get_bankroll_actual` | $7,003.36 |
+    | `EXPOSICION_ABIERTA` | `bankroll_expuesto` | $1,003.36 |
+    | `CAPITAL_LIBRE` | `bankroll_disponible` | $6,000.00 |
+    Identidad: `CAPITAL_LIBRE = BANKROLL_TOTAL_RIESGO - EXPOSICION_ABIERTA`.
+
+81. **#217 CORRECCION MATEMATICA: el "20%" era 16.667%.**
+    La formula vieja era `limite = CAPITAL_LIBRE * pct = (T - E) * pct`. Se cruza en
+    `E >= (T - E)*pct  <=>  E*(1+pct) >= T*pct  <=>  E >= T*pct/(1+pct)`.
+    Con pct=0.20: `E >= T/6 = 16.667%`. El denominador se encogia solo conforme
+    subia la exposicion, asi que el limite perseguia hacia abajo.
+    Formula correcta, coherente con lo que `get_bankroll_actual` significa:
+    ```
+    EXPOSICION_ABIERTA / BANKROLL_TOTAL_RIESGO <= limite_pct
+    capacidad_restante = BANKROLL_TOTAL_RIESGO * limite_pct - EXPOSICION_ABIERTA
+    ```
+    Hoy: limite $1,400.67 (era $1,167.23 efectivo), capacidad **$397.31** (reportaba
+    $196.64), ratio **14.33%** (reportaba 16.7%, que era E/CAPITAL_LIBRE).
+    **CONSECUENCIA QUE HAY QUE DECIR EN VOZ ALTA: corregir el denominador SUBE la
+    capacidad de $196.64 a $397.31.** No es un endurecimiento del numero. El
+    endurecimiento viene de #218: antes ese limite no se aplicaba nunca.
+
+82. **#218 2A.52 EL LIMITE DEJA DE SER INFORMATIVO: `tg_limite_exposicion`.**
+    Nuevo trigger `zzzz_limite_exposicion` BEFORE INSERT OR UPDATE OF apuesta en
+    **picks y parlays**. Evalua el efecto POST-INSERT (`exposicion_actual + delta`),
+    no el estado previo. En UPDATE solo cuenta el incremento.
+    Orden alfabetico de triggers: `zzz_autoridad_stake` (cap individual) corre
+    primero, `zzzz_limite_exposicion` (cap agregado) despues.
+    **Concurrencia**: `pg_advisory_xact_lock(hashtext('expo_cartera:'||apodo))`.
+    Sin el, dos INSERT simultaneos leen la misma exposicion previa y los dos pasan.
+
+83. **#219 2A.53 RUTA DE LEDGER EXTERNO, ortogonal al candado.**
+    `origen='ticket_escaneado'` + evidencia (`bet_id_casa` o `boleto_path`) permite
+    superar cap individual Y cap agregado. Sube `EXPOSICION_ABIERTA` de inmediato.
+    Medido: un ticket externo de $700 deja la cartera en **24.32%**, `sobre_el_limite
+    = true`, `capacidad_restante = $0`, y a partir de ahi **toda apuesta automatica
+    queda bloqueada** (probado con $50: rebota).
+
+84. **#220 2A.54 AUTORIDAD ECONOMICA DE PARLAYS.**
+    Medido: **CERO funciones SQL leen `ai_prob_combinada` o `ai_ev_pct`**, y cero
+    funciones SQL insertan en `parlays`. La unica ruta propuesta -> apostada es el
+    cliente. `construir_parlay_del_dia`, `construir_parlay_v2` y `generar_parlay_seguro`
+    solo proponen.
+    Nueva columna `parlays.autoridad_economica`, estampada por el trigger en cada
+    INSERT: `SIN_MODELO_CONJUNTO_VALIDADO` (todo parlay que no sea ledger) o
+    `LEDGER_EXTERNO`. `ai_prob_combinada` NO se borra: queda como dato observacional.
+
+85. **#221 2A.55 PADRE/PATAS: `exposicion_viva` DOBLE-CONTABA.**
+    `bankroll_expuesto` excluye `es_pata_parlay`; `exposicion_viva` **no lo hacia**.
+    Una pata con fila propia se contaba dos veces (en el padre y en la pata).
+    Hoy hay **0 filas de pata**, asi que el arreglo no mueve ningun numero, pero la
+    puerta estaba abierta. Corregido en `exposicion_viva`.
+    Modelo contable declarado: el stake vive UNA vez, en el padre. La pata es
+    descriptiva. El padre NUNCA queda exento del candado.
+    Probado: padre $300 + pata $300 -> `EXPOSICION_ABIERTA = $1,303.36` (no $1,603.36).
+
+86. **#222 2A.56 LOS CAPS INDIVIDUALES SON INCOMPATIBLES CON EL AGREGADO.**
+    Los caps individuales se miden sobre `CAPITAL_LIBRE`; el agregado sobre
+    `BANKROLL_TOTAL_RIESGO`. **Dos denominadores distintos.**
+    Con E=0 y cap RETO 15%: apuesta 1 = 0.15T (E=0.15T); apuesta 2 = 0.15*0.85T =
+    0.1275T -> E=0.2775T > 0.20T, rechazada. **Cabe 1 apuesta RETO completa y un
+    resto de 0.05T.**
+    Condicion de compatibilidad: para garantizar al menos N posiciones,
+    `cap_individual <= limite_agregado / N`. Con 20% agregado: 5% -> N=4 (coherente),
+    15% -> N=1.33 (incoherente).
+    **NO se cambia ningun numero en este hotfix.** Alternativas y consecuencias en
+    DISENO_FASE1_CEREBRO.md.
+
+87. **#223 CORRECCION ACEPTADA: el recorte V1 NO es arquitectura aprobada.**
+    Retiro mi clasificacion `A — portar tal cual`. Queda como
+    **`LEGACY_GUARD_NO_APROBADO_PARA_V2`**: reescribe la probabilidad via
+    Wilson/Beta/P_DECIDE y ya mostro problemas de semantica y monotonicidad.
+    Permanece en produccion solo porque quitarlo hoy cambiaria exposicion (vale el
+    45.9% del recorte de sizing, medido en 2A.49). No se hereda a V2.
+
+88. **#224 NOTA DE METODO: una fila artificial SI se escribio en produccion.**
+    En la prueba de concurrencia H10 el INSERT quedo bloqueado 17.98 s en el
+    advisory lock y, al liberarse, **entro y se confirmo** — mi bloque DO no tenia
+    rollback en el camino de exito y `execute_sql` hace commit.
+    Fila: pick $10.00, `bet_id_casa='H10-A'`, id `5c76bcb3`. **Borrada de inmediato**;
+    verificado 0 residuos en picks, parlays y cron. `EXPOSICION_ABIERTA` volvio a
+    $1,003.36 exacto.
+    El hallazgo del bloqueo es valido y es MEJOR prueba que un timeout: el INSERT
+    espero de verdad a que la otra sesion soltara el lock.
+
+---
+
+## FASE 2A — CIERRE DEL P0: LOS TRES PENDIENTES (5-sep-2026)
+
+89. **#225 PENDIENTE 1 CERRADO: un parlay sin modelo conjunto YA NO puede crear riesgo.**
+    Mi version anterior marcaba y no bloqueaba, y eso no satisfacia H4. Ahora
+    `tg_limite_exposicion` **lanza excepcion** para cualquier INSERT en `parlays`
+    con `apuesta > 0` que no declare una ruta de ledger:
+    `PARLAY SIN MODELO CONJUNTO VALIDADO: no se autoriza exposicion nueva de $X...`
+    - `apuesta = 0` -> se persiste como propuesta observacional, marcada
+      `SIN_MODELO_CONJUNTO_VALIDADO`.
+    - ruta de ledger (`ticket_escaneado` con evidencia, o `registro_externo_manual`
+      con razon escrita) -> se registra con `LEDGER_EXTERNO` / `LEDGER_EXTERNO_MANUAL`.
+    - `ai_prob_combinada` y `ai_ev_pct` **se conservan intactos** como dato
+      observacional. Verificado: 7.22 / -45.80 sobreviven al INSERT.
+    **BLAST RADIUS**: hoy el cliente no manda `origen`, asi que **hasta que Lovable
+    despliegue, guardar un parlay desde la app falla**. Mensaje accionable y cambio
+    de frontend enviado en el mismo turno.
+
+90. **#226 PENDIENTE 2 CERRADO: NO OVERSUBSCRIPTION con dos escritores reales.**
+    E0=$1,003.36, limite=$1,400.67. S1=S2=$250:
+    `E0+S1 = $1,253.36 <= limite`, `E0+S2 = $1,253.36 <= limite`,
+    `E0+S1+S2 = $1,503.36 > limite`.
+    Sesion A (backend aparte via pg_cron, pid 474441) inserta S1 y mantiene la
+    transaccion abierta 20 s. Sesion B (pid 474438) intenta S2:
+    **espero 20,022 ms, reevaluo la exposicion ya comprometida y fue RECHAZADA**
+    con `LIMITE DE CARTERA ... dejaria la exposicion abierta en $1503.36`.
+    Estado tras la prueba: **$1,253.36 <= $1,400.67**. Solo entro S1.
+    Limpieza: fila S1 borrada, job y funcion auxiliar eliminados, exposicion de
+    vuelta en $1,003.36, 0 residuos.
+
+91. **#227 PENDIENTE 3 CERRADO: el bypass exige evidencia server-side.**
+    Hallazgo que obligo el diseno: `scan_logs` **ya existia y ya se escribe en cada
+    escaneo** (199 filas, la ultima 2 minutos antes de la auditoria), asi que no hizo
+    falta redesplegar `scan-betslip`. Pero `authenticated` **si puede insertar en
+    `scan_logs`** (2 policies): una fila ahi NO basta por si sola.
+    Lo que el cliente NO puede fabricar es un objeto en `storage.objects`: subir el
+    archivo crea la fila con `owner_id` y `created_at` puestos por el servidor. Y las
+    **tres** rutas de escaneo del frontend llaman `uploadAndGetUrl(file)` antes de
+    invocar `scan-betslip`, asi que el artefacto siempre existe.
+    `evidencia_scan_valida(scan_id, apodo)` exige las cinco: existe / es del mismo
+    usuario / sin error / <= 48 h / el `image_url` apunta a un objeto REAL del bucket
+    `screenshots` bajo la carpeta del propio usuario / no consumido.
+    `scan_consumos` (PK sobre `scan_id`) es la garantia estructural de un solo uso.
+    Nueva RPC `ultimo_scan_utilizable(apodo, minutos)`: el cliente **pregunta** cual
+    es su scan valido en vez de elegirlo. No puede mandar uno ajeno ni gastado.
+    Ruta manual separada a proposito: `origen='registro_externo_manual'` +
+    `stake_sobre_techo_razon` >= 15 caracteres -> `LEDGER_EXTERNO_MANUAL`. **No se
+    confunde con un OCR validado.**
+    Pruebas: E1 registra y consume · E2 `ticket_escaneado` inventado sin scan_id NO
+    obtiene bypass · E2b scan de otro usuario NO obtiene bypass · E3 scan reutilizado
+    rechazado citando la apuesta que ya lo gasto · E4 ticket externo deja la cartera
+    en 24.32% y se registra · E5 la recomendacion posterior queda bloqueada.
+
+92. **#228 CONTRATO DE BANKROLL (documentado, sin cambios de comportamiento).**
+    `BANKROLL_TOTAL_RIESGO` = `get_bankroll_actual` = equity total; el stake vivo
+    sigue dentro porque `ganancia_neta` de una pendiente vale 0.00.
+    `EXPOSICION_ABIERTA` = `bankroll_expuesto` = stakes pendientes reales.
+    `CAPITAL_LIBRE` = TOTAL - EXPOSICION.
+    **`kelly_stake` dimensiona sobre `CAPITAL_LIBRE`** (verificado: su campo
+    `bankroll` = $6,000.00 = `capital_libre`). **Ese comportamiento NO se toco.**
+    El limite de cartera se mide contra `BANKROLL_TOTAL_RIESGO`; los caps
+    individuales, contra `CAPITAL_LIBRE`. Esa mezcla de denominadores sigue siendo
+    el riesgo residual #2 de 2A.56.
+
+---
+
+## FASE 2A — ATAQUE S1 Y ATTESTACION REAL (5-sep-2026)
+
+93. **#229 ATAQUE S1: mi diseno anterior SI era falsificable. Los cuatro pasos funcionaron.**
+    Ejecutado con el rol `authenticated`, en transaccion revertida:
+    | paso | resultado |
+    |---|---|
+    | S1.1 subir archivo a `screenshots/rodelcast/...` | **LOGRADO** |
+    | S1.2 INSERT en `scan_logs` sin pasar por el OCR | **LOGRADO** |
+    | S1.3 `evidencia_scan_valida` lo acepta | **LOGRADO** (`ok: true, motivo: evidencia verificada`) |
+    | S1.4 ledger override de $500 sobre el cap individual | **ACEPTADO** |
+    **Causa raiz**: la policy de INSERT de `scan_logs` es `with_check = true` para el rol
+    `public`, y `anon`/`authenticated` tenian GRANT INSERT. `owner_id` de storage
+    demuestra propiedad de un archivo, **no** que `scan-betslip` lo proceso.
+    Mi afirmacion anterior ("attestation server-side") era incorrecta. No la maquillo.
+
+94. **#230 ATTESTACION REAL: `scan_attestations` + edge function `attestar-scan`.**
+    - `public.scan_attestations`: RLS activo, `anon` y `authenticated` **sin INSERT /
+      UPDATE / DELETE**, solo SELECT. Un trigger estampa `escrito_por := current_user`
+      y `creado_at := now()`, asi que el cuerpo de la peticion no puede suplantarlos
+      (probado: se mando `escrito_por='INTENTO_DE_SUPLANTAR'` y quedo `service_role`).
+    - `attestar-scan` (nueva edge function, `verify_jwt = true`): recibe el mismo body
+      que `scan-betslip`, verifica con el service role que el archivo **existe de
+      verdad** en el bucket y esta bajo la carpeta del usuario, **invoca `scan-betslip`
+      servidor-a-servidor**, y solo entonces sella la attestacion. Devuelve el objeto
+      de `scan-betslip` **tal cual** mas `scan_id`. No aumenta el numero de llamadas al
+      OCR: sustituye la del cliente.
+    - No se toco `scan-betslip` (182 KB): habria sido un round-trip innecesario y
+      riesgoso.
+    - `evidencia_scan_valida` ya **no mira `scan_logs`**. Exige: attestacion existe /
+      mismo usuario / `escrito_por='service_role'` / `ocr_ok` / <= 48 h / el archivo
+      sigue en el bucket bajo la carpeta del usuario / no consumida.
+    - `scan_consumos` ahora referencia `scan_attestations`.
+    - Higiene: `revoke insert, update, delete, truncate on scan_logs from anon, authenticated`.
+    **Re-ejecucion del ataque S1**: S1.2 BLOQUEADO (`permission denied for table
+    scan_logs`), S1.2b BLOQUEADO (`permission denied for table scan_attestations`),
+    S1.3 rechaza (`no existe attestacion del backend`), S1.4 rechaza
+    (`Ruta de ledger rechazada: sin scan_id`).
+    Subir un archivo sigue siendo posible **y debe serlo**: ya no concede nada.
+
+95. **#231 `REGISTRO_EXTERNO_MANUAL` reclasificado como `LEDGER_OVERRIDE_HUMANO`.**
+    - Quien puede invocarlo: **cualquier usuario autenticado dueno de su propia fila**
+      (el trigger `asignar_apodo_del_dueno` fija el apodo). No exige rol especial.
+    - Requisito: `origen='registro_externo_manual'` + `stake_sobre_techo_razon` de
+      15 caracteres o mas, escrita por una persona.
+    - Provenance que deja: `origen`, la razon escrita, `stake_techo_al_guardar` con el
+      cap vigente, `created_at`, y en parlays `autoridad_economica='LEDGER_EXTERNO_MANUAL'`.
+    - **NO es un boleto verificado.** Es un override humano del propietario de la
+      cuenta. Es declarativo por diseno: un boleto de ventanilla sin captura tambien
+      es realidad economica.
+    - **Cuenta integramente para exposicion**, igual que cualquier otra apuesta.
+
+96. **#232 Higiene: `dblink` desinstalado.**
+    Se habia instalado solo para investigar la prueba de concurrencia y al final no se
+    uso (la prueba se hizo con `pg_cron`). Verificado 0 consumidores y 0 foreign
+    servers antes de `drop extension`. Superficie eliminada.
+
+97. **#233 Frontend: tres mensajes a Lovable, el tercero pendiente de publicar.**
+    Ya aplicado por Lovable: `origen`, `scan_id` en los inserts, cuadro de texto
+    obligatorio cuando no hay escaneo, aviso ambar del techo y traduccion de los tres
+    errores nuevos.
+    Pendiente en el tercer mensaje: cambiar las tres llamadas de `scan-betslip` a
+    `attestar-scan` y tomar `scan_id` de la respuesta en vez del RPC.
+    **Mientras eso no se publique**, `scan_attestations` esta vacia y el flujo del
+    escaner degrada a `registro_externo_manual` (pide razon escrita). Es seguro pero
+    NO es la ruta de boleto verificado, asi que el E2E de la ruta OCR sigue sin
+    ejecutarse. **Yo no puedo correr el E2E**: mi proxy bloquea `reto13.lovable.app`.
+
+98. **#234 El fallback manual ya no puede tapar un fallo de integracion del OCR.**
+    Riesgo señalado por el auditor: si el escaneo sale bien pero el `scan_id` se
+    pierde, la pantalla pedia en silencio "escribe una razon manual", convirtiendo un
+    fallo tecnico en lo que parece una decision del usuario.
+    Dos capas:
+    - **UI** (enviado a Lovable): tres casos separados. Con `scan_id` no pide nada;
+      **vino de escaneo pero sin `scan_id`** muestra aviso ROJO diciendo que es una
+      falla tecnica y deja el guardado DESHABILITADO hasta que el usuario pulse
+      explicitamente "Registrar de todos modos sin comprobante"; captura a mano sin
+      escaner se comporta como antes.
+    - **Servidor**: `public.salud_ocr_ledger(horas)` detecta la degradacion silenciosa
+      cruzando attestaciones selladas, attestaciones consumidas y registros manuales.
+      Si se sellaron attestaciones que nadie uso Y entraron registros manuales,
+      levanta `sospecha_degradacion_silenciosa`.
+    - `public.auditoria_e2e(apodo, n)`: una fila por apuesta con `ruta_real` explicita
+      (`TICKET_ESCANEADO_VERIFICADO` / `DECLARADO SIN ATTESTACION` /
+      `LEDGER_OVERRIDE_HUMANO` / `AUTORIZACION NORMAL DEL MOTOR` / `PATA`).
+
+99. **#235 UNA fila real quedo mal etiquetada en la ventana de transicion. NO la toco.**
+    `salud_ocr_ledger` levanto bandera de inmediato y encontro:
+    pick de **"el dos"**, `2b693371`, **$500.00**, 5-sep 14:47 UTC, `origen='ticket_escaneado'`,
+    `scan_id = NULL`, `stake_techo_al_guardar = $220.41`.
+    Es una apuesta REAL, registrada entre mi primer despliegue de Lovable (que mandaba
+    `origen='ticket_escaneado'` con solo `bet_id_casa` como evidencia) y el
+    endurecimiento posterior. Obtuvo el bypass con las reglas viejas.
+    **Es dinero real de otro usuario: no la borro ni la reetiqueto por mi cuenta.**
+    Bajo la taxonomia nueva es un `LEDGER_OVERRIDE_HUMANO`, no un boleto verificado.
+    `auditoria_e2e` ya la muestra como `DECLARADO SIN ATTESTACION`. Queda a decision
+    del auditor si se reetiqueta a `registro_externo_manual` (seria un cambio de
+    procedencia, cero cambio de dinero).
+
+100. **#236 MIGRACION_PROCEDENCIA_PRE_ATTESTATION ejecutada. UNA fila, cero cambio economico.**
+     *Autorizada por el auditor el 5-sep-2026.*
+
+     **Enumeracion previa** (sin ventana de tiempo, ambas tablas): **1 sola fila** cumple
+     `origen='ticket_escaneado' AND scan_id IS NULL`. No hay mas. `picks` tenia 1 fila con
+     `origen` no nulo y `parlays` 0.
+
+     **Fila**: `2b693371-f7bc-4786-8188-a2a76a047b33` · "el dos" · 5-sep 14:47:38 UTC ·
+     TSG Hoffenheim - Borussia Dortmund · "Menos de 3.5 Goles" · momio 1.50 ·
+     **$500.00** · resultado `perdido` · `ganancia_neta -500.00` · `bet_id_casa 5376349438` ·
+     `stake_techo_al_guardar $220.41` · RETO 13M.
+
+     **Seguridad del UPDATE.** Los 8 triggers de `picks` que disparan en UPDATE sin filtro
+     de columna se leyeron uno por uno antes de tocar nada. Ninguno actua si no cambia
+     `resultado`: `notify_pick_graded` exige `OLD.resultado='pendiente' AND NEW IN
+     ('ganado','perdido')` (**no se mando ninguna notificacion**);
+     `actualizar_bankroll_post_al_calificar`, `recalc_pick_on_result_change`,
+     `capture_pick_to_ai_learning` y `protect_picks_premature_grading` exigen transicion de
+     resultado; `protect_pa_picks` exige que NEW difiera de OLD; `proteger_ganancia_cashout`
+     exige `cashout_monto` no nulo (aqui es NULL). El unico con efecto es
+     `update_picks_updated_at`.
+     Ademas el UPDATE corrio dentro de un candado que **aborta la transaccion completa** si
+     cambiaba cualquier campo distinto de `origen` y `updated_at`, o si se movia la
+     exposicion.
+
+     **Diff real, verificado:**
+     | campo | antes | despues |
+     |---|---|---|
+     | `origen` | `ticket_escaneado` | `registro_externo_manual` |
+     | `updated_at` | 15:40:06 | 16:04:46 |
+
+     Todo lo demas identico: `apuesta` $500.00, `resultado` perdido, `ganancia_neta` -500.00,
+     `bankroll_post` 3908.19, `bet_id_casa` 5376349438, `created_at` 14:47:38.88888,
+     `stake_techo_al_guardar` 220.41, `scan_id` NULL (**no se fabrico**).
+     Exposicion abierta de "el dos": **$0.00 antes y $0.00 despues**.
+     No aplica `autoridad_economica`: esa columna solo existe en `parlays` y la fila es un pick.
+
+     **Evidencia durable**: fila 4 de `public.evidencia_procedencia`, que ya existia (se uso
+     esa en vez de inventar arquitectura nueva). Guarda la afirmacion completa
+     (`MIGRACION_PROCEDENCIA_PRE_ATTESTATION`, valor anterior, valor nuevo, `scan_id` original
+     NULL, motivo, y la declaracion explicita de cero cambio economico) y el **estado completo
+     de la fila antes del cambio** en la columna `sentencia`.
+
+     **Verificacion posterior**: `picks_contaminados = 0`, `parlays_contaminados = 0`.
+     `salud_ocr_ledger(24)` y `(168)` ya no levantan `declarados_ticket_sin_attestacion`;
+     ahora leen "Registros manuales sin ningun escaneo en la ventana: consistente con captura
+     deliberada sin escaner". `auditoria_e2e('el dos')` clasifica la fila como
+     **`LEDGER_OVERRIDE_HUMANO`**. La clase `TICKET_ESCANEADO_VERIFICADO` quedo limpia.
+
+     **RESIDUAL QUE NO TOQUE**: `stake_sobre_techo_razon` de esa fila sigue diciendo
+     literalmente "boleto escaneado en PlayDoIt folio 5376349438". Lo genero el trigger viejo
+     y es el acta original del momento. Reescribirlo seria alterar una declaracion historica,
+     asi que se deja como esta; la contradiccion aparente queda explicada en
+     `evidencia_procedencia`. Si el auditor prefiere anotarla, es un cambio aparte.
+
+101. **#237 CORRECCION A LO QUE YO AFIRME: las alertas NO las veian todos.**
+     Dije "todos la ven" basandome en los GRANTS de tabla (`anon` y `authenticated`
+     tenian SELECT). **Estaba mal**: `alertas_sistema` tiene RLS activo y ya traia
+     `as_admin_select` y `as_admin_update`, ambas con `has_role(auth.uid(),'admin')`.
+     El usuario la veia porque **es** el admin. Leer los grants sin leer las policies
+     fue un error de metodo mio.
+     Lo que si era real, aunque menor de lo que dije: `anon` y `authenticated` tenian
+     tambien INSERT, DELETE y **TRUNCATE**. INSERT y DELETE los frenaba la RLS (no hay
+     policy que los permita), pero **TRUNCATE no pasa por RLS**. No es explotable via
+     PostgREST (no expone TRUNCATE), asi que era defensa en profundidad, no una puerta
+     abierta. Lo cerre igual.
+
+102. **#238 LA CAUSA REAL de "siempre hay una alerta": el conteo iba en el titulo.**
+     `auditar_analisis` metia el numero dentro del titulo y el `ON CONFLICT` es sobre
+     `(tipo, titulo)`. Titulos historicos medidos para la MISMA condicion:
+     "47 analisis...", "52...", "55...", "56...", "57..." — **cinco alertas distintas
+     para un solo hallazgo**. Cada corrida (cada 2 h) con distinto conteo creaba una
+     fila nueva sin ver. Marcar "Entendido" no servia de nada.
+     Corregido: titulo fijo por regla, conteo en el detalle. Ahora el `ON CONFLICT`
+     encuentra la fila, actualiza detalle y gravedad, y **preserva `visto`**.
+
+103. **#239 La alerta NO habla de dinero. Medido.**
+     `v_pick_canonico` **no lee** `analisis_partidos`, y tampoco lo leen
+     `reto_picks_hoy`, `kelly_stake`, `filtro_pick`, `rongol_veto`, `stake_techo` ni
+     `exposicion_viva`. La regla `bet_con_datos_malos` mira
+     `analisis_partidos.analisis_json->veredicto_final = 'BET'` con `data_quality <= 8`
+     de 25: es la pantalla de ANALISIS que lee el usuario, no el motor que dimensiona.
+     **La regla NO se apago.** El hallazgo es cierto y es el mismo patron de #107/#108.
+     Cambios aplicados: `salud_alertas` ahora ademas filtra por admin dentro de la
+     propia vista (`security_invoker`), y se revocaron las escrituras de cliente
+     dejando solo `UPDATE (visto)` a `authenticated` para que el boton "Entendido"
+     siga funcionando sin poder reescribir titulo, gravedad ni detalle.
+
+104. **#240 P0 REGRESION: Lovable SOBRESCRIBIO `attestar-scan` y la dejo abierta.**
+     Lovable reporto "la funcion no existia, ya la cree". **Falso**: existia (v1, mia).
+     Desplego una v3 que rompio dos guardas:
+     - **`verify_jwt: false`** (la mia era `true`): cualquiera sin sesion podia llamarla.
+     - **Cero verificacion**: tomaba `image_url` y `apodo` del cuerpo y sellaba. Con eso
+       se podia sellar evidencia a nombre de OTRO usuario.
+     Lo unico que aguanto fue el trigger `tg_sellar_attestation`, que sobrescribe
+     `escrito_por` con `current_user` e ignoro el `"attestar-scan"` que mandaba Lovable.
+     Haber puesto esa guarda en la base y no en la funcion es lo que evito que la
+     regresion llegara hasta la evidencia.
+
+105. **#241 ERROR MIO EN LA CORRECCION: la v4 habria roto TODOS los escaneos.**
+     Al corregir la v3 puse una guarda que comparaba `uid_de_apodo(apodo)` contra el
+     uid de la sesion. **`usuarios.id` NO es el uid de auth**: ninguno de los tres
+     existe en `auth.users`. El vinculo real es `usuarios.user_id`.
+     Lo detecte antes de que el usuario probara, revisando el cruce. La v4 habria
+     devuelto 403 en todos los escaneos.
+     **v5** usa dos funciones nuevas SECURITY DEFINER, solo ejecutables por
+     `service_role`:
+     - `apodo_es_del_uid(apodo, uid)` — via `usuarios.user_id`
+     - `archivo_scan_es_del_uid(path, uid)` — via `storage.objects.owner_id`, que lo
+       pone el servidor al subir y el cliente no elige
+     Probadas las cuatro combinaciones: dueno OK / suplantador rechazado / archivo
+     propio OK / archivo ajeno rechazado.
+
+106. **#242 PUSH: el transporte SI funciona. Lo que se perdio fue el LIBRO y el aviso de ARRANQUE.**
+     Medido el 5-sep-2026. Tres cosas distintas que se venian contando como una sola:
+     - **Transporte OK.** En la ventana viva de `net._http_response` (retencion real
+       ~2 h, NO 24 h — eso invalida cualquier conteo mio anterior "en 24 horas")
+       hay 6 llamadas a `enviar-notificacion-push`, las 6 con `{"sent":1,"cleaned":0}`.
+       `alertas_enviadas` confirma actividad hoy: `inicio` 14:21, `marcador_final`
+       15:31, `calificado` 16:26.
+     - **El libro murio.** `push_log` no tiene una sola fila desde el **1-sep 21:19**.
+       Causa: `enviar-notificacion-push` **v236 ya no escribe `push_log`**. La tabla
+       tiene `enviados / suscripciones / silenciado / motivo` — era el rastro — y una
+       redeployada la dejo sin escritor. Por eso "no llego el push" no se puede probar
+       ni desmentir. Es la reaparicion de #80.
+     - **ARRANQUE: hueco estructural, medido.** `alertar_inicio_partidos()` recorre
+       **solo `parlays`** (`FROM parlays p, jsonb_array_elements(p.picks_data)`).
+       Una sencilla nunca recibe "ARRANCA". Prueba de hoy: los 3 eventos con dinero
+       vivo — Lens-Lorient, Inter-Napoli (patas de parlay) y Schalke-Bayern
+       (sencilla) — tienen `tuvo_inicio = false`. Segundo filtro: exige
+       `live_scores.status='live'` **y** minuto <= 8; si el marcador tarda en marcarse
+       live, la ventana se cierra y ya no vuelve a abrirse nunca.
+     - **GOLES: sin rastro por diseno.** El push de gol lo manda `check-score-updates`
+       con un `fetch` **interno** (no pasa por pg_net), y el trigger
+       `trigger_enviar_push_notificacion` **silencia** la fila espejo de
+       `notificaciones` (`marcador` con `data->origen='score_notifications'`). Si ese
+       fetch falla, el usuario no recibe nada y **no queda registro en ningun lado**.
+       Ademas la regla "quieto una vuelta" retrasa el aviso 2-4 min: no es tiempo real.
+     - Los **635 HTTP 404 en 2 h** son `{"error":{"message":"No stats found."}}` de la
+       API de MLB (linescore/enrich). Ruido, no push.
+
+107. **#243 CLIMA FUTBOL: el cron pide SIEMPRE los mismos 20 estadios.**
+     Medido: 159 estadios con partido en 6 dias. 58 (36%) **no estan** en
+     `futbol_estadios` -> nunca son elegibles. 2 sin coordenadas. 99 elegibles, pero
+     **solo 37 tienen clima**. Cobertura de la vista `v_futbol_clima_partido` en la
+     ventana -12h/+4d: 37 con clima, 106 con sede y sin clima, 31 sin sede.
+     Causa: `futbol_clima_pedir(20)` hace `select distinct ... limit 20` **sin
+     ORDER BY y sin filtro de frescura**; lo unico que excluye es lo que esta en
+     `futbol_clima_pendiente`, que `futbol_clima_recoger()` vacia 5 min despues. A las
+     3 h vuelve a elegir el mismo primer lote. Nunca avanza mas alla de esos ~20.
+
+108. **#244 FUT PRO: el Moneyline no lo mata RONGOL ni el Skill Score. Lo mata un piso de 52%.**
+     La pantalla lee `v_picks_futbol_limpio` = `picks_futbol_cache` = `v_picks_futbol_calc`,
+     que **no es** `v_pick_canonico`. Contenido de la cache ahora: **BTTS 5,
+     Over/Under 3, Moneyline 0**.
+     `v_picks_futbol_calc` filtra `probabilidad BETWEEN 52 AND 80`. En `picks_premium`
+     a 48 h: Over/Under n=37 (24 pasan), BTTS n=18 (18 pasan), **Moneyline n=12, 0
+     pasan** — su maximo es **49.5%** y su media 42.1%. Es un piso pensado para
+     mercados de dos salidas aplicado a un 1X2 de tres, donde el empate se lleva ~25%.
+     Mientras tanto `v_pick_canonico` si tiene 44 Moneyline de futbol con 4 `es_pick`
+     (Dortmund ML, Lille ML, Real Salt Lake, Empate) y **0** Over/Under `es_pick`:
+     las dos pantallas dicen lo contrario porque leen motores distintos (#204).
+
+109. **#245 BARRA DE FAVORITOS: ya consume P_FAIR. Premisa descartada.**
+     `PicksProbabilidadFavoritos.tsx` pinta `favorito_pct` de `v_pick_canonico`, y ahi
+     `favorito_pct = GREATEST(prob_local_casa_pct, prob_visitante_casa_pct)` con
+     `prob_local_casa_pct = 100*(1/home_ml)/(1/home_ml + 1/away_ml + 1/draw_ml)`.
+     Eso **es** probabilidad normalizada sin vig (incluye el empate en el 1X2), no el
+     EV legacy ni el implicito crudo. Unico matiz: es el favorito **del mercado**, no
+     el del modelo; el del modelo es `probabilidad_pct`.
+
+110. **#246 NFL: cero picks canonicos y cero apuestas reales. Pero no es "SIN_MODELO".**
+     `v_pick_canonico` para NFL: **0 filas**. Apuestas NFL reales historicas: **0**.
+     De facto apagada para dinero, y asi sigue.
+     Mapa de datos SI disponible: 572 partidos (272 futuros, hasta ene-2027),
+     `nfl_picks_premium` 1,358, `nfl_tablero` 572, 24 crons activos (agenda, lesiones,
+     snaps, FPI, clima, momios, ADP, stats, H2H). `nfl_backtest` sigue **vacia**.
+     `modelo_confiabilidad` medido el 1-sep sobre n=1,437:
+     - **NFL Moneyline**: dice 53.7%, pasa 54.5% (sesgo -0.8 pp), Brier 0.23813 vs
+       0.24799 tasa base y 0.25 volado -> "acierta de verdad".
+     - **NFL Over/Under**: dice 56.3%, pasa 48.8% (**sesgo +7.5 pp**), Brier 0.25287
+       **peor que un volado**, y recalibrar lo empeora -> **no usar**.
+
+111. **#247 RONGOL: el bloqueo IGNORA `rango_momio`. Bug localizado.**
+     `rongol_veto()` calcula `v_rango` arriba y lo usa **solo** en el bucle de fugas
+     (que unicamente advierte). El bucle que **bloquea** —
+     `lecciones_aprendidas WHERE activa AND bloqueo_total` — cruza por
+     `mercado_norm` + `liga` y **nunca lee `la.rango_momio`**.
+     Ademas hay dos vocabularios de tramo: `rongol_hallazgos.clave` usa el de
+     `v_rango` (`<1.40`, `1.40-1.80`, `1.80-2.50`, `2.50-4.00`, `>4.00`) y
+     `lecciones_aprendidas.rango_momio` usa otro (`1.01-1.50`, `1.50-1.80`,
+     `1.80-2.20`, `2.20-3.00`, `3.00-5.00`, `5.00+`, `TODOS`).
+     Las tres lecciones que hoy bloquean:
+     | id | mercado | liga | rango | n | W-L | ROI |
+     |----|---------|------|-------|---|-----|-----|
+     | 11 | OU | MLB | 1.01-1.50 | **6** | 3-3 | -38.3% |
+     | 13 | ML | MLB | 1.01-1.50 | **8** | 4-4 | -33.1% |
+     | 12 | ML | MLB | 1.50-1.80 | 42 | 15-27 | -41.3% |
+     Ninguna se midio arriba de 1.80. Hoy hay **9 picks MLB bloqueados**, todos
+     Moneyline, con momios de **1.909 a 3.01** — es decir, ninguno cae en un tramo
+     medido. Las celdas n=6 (3-3) y n=8 (4-4) son 50% exacto: Wilson 95%
+     [18.8, 81.2] y [21.5, 78.5]. No tienen soporte fuera de muestra.
+
+112. **#248 P0 CERRADO: cerrar una apuesta desde la app era IMPOSIBLE. Era RLS, no la logica de cierre.**
+     Sintoma reportado con captura: al cerrar un parlay de 2 patas la app devolvia
+     `new row violates row-level security policy for table "notificaciones"`.
+     **Causa.** `notificaciones` tiene RLS con politicas de `SELECT` y `UPDATE` para
+     `authenticated` y **ninguna de `INSERT`**. Y los dos triggers que escriben ahi al
+     calificar corrian como el usuario:
+     - `notify_parlay_graded()` (trigger `on_parlay_graded_notify` en `parlays`)
+     - `notify_pick_graded()` (trigger `on_pick_graded_notify` en `picks`)
+     Las otras cuatro funciones que insertan en `notificaciones`
+     (`procesar_notificaciones_marcador`, `alertar_picks_sin_marcador`,
+     `dispatch_pa_para_pick`, `dispatch_pa_para_pierna_parlay`) **si** eran
+     `SECURITY DEFINER`. Estas dos se quedaron fuera. Por eso el cron calificaba bien
+     (corre como `service_role`) y el cierre manual moria siempre — sencillas incluidas.
+     **Correccion.** `SECURITY DEFINER` en las dos. Se descarto la alternativa de dar
+     una politica de `INSERT` a `authenticated`: la notificacion es un efecto del
+     sistema, no una escritura del cliente, y esa politica le permitiria fabricar
+     notificaciones arbitrarias por PostgREST. Con DEFINER no puede: la RLS de
+     `parlays`/`picks` solo lo deja tocar filas con
+     `apodo = apodo_de_la_sesion()`, asi que `NEW.apodo` siempre es el suyo.
+     **Prueba adversarial, con rollback.** Con `set local role authenticated` y las
+     claims de rodelcast:
+     - parlay `0c20f6c6` -> **OK, 1 fila actualizada** (antes: violacion de RLS)
+     - pick `6e741cff` -> rechazado por `23514`: *"Todavia no se puede calificar:
+       Schalke 04 - Bayern Munich sigue en juego (29')"*. Esa es la guarda de
+       calificacion prematura haciendo su trabajo, no el bug.
+     Todo revertido: parlay y pick siguen `pendiente`, `updated_at` sin tocar, y
+     **0 notificaciones creadas** por la prueba.
+     **Residual (no tocado, mismo patron, hoy inofensivo):**
+     `auto_close_parlay_when_all_legs_decided` (escribe `parlays`) y
+     `marcar_patas_parlay` (escribe `picks`) siguen `SECURITY INVOKER`. No fallan
+     porque ambas tablas SI tienen politica `ALL` para el dueno; pero si un dia una
+     pata pertenece a otro apodo, no daran error: **no haran nada**.
+
+113. **#249 Cash out: el dinero no era un bug del cash out. Era el boton que se eligio.**
+     **CORRECCION A LO QUE YO MISMO DIJE HACE UN MOMENTO.** Vi `cashout_monto` en NULL
+     en los 54 parlays y conclui "la app nunca manda ese campo". **Falso.** La ruta
+     existe y esta bien hecha:
+     `CorregirApuesta.tsx` (la hoja "¿COMO QUEDO?") llama al RPC
+     `editar_resultado_parlay(p_id, p_resultado, p_cashout_monto, p_nota)`, y ese RPC
+     escribe `cashout_monto` **solo cuando `p_resultado = 'retirado'`**:
+     ```sql
+     cashout_monto = CASE WHEN p_resultado = 'retirado' THEN p_cashout_monto ELSE NULL END
+     ```
+     El usuario eligio **❌ PERDIDO** (se ve marcado en ambar en su captura), no
+     **💰 LO CERRE ANTES (CASH OUT)**. Con `perdido` el campo de monto ni siquiera
+     aparece en pantalla, y el RPC pone `cashout_monto` en NULL a proposito.
+     La razon real de que ningun parlay tuviera cash out: nadie habia elegido nunca
+     "retirado", y hasta #248 la RLS mataba cualquier cierre manual de todas formas.
+     **Correccion aplicada al parlay `0c20f6c6`** ($300, Lens + Inter):
+     `cashout_monto = 75.00` -> el trigger `proteger_ganancia_cashout()` recalculo
+     `ganancia_neta = 75 - 300 = -225.00`. Bankroll $4,247.45 -> **$4,322.45**.
+     No se toco apuesta, momio, bono ni fecha.
+     **NO se cambio `resultado` a 'retirado', y es deliberado.** Medido: **107**
+     funciones y vistas mencionan `'ganado'`/`'perdido'` y **nunca** `'retirado'`,
+     entre ellas `get_bankroll_evolution`, `get_dashboard_stats`,
+     `get_performance_breakdown`, `get_historial_reciente`, `get_parlays_evolution`,
+     `recalc_user_stats_for_user` y `get_leaderboard`. Marcarlo 'retirado' lo haria
+     **desaparecer** del historial, las stats y la curva, aunque
+     `get_bankroll_actual` si lo cuenta. Ninguna fila de la base usa hoy ese valor.
+     Se verifico que las seis lecturas de dinero leen `ganancia_neta` y **ninguna**
+     recalcula desde `apuesta`: con `perdido` + `ganancia_neta = -225` todas pintan
+     el numero correcto.
+     **Pendiente de producto (NO es bug de datos):** "cerre antes Y iba perdiendo" es
+     el caso natural del usuario y hoy obliga a elegir entre dos botones que se
+     sienten excluyentes. O el estado 'retirado' se ensena en las 107 lecturas, o el
+     campo de cash out se ofrece tambien bajo PERDIDO/GANADO. Decision del usuario.
+
+114. **#250 El cash out deja de estar preso de `resultado='retirado'`.**
+     Decision del usuario (opcion 2 de #249): en vez de ensenar el estado 'retirado'
+     en las 107 lecturas que no lo conocen, se abre el campo de monto bajo GANADO y
+     PERDIDO. El caso real es "lo cerre antes Y iba perdiendo".
+     **Backend (desplegado):**
+     - `editar_resultado_parlay` y `editar_resultado_pick`: `cashout_monto` y
+       `cashout_fecha` ahora se escriben con `resultado IN ('retirado','ganado','perdido')`.
+       Con 'nulo' o 'pendiente' se rechaza con mensaje propio en vez de borrar el monto
+       en silencio. 'retirado' sigue exigiendo monto.
+     - `proteger_ganancia_cashout()`: **rama nueva de deshacer**. El diff de arriba abre
+       un hueco: antes, quitar un cash out obligaba a cambiar `resultado` (solo existia
+       con 'retirado') y eso disparaba `recalc_*_on_result_change`. Ahora se puede
+       guardar 'perdido' CON monto y volver a guardar 'perdido' SIN monto: el resultado
+       no cambia, recalc no dispara, y `ganancia_neta` se quedaria con el numero viejo.
+       La rama nueva reconstruye la ganancia por la regla normal, con
+       `TG_TABLE_NAME` para distinguir parlays (`ganancia_parlay_ganado`) de picks
+       (`apuesta * (momio - 1)`).
+     **Prueba adversarial como `authenticated`, con rollback, sobre el parlay real:**
+     | # | entrada | `ganancia_neta` | `cashout_monto` |
+     |---|---------|-----------------|-----------------|
+     | 1 | perdido + 75 | **-225.00** | 75 |
+     | 2 | perdido sin monto (deshacer) | **-300.00** | NULL |
+     | 3 | ganado + 500 | **+200.00** | 500 |
+     | 4 | nulo + 75 | **RECHAZADO** | — |
+     | 5 | pendiente | NULL | NULL |
+     Fila intacta despues de la prueba (`updated_at` 17:12:07, bankroll $4,322.45).
+     **Frontend:** enviado a Lovable un cambio acotado a
+     `src/components/reto/CorregirApuesta.tsx`: el input aparece con
+     `ACEPTA_CIERRE = ['retirado','ganado','perdido']`, obligatorio solo en 'retirado',
+     se limpia al elegir 'nulo'/'pendiente', y manda
+     `p_cashout_monto: aceptaCierre && hayMonto ? monto : null`. Pendiente de verificar
+     publicacion.
+     **Residual conocido (no tocado):** `bankroll_post` se calcula en un trigger que
+     corre ANTES de `zz_proteger_ganancia_cashout`, asi que en un boleto con cash out
+     queda desfasado por el delta (se vio $4,547.45 donde tocaba $4,322.45). Es la
+     columna basura de #95 y NO alimenta `get_bankroll_actual`; las seis lecturas de
+     dinero usan `ganancia_neta`.
+
+115. **#251 E2E del escaner: NO lo declaro cerrado. Una anomalia sin explicar en el candado de cartera.**
+     **Lo que SI quedo probado hoy, con datos reales:**
+     - 5 attestaciones selladas, las 5 por `service_role`, las 5 consumidas, 0 sin usar,
+       0 `declarados_ticket_sin_attestacion`. `salud_ocr_ledger(12h)`: sin degradacion.
+     - 3 boletos POR ENCIMA del cap entraron por ledger: $3,847.67 vs cap $577.12,
+       $250 vs $195.41, $75 vs $11.22. E2E de "arriba del cap" **PASA**.
+     - Parlay de **16 patas**: `filas_pata_creadas = 0`, y `es_pata_parlay` en toda la
+       tabla `picks` sigue en **0**. Sin doble conteo ni a 16 patas.
+     - Rutas ejercidas en produccion: `TICKET_ESCANEADO_VERIFICADO` (5),
+       `LEDGER_OVERRIDE_HUMANO` (1), `AUTORIZACION NORMAL DEL MOTOR` (muchas),
+       `PATA (no suma exposicion)`. `DECLARADO SIN ATTESTACION`: 0, que es la senal
+       buena (el OCR no ha fallado).
+     - **Guardas verificadas en aislamiento**, como `authenticated` y con rollback:
+       | caso | `ruta_ledger` | resultado |
+       |------|---------------|-----------|
+       | attestacion YA consumida | NULL | rechazado por LIMITE DE CARTERA |
+       | `scan_id` inventado | NULL | rechazado |
+       | `ticket_escaneado` sin `scan_id` | NULL | rechazado |
+       | attestacion de OTRO apodo | NULL | rechazado |
+       | attestacion sellada por `postgres` | NULL, motivo *"no la sello el backend (escrito_por=postgres)"* | rechazado |
+       | attestacion fresca sellada por `service_role` | LEDGER_EXTERNO | **pasa** (correcto) |
+       Nota: yo mismo, como `postgres` desde el MCP, **no pude** fabricar evidencia
+       valida. La guarda de autoria funciono contra mi.
+     **LA ANOMALIA (abierta, P0-adyacente):** en UNA MISMA transaccion, si primero
+     entra un insert con ruta de ledger VALIDA y despues otro con la attestacion YA
+     CONSUMIDA, el segundo **PASA**. Medido justo antes de ese segundo insert:
+     `exposicion_abierta = 6322.67`, `limite_monto = 864.49`, `ruta_ledger = NULL`.
+     Con esos tres valores `tg_limite_exposicion` **debia** disparar y no disparo.
+     Aislado (sin el primer insert) el mismo caso SI se rechaza.
+     Descartado: no es `ruta_ledger` (se verifico con la fila completa,
+     `to_jsonb(NEW)`, y da NULL igual); no es `es_prueba` ni `es_pata_parlay`
+     (misma fila origen que en el caso aislado). Hipotesis abiertas: reentrada del
+     `pg_advisory_xact_lock`, o el snapshot de las funciones STABLE
+     (`exposicion_viva` / `get_bankroll_actual`) dentro de la misma transaccion.
+     **Alcance real hoy:** por PostgREST cada apuesta llega en su propia transaccion,
+     asi que la secuencia no es alcanzable desde la app. **No es excusa para cerrar.**
+
+116. **#252 `push` como LIQUIDACION (no el push del celular): bug latente confirmado.**
+     El usuario pidio demostrar `push -> stake devuelto, ganancia_neta = 0`. Hoy
+     **no se cumple**. Medido:
+     - `recalc_pick_on_result_change` maneja `'push'`: **NO**
+     - `recalc_parlay_on_result_change` maneja `'push'`: **NO**
+     - `get_bankroll_actual` cuenta `'push'`: **SI**
+     - `editar_resultado_pick` acepta `'push'` en VALIDOS: **SI**
+     Es decir: se puede marcar un pick como `push` y `ganancia_neta` se queda con el
+     valor anterior. Si venia de `ganado (+X)`, el bankroll conserva esa ganancia.
+     Lo mismo con `'retirado'`, que tampoco esta en ninguno de los dos recalc (ahi lo
+     tapa el trigger de cashout, que exige monto).
+     **Filas afectadas hoy: 0** (`push` = 0 en picks y parlays; `retirado` = 0).
+     Latente, no activo. Diff propuesto, NO desplegado: agregar a los dos recalc
+     `ELSIF NEW.resultado IN ('push') THEN NEW.ganancia_neta := 0;`
+
+117. **#253 FUT PRO: el piso de 52% queda NO APROBADO por el usuario. Con razon.**
+     Un umbral fijo de probabilidad no tiene significado economico sin el momio:
+     breakeven a 1.50 es 66.67%, a 1.91 es 52.36%, a 2.50 es 40.00%.
+     `P=49% @ 2.50` da EV **+22.5%**; `P=53% @ 1.80` da EV **-4.6%**. El piso acepta
+     el segundo y rechaza el primero.
+     Decision: **no se toca el piso ni se baja**; la elegibilidad debe salir de
+     P_FAIR + momio -> EV, y cualquier piso nuevo exige evidencia OOS especifica para
+     esa funcion. Queda como rediseno, no como ajuste de numero.
+
+118. **#251 RESUELTO — NO ERA UN BYPASS. Era mi prueba. `tg_limite_exposicion` no se toco.**
+     **Causa raiz exacta:** `trg_prevenir_pick_duplicado` -> `prevenir_pick_duplicado()`
+     es un trigger BEFORE INSERT que, al encontrar un pick identico
+     (`apodo` + `partido` + `pick_desc` + `casa`) creado en los ultimos 120 segundos,
+     hace **`RETURN NULL`**. Eso descarta la fila **en silencio, sin error**, y
+     **aborta la cadena de triggers antes** de `zzz_autoridad_stake` y
+     `zzzz_limite_exposicion`. Mi fila B era identica a la A salvo por `scan_id`,
+     asi que nunca llego al candado. La prueba dio "PASO" porque el INSERT no
+     lanzo excepcion; la fila **no existia**. Se comprobo con
+     `B{no existe}` leyendo por id despues del insert.
+     **La hipotesis de snapshot/volatilidad quedo DESCARTADA con medicion.**
+     Inventario: `exposicion_viva`, `get_bankroll_actual`, `ruta_ledger`,
+     `evidencia_scan_valida`, `bankroll_expuesto` son todas **STABLE SECURITY DEFINER**,
+     llamadas desde `tg_limite_exposicion` que es **VOLATILE**. Prueba T0/T1/T2 en una
+     sola transaccion, tras insertar $2,000 con ledger valido:
+     | eslabon | T0 | T2 |
+     |---|---|---|
+     | tabla base `picks` | 4,247.67 | **6,247.67** |
+     | `bankroll_expuesto` | 4,322.67 | **6,322.67** |
+     | `exposicion_viva` | 4,322.67 | **6,322.67** |
+     Ningun eslabon lee estado viejo. **No se cambio la volatilidad de ninguna funcion.**
+     **REGRESIONES (todas como `authenticated`, con rollback):**
+     - **X1** A ledger valido $2,000 (expuesto 6,322.67) -> B $1,500 sin ledger:
+       **RECHAZADA** por LIMITE DE CARTERA. PASS
+     - **X2** reusar dentro de la misma transaccion el scan que A acaba de consumir,
+       fila distinta: **RECHAZADA**. PASS
+     - **X3** statements separados: 250 -> 400 -> 550 -> 700 y la 4a ($150, dejaria 850
+       sobre un limite de 781.64) **RECHAZADA**. PASS
+     - **X4** **multi-row: 4 filas x $150 en UN SOLO statement -> statement RECHAZADO
+       COMPLETO.** Exposicion final 250.00, `sobre_el_limite=false`. Politica correcta:
+       rechazo de statement entero, sin insercion parcial. PASS
+     - **X5** NO se re-ejecuto la prueba de dos sesiones. `tg_limite_exposicion` **no se
+       modifico** (no hizo falta arreglo) y conserva su `pg_advisory_xact_lock`
+       (verificado); la evidencia previa de H10 sigue vigente sin cambios.
+     - **X6** tras el ledger legitimo, apuesta automatica de $900 en la misma
+       transaccion: **RECHAZADA**. PASS
+     **Residual real que si vale anotar:** un trigger BEFORE que devuelve NULL descarta
+     un INSERT **sin error**. Desde PostgREST, insertar un pick duplicado dentro de
+     120 s devuelve exito con cero filas. Es preexistente e intencional, pero es un
+     modo de fallo silencioso.
+
+119. **#252 CORRECCION A MI PROPIO REPORTE: `push` NO EXISTE en el esquema.**
+     Dije que "se puede marcar un pick como push y la ganancia se queda con el valor
+     anterior". **Falso.** El CHECK de las DOS tablas es identico:
+     `('pendiente','ganado','perdido','nulo','retirado')`. `push` nunca fue escribible.
+     El defecto real era otro: `editar_resultado_pick` ofrecia `'push'` en su lista de
+     validos, lo aceptaba y despues reventaba con un error crudo de constraint.
+     **Corregido:** `'push'` fuera de VALIDOS; ahora responde
+     *"Resultado no valido: push. Usa uno de: pendiente, ganado, perdido, nulo, retirado"*.
+     **NO se agrego `push` al CHECK a proposito**: seria un valor nuevo que 107
+     funciones y vistas no conocen, la misma trampa de `'retirado'` (#249).
+     En este esquema el estado "me devolvieron la apuesta" es **`nulo`**.
+     Se dejaron ramas defensivas para `push` en los tres recalculadores por si algun
+     dia entra al CHECK.
+
+120. **#252b LA PRUEBA P8 CAZO UN BUG REAL Y ALCANZABLE: `nulo` con cash out.**
+     Corriendo P1-P8 sobre `nulo` (el equivalente alcanzable de `push`):
+     `proteger_ganancia_cashout` tenia `'nulo'` en la lista donde el cash out manda,
+     asi que el parlay de $300 con `cashout_monto=75` marcado `nulo` se quedaba en
+     **-225 en vez de 0**, y el bankroll no se movia.
+     **Corregido:** `nulo`/`push` pasan a ser rama de AUTORIDAD MAXIMA y van primero:
+     `ganancia_neta := 0` y se limpian `cashout_monto` y `cashout_fecha` de forma
+     explicita. Un cash out es incompatible con una devolucion integra.
+     **P1-P8 despues del arreglo, con rollback:**
+     | prueba | resultado |
+     |---|---|
+     | P1 pick ganado +100 -> nulo | 0.00 · bankroll delta -100.00 (= esperado) |
+     | P2 pick perdido -250 -> nulo | 0.00 · delta +250.00 |
+     | P3 nulo -> ganado | +100.00 |
+     | P4 nulo -> perdido | -250.00 |
+     | P5 nulo -> nulo | 0.00 idempotente |
+     | P6a rpc `nulo` + cashout 999 | RECHAZADO con mensaje propio |
+     | P6b rpc `push` | RECHAZADO con mensaje propio |
+     | P8 parlay -225/cash75 -> nulo | **0.00**, cashout NULL, delta **+225.00** |
+     | P8b nulo -> ganado | +586.38 (con el `momio_efectivo` de la fila) |
+     | P8d nulo -> perdido | -300.00 |
+     | P8e nulo -> nulo | 0.00, cashout NULL |
+     | REG perdido + cash 75 | -225.00 (el cash out legitimo intacto) |
+     | REG quitar el cash out | -300.00 (rama de deshacer de #250 intacta) |
+     Censo previo: `push` 0 en picks y parlays, `retirado` 0 en ambas. **Cero filas
+     historicas tocadas.**
+     **Estado final:** parlay `0c20f6c6` intacto (perdido / cashout 75 / -225).
+     bankroll rodelcast $4,322.45, el dos $3,908.19. **residuos de prueba: 0.**
+     attestaciones 5, consumos 5. `EXP_OFF = 0.50`. `kelly_stake` sin tocar.
+     `pg_advisory_xact_lock` presente. RONGOL sin tocar (las 3 lecciones con
+     `bloqueo_total` siguen identicas).
+
+121. **#251 CLOSED / PASS — X5 re-ejecutada con DOS SESIONES REALES sobre el estado actual.**
+     `dblink` exige contrasena para no-superusuario; **no se manejo ninguna credencial**.
+     Se uso **pg_cron**, que lanza cada job en un background worker distinto:
+     concurrencia real, sin secretos. La extension dblink se elimino.
+     **Escenario** (apodo "el dos", sin ruta de ledger para que gobierne el candado;
+     el techo individual se salva con `stake_sobre_techo_razon` >= 15 caracteres, que
+     NO concede ruta de ledger):
+     `E0 = 250.00` · `limite = 781.64` · `S1 = S2 = 400`
+     `250+400 = 650 <= 781.64` cada una · `250+800 = 1050 > 781.64` juntas.
+     **Evidencia capturada:**
+     - `pg_locks` x5 muestras (17:48:10 -> 17:48:22), mismo `objid = 1552519797`:
+       | pid | job | granted | wait_event |
+       |-----|-----|---------|------------|
+       | 8139 | `x5_a` | **t** | Timeout/PgSleep |
+       | 8138 | `x5_b` | **f** | **Lock/advisory** |
+     - B espero **19,112 ms** (17:48:06.430 -> 17:48:25.542).
+     - A confirmo (job 411 `succeeded`), B adquirio el lock.
+     - **B RELEYO la exposicion nueva: `expuesto_visto = 650.00`** (era 250 antes de A).
+       Esa relectura es la propiedad que se queria demostrar.
+     - Error exacto de B:
+       `LIMITE DE CARTERA: esta apuesta de $400.00 dejaria la exposicion abierta en`
+       `$1050.00 sobre un bankroll total de $3908.19. El techo de cartera es del 20.0`
+       `por ciento ($781.64) y la capacidad restante es $131.64.`
+     - Exposicion final tras el rechazo: 650.00 <= 781.64, `sobre_el_limite = false`.
+       **Nunca supero el limite.**
+     **Limpieza:** se borro la fila artificial de A (`bet_id_casa = X5-SESION-A-BORRAR`),
+     se eliminaron `x5_a()`, `x5_b()`, `x5_resultado`, los dos cron jobs y sus
+     `job_run_details`, y `dblink`.
+     **Estado inicial = estado final** para "el dos": expuesto 250.00, capacidad 531.64,
+     bankroll 3,908.19.
+     **Residuos: 0** (picks X5 0, picks de prueba 0, funciones x5 0, tabla 0, jobs 0,
+     dblink 0).
+     **Invariantes:** `EXP_OFF = 0.50` · `kelly_stake` md5 `f8f6f398...` sin cambio ·
+     `pg_advisory_xact_lock` presente · RONGOL intacto (lecciones 11/12/13 con
+     `bloqueo_total`, sin tocar) · attestaciones 5 / consumos 5 · `push` fuera del
+     CHECK y 0 filas.
+     **#251 CLOSED / PASS sin asterisco**: same transaction, same statement/multi-row,
+     sesiones concurrentes, ledger override legitimo y scan single-use, todo a la vez.
+
+122. **#247b CONTRAFACTUAL DE RONGOL — MEDIDO, SIN DESPLEGAR NADA.**
+     Regla simulada: alcance por deporte + mercado + liga + `rango_momio`;
+     `bloqueo_total` solo para la leccion **12** (MLB / Moneyline / 1.50-1.80 / n=42,
+     OOS train -37.7% -> test -44.8%); las **11** y **13** quedan activas como
+     advertencia; **cero bloqueos nuevos** para 1.80-2.20 ni otros tramos.
+     **Universo:** `v_pick_canonico` 277 filas, **15 con `es_pick`**.
+     **Agregado:**
+     | metrica | valor |
+     |---|---|
+     | filas bloqueadas hoy | 164 |
+     | de esas, `es_pick` | **13** |
+     | seguirian bloqueadas (filas) | 16 |
+     | de esas, `es_pick` | **0** |
+     | `es_pick` que se desbloquean | **13** |
+     | bloqueadas hoy sin momio (grupo C) | 64 (0 `es_pick`) |
+     Nota: el 5-sep a las 16:5x conte 9; ahora son 13. La cartelera se refresco
+     (nuevos juegos y precios). El numero vigente es 13.
+     **GRUPO A — SIGUEN BLOQUEADOS: 0 picks.** Las 16 filas que conservan el bloqueo
+     son MLB / Moneyline / 1.50-1.80, y **ninguna** es `es_pick` hoy.
+     **GRUPO B — SE DESBLOQUEAN: 13, todos MLB Moneyline.** Todos bloqueados hoy por
+     `13:ML/MLB/1.01-1.50 n=8 + 12:ML/MLB/1.50-1.80 n=42`, ninguna de las dos medida
+     en su tramo:
+     | momio | tramo | pick | P_V1 | EV mostrado | edge |
+     |---|---|---|---|---|---|
+     | 1.877 | 1.80-2.20 | ML Atlanta Braves | 54.9% | +3.1% | 1.6 |
+     | 1.909 | 1.80-2.20 | ML Kansas City Royals | 54.3% | +3.7% | 1.9 |
+     | 2.040 | 1.80-2.20 | ML Miami Marlins | 50.5% | +3.0% | 1.5 |
+     | 2.090 | 1.80-2.20 | ML New York Yankees | 54.7% | +14.3% | 6.9 |
+     | 2.130 | 1.80-2.20 | ML Baltimore Orioles | 48.4% | +3.1% | 1.5 |
+     | 2.340 | 2.20-3.00 | ML Detroit Tigers | 47.7% | +11.6% | 5.0 |
+     | 2.350 | 2.20-3.00 | ML Atlanta Braves | 52.2% | +22.7% | 9.6 |
+     | 2.380 | 2.20-3.00 | ML Detroit Tigers | 47.3% (P_RAW 38.5) | +12.6% | 5.3 |
+     | 2.380 | 2.20-3.00 | ML San Francisco Giants | 46.1% | +9.7% | 4.1 |
+     | 2.550 | 2.20-3.00 | ML Athletics | 48.7% | +24.2% | 9.5 |
+     | 2.570 | 2.20-3.00 | ML Los Angeles Angels | 41.7% | +7.2% | 2.8 |
+     | 2.830 | 2.20-3.00 | ML Washington Nationals | 41.4% (P_RAW 39.4) | +17.2% | 6.1 |
+     | 3.010 | 3.00-5.00 | ML Athletics | 45.2% | +36.1% | 12.0 |
+     **P_RAW solo existe en 2 de 13**: `picks_recomendados_hoy.probabilidad_real` viene
+     NULL en 11. Donde si existe, la brecha P_RAW -> P_V1 es grande
+     (38.5 -> 47.3 y 39.4 -> 41.4): es la recalibracion de MLB. **No lo fuerzo a B**,
+     queda anotado como dato incompleto.
+     **GRUPO C — AMBIGUOS: 64 filas bloqueadas sin momio** (32 ML + 32 OU de MLB),
+     `rango_momio` indeterminable. **Ninguna es `es_pick`**, asi que no hay dinero en
+     juego, pero con la regla corregida un `rango_lec` NULL **no** casa con
+     `1.50-1.80` y quedarian permitidas. Es una decision de diseno pendiente: sin
+     precio no se puede ubicar el tramo.
+     **IMPACTO ECONOMICO: $0. Y la razon importa.**
+     `stake_techo('rodelcast')` devuelve `ok:false, techo_monto:0` y `kelly_stake`
+     devuelve `"Usuario sin bankroll configurado"`, **porque `capital_libre = 0`**: la
+     cartera ya esta al 100% ($4,322.67 sobre un limite de $864.49).
+     | metrica | valor |
+     |---|---|
+     | stake autorizado hoy (13 picks) | **$0.00** |
+     | stake pre-RONGOL (Kelly) | **$0.00** (Kelly se niega) |
+     | stake contrafactual tras corregir | **$0.00** |
+     | **incremento de autorizacion** | **$0.00** |
+     **Corregir RONGOL hoy no autoriza un solo peso.** El cap agregado del 20% muerde
+     antes que RONGOL.
+     **Escenario de exposicion** (contrafactual puro, cartera vacia, techo individual
+     5% del capital libre que se encoge en cada apuesta):
+     | # | stake max | exposicion acumulada | cabe en el 20% ($864.49) |
+     |---|---|---|---|
+     | 1 | 216.12 | 216.12 | si |
+     | 2 | 205.32 | 421.44 | si |
+     | 3 | 195.05 | 616.49 | si |
+     | 4 | 185.30 | 801.79 | si |
+     | 5 | 176.03 | 977.82 | **NO** |
+     **Solo 4 de los 13 caben**; del 5º en adelante choca con el cap agregado.
+     **PRUEBAS DE AISLAMIENTO (predicado corregido, casos sinteticos):**
+     | caso | hoy | corregido |
+     |---|---|---|
+     | soccer ML 1.65 | ok | permitido |
+     | control MLB ML 1.65 | bloqueado (13+12) | **BLOQUEADO por 12** |
+     | MLB **O/U** 1.65 | bloqueado (11) | **permitido** — ML no bloquea O/U |
+     | MLB ML **1.95** | bloqueado (13+12) | **permitido** — 1.50-1.80 no bloquea 1.80-2.20 |
+     | MLB ML 1.55 | bloqueado | **BLOQUEADO por 12** — la 12 no se toca |
+     | MLB ML 1.30 (tramo de la 13) | bloqueado | permitido |
+     | MLB O/U 1.30 (tramo de la 11) | bloqueado | permitido |
+     Ojo con las dos ultimas: degradar 11 y 13 a advertencia **tambien abre el tramo
+     1.01-1.50**. Hoy son 2 filas, 0 `es_pick`, pero es consecuencia de la decision.
+     **NO se modifico nada:** `rongol_veto`, `lecciones_aprendidas`, Kelly, caps, V2,
+     `EXP_OFF` y produccion intactos. Solo medicion.
+
+123. **#247 CERRADO — RONGOL corregido y desplegado. Solo veta donde tiene evidencia OOS.**
+     **Condicionante previo, demostrado:** existe un guard de autoridad economica
+     SEPARADO de `rongol_veto` que impide que un pick sin precio autorice dinero, en
+     dos capas independientes:
+     - `v_pick_canonico.es_pick` arranca con `c.momio_mercado IS NOT NULL`. Medido:
+       **0 de 15** `es_pick` tienen momio NULL.
+     - `kelly_stake` responde `{"ok":false,"error":"Momio invalido"}` con momio
+       NULL / 0 / 1, y `"Probabilidad invalida"` con prob NULL.
+     Ademas `es_senal` es explicitamente la rama sin precio (`momio_mercado IS NULL`).
+     Ninguna de las dos vive dentro de `rongol_veto`.
+     **Diff aplicado a `rongol_veto`:**
+     - `v_rango_lec`: tramos de `lecciones_aprendidas` (`1.01-1.50 / 1.50-1.80 /
+       1.80-2.20 / 2.20-3.00 / 3.00-5.00 / 5.00+`), distintos de los de
+       `rongol_hallazgos` (`<1.40 / 1.40-1.80 / 1.80-2.50 / ...`). Mezclarlos era el bug.
+     - El bucle que BLOQUEA ahora exige coincidencia real de deporte + mercado + liga
+       + tramo. Con momio NULL el tramo no casa y **no veta**.
+     - Bucle nuevo de OBSERVACION: lecciones activas sin `bloqueo_total` **con liga
+       propia** y coincidencia estricta -> `advertencia`, no veto.
+       **Las lecciones globales (liga NULL) quedan FUERA a proposito:** medido, un loop
+       generico ponia **15 de 15 `es_pick` en advertencia** (148 de 277 filas) y el
+       aviso se volvia ruido. Acotado a liga propia: 2 filas, 0 `es_pick`.
+     - `RANGO_NO_EVALUABLE` cuando no hay momio: alerta + `advertencia`, nunca veto.
+     - La respuesta ahora expone `rango_momio` y `rango_evaluable`.
+     **Lecciones 11 y 13 -> `bloqueo_total = false`, siguen `activa`.** No se creo
+     ningun veto sustituto. Unica regla con veto duro: **12 (MLB / ML / 1.50-1.80 /
+     n=42 / OOS train -37.7% -> test -44.8%)**.
+     **PRUEBAS A-J, todas PASS:**
+     | | caso | nivel | alertas |
+     |---|---|---|---|
+     | A | MLB ML 1.65 | **bloqueado** | bloqueo [MLB/1.50-1.80] |
+     | B | MLB ML 1.95 | permitido | solo fuga preexistente |
+     | C | MLB ML 2.40 | permitido | solo fuga preexistente |
+     | D | MLB ML 1.30 | permitido | **observacion** [MLB/1.01-1.50] (leccion 13) |
+     | E | MLB O/U 1.30 | permitido | **observacion** [MLB/1.01-1.50] (leccion 11) |
+     | F | soccer ML 1.65 | **ok** | ninguna |
+     | G | momio NULL | permitido | **rango_no_evaluable** |
+     | H | los `es_pick` de hoy | **0 bloqueados** (eran 13) | — |
+     | I | leccion 12 | intacta, `bloqueo_total=true` | bloquea solo su poblacion |
+     | J | EXP_OFF 0.50 · kelly md5 `f8f6f398` · candado advisory presente | sin cambios | — |
+     **REPARTO:**
+     | | veto duro | warning | libres | total |
+     |---|---|---|---|---|
+     | universo `v_pick_canonico` | **16** | 143 | 118 | 277 |
+     | `es_pick` | **0** | 13 | 2 | 15 |
+     **MATIZ IMPORTANTE: los 13 pasaron de `bloqueado` a `advertencia`, no a `ok`.**
+     El warning viene del bucle de FUGAS que ya existia (`baseball · Moneyline`,
+     n=25, 40%, -6.38 unidades), no de nada que yo agregara. `requiere_confirmacion`
+     sigue en true para ellos: la app pedira confirmar. Ya no se les quita el dinero,
+     pero quedan marcados.
+     **Sin residuos.** La exposicion de "el dos" bajo de 250.00 a 0.00 por una
+     calificacion legitima del cron: pick `7975e41c` (Volos NFC - Olympiacos, Menos de
+     2.5) marcado **ganado +$190** a las 18:07 con `AUTO_DET:live_scores`. Bankroll
+     3,908.19 -> 4,098.19. Nada que ver con las pruebas: `residuos_prueba = 0`.
+     **No se optimizo ninguna regla ni se creo bloqueo alguno desde ROI in-sample.**
+
+---
+
+## 253. ALLOCATOR: el prefijo monotono descartaba a TODOS los que venian detras del primero que no cabia
+
+**Estado: CERRADO / DESPLEGADO** — 5-sep-2026
+
+**Diagnostico (2A.59-2A.67, aceptado por el auditor).** `reto_picks_hoy` no tenia
+bucle greedy ni `break`: la admision era una suma corrida de ventana
+`sum(monto_cand) over (order by monto_cand desc, ...)`. Ese `acumulado` es
+monotono creciente por construccion, asi que en cuanto cruzaba el techo NINGUN
+candidato posterior podia entrar aunque cupiera. Efecto medido sobre snapshot:
+meseta de cero de $175 de ancho (C=$5 a C=$180) y hasta $19.80 de profit
+diagnostico perdido.
+
+**Matiz que corrige la premisa del reporte inicial:** un candidato bloqueado
+(rongol / ev_negativo / abstencion / ...) ya consumia CERO en el codigo viejo,
+porque `cand` le pone `monto_cand = 0`. El envenenamiento venia EXCLUSIVAMENTE
+de candidatos elegibles que no cabian enteros.
+
+**CONTRATO declarado: `ALLOCATOR_V1 = 0/1`.** Stake completo (Kelly + caps) o
+cero. Sin recorte parcial. Documentado en `COMMENT ON FUNCTION`.
+
+**Cambio.** Se sustituyo la ventana por una recurrencia `WITH RECURSIVE` que
+recorre los candidatos en el MISMO orden congelado y solo baja la capacidad
+cuando un candidato es EFECTIVAMENTE ADMITIDO. La funcion sigue siendo
+`LANGUAGE sql STABLE SECURITY DEFINER` (no se convirtio a PL/pgSQL).
+`exp`, `lim` y `ord` van `MATERIALIZED` para que `exposicion_viva`,
+`kelly_stake` y `rongol_veto` se evaluen UNA vez y no por paso de recursion.
+
+Nuevo motivo `no_cabe_entero` (antes todo caia en `exposicion`), con texto que
+dice el monto pedido y la capacidad restante.
+
+- md5 antes `6d7c30017252289cea521f1878a9b2fa` -> despues `eae5486a0429f65ac48bfc5c3e55b969`
+- Orden CONGELADO: `monto_cand DESC, arranca_en NULLS LAST, espn_event_id, pick_desc`
+- Sin tocar: Kelly (`f8f6f398...`), RONGOL (`35b327df...`), caps 5/15/20, EXP_OFF 0.50, V2, confidence
+
+**Comparacion sombra (snapshot 8 candidatos, sigma $841.74, stakes
+181.56/157.55/102.03/96.49/92.06/78.37/77.46/56.22):**
+
+| C | viejo stake / n | nuevo stake / n | residual viejo | residual nuevo |
+|---|---|---|---|---|
+| 35.71 | 0 / 0 | 0 / 0 | 35.71 | 35.71 |
+| 56.22 | 0 / 0 | 56.22 / 1 | 56.22 | 0.00 |
+| 100 | 0 / 0 | 96.49 / 1 | 100.00 | 3.51 |
+| 150 | 0 / 0 | 102.03 / 1 | 150.00 | 47.97 |
+| 181.56 | 181.56 / 1 | 181.56 / 1 | 0.00 | 0.00 |
+| 250 | 181.56 / 1 | 237.78 / 2 | 68.44 | 12.22 |
+| 300 | 181.56 / 1 | 283.59 / 2 | 118.44 | 16.41 |
+| 400 | 339.11 / 2 | 395.33 / 3 | 60.89 | 4.67 |
+| 500 | 441.14 / 3 | 497.36 / 4 | 58.86 | 2.64 |
+| 569.64 | 537.63 / 4 | 537.63 / 4 | 32.01 | 32.01 |
+| 700 | 629.69 / 5 | 685.91 / 6 | 70.31 | 14.09 |
+| 841.74 | 841.74 / 8 | 841.74 / 8 | 0.00 | 0.00 |
+
+R1-R7 **PASS** (R1 = 0 a C=35.71 demuestra que NO se introdujo stake fraccional).
+
+**Candidatos bloqueados consumen 0** — probado en dos escenarios, incluido uno
+ADVERSARIAL donde a los bloqueados se les puso `monto_cand > 0` a proposito
+(invariante roto a mano): la recurrencia igual los deja en 0 porque el predicado
+exige `motivo_bloqueo is null`. Doble candado.
+
+**Determinismo PASS**: 12/12 md5 identicos con el orden fisico de filas barajado.
+
+**Congruencia con `tg_limite_exposicion` PASS**: el conjunto admitido entra
+secuencialmente (431.56 -> 589.11 -> 691.14 -> 787.63, techo 819.64). Mismos
+denominadores (`exposicion_viva`), sin cambiar porcentajes.
+
+**Impacto real en produccion al desplegar:**
+- `el dos`: SIN cambio de dinero ($537.63, 4 picks). Solo cambia el motivo de 4
+  rechazados: `exposicion` -> `no_cabe_entero`.
+- `rodelcast`: **$1,437.43 (6) -> $1,551.56 (7)**. El candidato de $157.25 no
+  cabia (1437.43+157.25 > 1562.42) y antes descartaba a los 3 siguientes; ahora
+  entra el de $114.13. Capacidad ociosa $124.99 -> $10.86.
+
+**PENDIENTE, NO tocado:** el ORDER BY sigue siendo por tamano, no economico.
+Sobre este snapshot cuesta $3.14 a C=$700 (EV%-desc alcanzaria 162.10 vs 158.97).
+Eso es politica de orden y va aparte. Tampoco se toco knapsack ni el 5/15/20.
+
+**Cero residuos**: tablas de prueba 0, funciones de prueba 0 (`mlb_shadow_generar`
+es preexistente y ajena), jobs 0, dblink 0, sobrecargas de `reto_picks_hoy` = 1.
+
+---
+
+## 254. Animacion de victoria de Zeus: dos variantes segun pick sencillo o parlay
+
+**Estado: DESPLEGADO en Lovable** — 5-sep-2026. SOLO presentacion.
+
+**Lo que ya existia (y por que estaba desaprovechado).** `useWinCelebration`
+detectaba ganadas pero colapsaba todo en un texto generico ("¡GANASTE!") que
+iba a `CelebrationModal`: sin monto, sin patas y **sin distinguir pick de
+parlay**. Al mismo tiempo `ResultadoOverlay` ya tenia un modo `victoria`
+completo (confeti en canvas, monto, patas) que **nadie usaba**: la unica ruta
+viva de ese componente era el WASTED de derrota (#122).
+
+**Lo que se hizo.** Tres archivos, ni uno mas:
+
+1. **NUEVO `src/components/reto/ZeusWinOverlay.tsx`** — reutiliza el patron de
+   `ResultadoOverlay` (ModalPortal + `useRegisterOverlay` + framer-motion +
+   `prefers-reduced-motion` + confeti en canvas + auto-cierre) sin tocarlo.
+   Dos variantes:
+   - `zeus_pick_win` (MODERADA): 1 rayo, 2 ramas, 40 confeti, sin sacudida,
+     sin "VICTORY!", 2,600 ms, acento dorado `#D4A152`.
+   - `zeus_parlay_win` (EPICA): tormenta continua de 5 rayos con 5 ramas,
+     3 destellos blancos, sacudida de 9 px, onda de choque, 160 confeti,
+     **"VICTORY!"**, 4,800 ms, acento electrico `#7FD4FF`.
+2. **`src/hooks/useWinCelebration.ts`** — nuevo estado `victoria` con
+   `variante / titulo / monto / patas / legs / extras`. `CelebrationModal`
+   queda SOLO para la meta semanal (`variant: "goal"`).
+3. **`src/pages/Reto.tsx`** — monta `<ZeusWinOverlay>`; el WASTED pasa a
+   `open={derrota.open && !victoria.open}` para que nunca se encimen.
+
+**Regla de variante (medida en `legs`, no en el nombre de la tabla).**
+`legs` = `picks_data.length`. Un pick sencillo es `legs = 1`. Si entre las
+ganadas nuevas hay ALGUN parlay de `legs >= 2`, gana la epica (la de mayor
+ganancia); si no, la moderada. Un "parlay" con menos de 2 patas cae en la
+moderada a proposito: dato sucio no debe disparar la animacion grande.
+
+**Voz "Victory!": APAGADA por defecto**, en `VOZ_VICTORY.activa = false`.
+El texto en pantalla cumple el requisito. iOS bloquea audio que no nace de un
+gesto del usuario y este overlay aparece solo, asi que dejarla prendida daria
+un comportamiento distinto por navegador. Se prende cambiando una constante.
+
+**Como se ajusta despues.** TODO lo tunable vive en un solo bloque,
+`ZEUS_PRESETS`, arriba del archivo: duracion, numero de rayos y ramas,
+destellos, confeti, sacudida, brillo, grosor, onda, "VICTORY!" y acento.
+No hay constantes de animacion repartidas por el componente.
+
+**Lo que NO se toco:** grading, bankroll, `useAutoGrader`, servicios, RPC,
+`ResultadoOverlay`, `CelebrationModal` y cualquier otra pantalla. El overlay
+solo se monta en `src/pages/Reto.tsx`.
+
+**Disparo:** `resultado === "ganado"` EXACTO. No se dispara con `perdido`,
+`nulo`, `pendiente` ni `retirado`. Se conserva el guard `primed.current` que
+indexa el historico en la primera pasada sin celebrar nada.
+
+**Movil:** DPR tope 2, un solo `requestAnimationFrame` por canvas con
+`cancelAnimationFrame` al desmontar, `pointerEvents: none` en los canvas,
+sin librerias nuevas. Con `prefers-reduced-motion` no se monta ningun canvas
+ni la sacudida: solo texto y monto.
+
+**PENDIENTE:** prueba de humo en navegador. No puedo abrir `reto13.lovable.app`
+desde aqui (el proxy de salida lo bloquea con 403), asi que las dos variantes
+estan verificadas por codigo, no por vista.
+
+### 254-QA. Harness de prueba visual (andamio, se borra al cerrar #254)
+
+Frontend-only, para poder ver las variantes de Zeus sin tocar dinero.
+
+**Acceso:** `https://reto13.lovable.app/?qa=zeus` — en la RAIZ, no en `/reto`
+(`App.tsx` monta `Reto` en `<Route path="/">`; `/reto` cae en NotFound).
+Ademas exige `apodo === 'rodelcast'`. Sin el parametro, o con otro usuario,
+el panel ni se monta.
+
+**Archivos:**
+- NUEVO `src/components/reto/ZeusQaPanel.tsx` (171 lineas)
+- `src/components/reto/ZeusWinOverlay.tsx`: UNA prop opcional
+  `forzarReducedMotion?: boolean`. `undefined` = comportamiento normal.
+- `src/pages/Reto.tsx`: `useSearchParams`, `const qaZeus = ...`, y
+  `{qaZeus && <ZeusQaPanel />}`.
+
+**Candados verificados leyendo el diff aplicado:**
+- `ZeusQaPanel.tsx` importa SOLO `useState`, `ZeusWinOverlay` y
+  `ResultadoOverlay`. Cero imports de `supabase`, servicios o hooks de datos.
+- La cadena `localStorage` no aparece ni una vez en el archivo. No toca
+  `celebration_seen_win_ids_v1` ni `celebration_seen_loss_ids_v1`.
+- Todos los datos vienen de dos constantes literales (`FIX`, `DERROTA_FIX`)
+  y de tres `useState`. Nada sale de la base.
+- Reutiliza los componentes reales; no duplica ninguna animacion ni preset.
+- `useWinCelebration` NO se modifico.
+- Panel en z-index 1100, por debajo de los overlays (1200 y 1300).
+- `App.tsx` no se toco: no se creo ninguna ruta nueva.
+
+**MATIZ del boton 7:** el panel pasa `forzarReducedMotion={reducido}`, un
+booleano siempre definido. Casilla marcada = modo reducido FORZADO; casilla
+sin marcar = movimiento completo FORZADO, aunque el sistema del usuario tenga
+`prefers-reduced-motion` activado. Es lo util para QA (se prueban los dos
+lados a voluntad) pero NO es "leer el ajuste del sistema".
+
+**Lo que el harness NO puede probar** (es logica del hook, no visual):
+no repetir tras refresh, no repetir al reentrar, y que `nulo`/`retirado`/
+`perdido` jamas disparen Zeus. Eso necesita datos reales o una prueba
+unitaria de `useWinCelebration`.
+
+**Para borrarlo:** borrar `ZeusQaPanel.tsx`; quitar de `Reto.tsx` el import,
+`useSearchParams`, la linea `qaZeus` y el bloque `{qaZeus && ...}`; y quitar
+la prop `forzarReducedMotion` de `ZeusWinOverlay.tsx`.
+
+**OBSERVACION aparte (no tocada):** `ScoreNotifBridge` en `App.tsx` ya lanza
+un toast de sonner `"¡GANASTE $X!"` por realtime cuando la base marca un
+parlay como ganado. En una ganada REAL veras ESE toast **y** el overlay de
+Zeus. El harness no reproduce el toast, asi que esa duplicacion no se ve en QA.
+
+### 254-B. Faltaba lo principal: no habia Zeus, habia un rayo
+
+**Reportado por el usuario al abrir el QA:** *"no sale ZEUS, sale puro rayo"*.
+Tenia razon. La primera entrega dibujaba un bolt SVG + tormenta en canvas y lo
+llamaba "Zeus", pero no habia ninguna figura del dios en pantalla. En
+`src/assets/` solo existian `fyb_logo.png`, `logo.png` y `reto13m_icon.png`:
+nunca hubo imagen de Zeus, y en vez de decirlo se entrego el rayo como si
+cumpliera. Error de reporte, no solo de implementacion.
+
+**Corregido:** dos ilustraciones originales generadas por Lovable, PNG con
+alpha, en `src/assets/`:
+- `zeus-sereno.png` — Zeus de pie, rayo en la mano baja, sereno. Variante
+  MODERADA (`zeus_pick_win`), altura `clamp(130px, 30vw, 180px)`.
+- `zeus-furioso.png` — mismo personaje, brazo alzado lanzando el rayo, capa
+  al viento. Variante EPICA (`zeus_parlay_win`), altura
+  `clamp(190px, 44vw, 280px)`.
+
+Estilo pedido: semi-silueta con luz de borde dorada/electrica para que se lea
+sobre el overlay negro. Obra original, sin copiar God of War, Hades ni Marvel.
+
+**Cableado:** `Preset` gana dos campos, `imagen` y `alturaZeus`, dentro del
+mismo bloque `ZEUS_PRESETS`. El tamano se ajusta ahi, igual que todo lo demas.
+La tormenta y el confeti siguen corriendo detras de la figura, sin cambios.
+
+**Fallback:** `imagenFallo` con `onError` en el `<img>`. Si la imagen no carga,
+vuelve el rayo SVG de antes. Vale mas un simbolo pobre que un hueco.
+
+**Sin verificar visualmente.** No puedo abrir el navegador ni leer los PNG
+binarios: no he visto como quedaron las ilustraciones. Lo tiene que mirar el
+usuario en `/?qa=zeus`. Puntos concretos a revisar: que la figura se lea sobre
+negro y no se pierda; que el fondo transparente sea real y no un recuadro
+blanco; y que en la epica el conjunto Zeus + VICTORY + monto + patas + boton
+CERRAR quepa en movil sin tapar el boton.
+
+---
+
+## 255. Celebraciones tematicas: ZEUS gana, HADES pierde. Un solo componente, tres variantes
+
+**Estado: DESPLEGADO en Lovable** — 5-sep-2026. SOLO capa visual.
+
+**Por que se unificaron.** Antes las dos celebraciones vivian en archivos
+distintos: Zeus en `ZeusWinOverlay.tsx` y el WASTED en `ResultadoOverlay.tsx`,
+cada uno con su propia estetica y sus propias constantes. "Ajustar intensidad"
+significaba tocar dos archivos que no compartian nada. Ahora hay UN componente,
+`CelebracionOverlay.tsx`, con UN bloque `PRESETS` de tres variantes.
+
+| variante | cuando | duracion | atmosfera |
+|---|---|---|---|
+| `zeus_pick_win` | pick sencillo ganado (legs = 1) | **1,800 ms** | 1 rayo, 40 confeti, sin sacudida, eyebrow "VICTORY" |
+| `zeus_parlay_win` | parlay ganado (legs >= 2) | **3,500 ms** | 5 rayos continuos, 3 destellos, 160 confeti, sacudida 9px, onda de choque, "VICTORY!" grande |
+| `hades_loss` | apuesta perdida | **2,600 ms** | sin rayos, 90 BRASAS ascendentes, velo rojo, vinetado, fondo en gris, entrada lenta sin rebote, "WASTED" en serif rojo |
+
+Duraciones dentro de los rangos que pidio el auditor (1.5-2s / 3-4s / 2-3s).
+
+**Motor de particulas con dos modos** en el mismo canvas: `confeti` cae desde
+arriba y rota; `brasas` suben desde abajo, brillan con `shadowBlur` y se
+desvanecen con la altura. Un solo `requestAnimationFrame`, DPR tope 2.
+
+**Assets:** `zeus-sereno.png`, `zeus-furioso.png` y `hades.png`, los tres en el
+mismo estilo splash art pintado.
+
+**Lo que NO se toco:** `useWinCelebration.ts` quedo intacto. El disparo ya
+distinguia `resultado === 'ganado'` de `=== 'perdido'` exactos, ya priorizaba
+parlay sobre sencilla, y ya traia el guard `primed` contra repeticiones. Lo
+unico que cambio es a que componente va cada estado: `victoria.variante` elige
+entre las dos de Zeus, y `derrota` entra fija como `hades_loss`.
+
+Tampoco se toco grading, bankroll, Kelly, RONGOL, el allocator ni ninguna RPC.
+
+**Secuencia ganada+perdida:** se conserva `derrota.open && !victoria.open`.
+Zeus corre primero y Hades entra cuando Zeus se cierra solo. Nunca se encinan.
+Total del peor caso: 3,500 + 2,600 = 6.1 s (antes eran 8.3 s).
+
+**Archivos:** NUEVO `CelebracionOverlay.tsx`; BORRADO `ZeusWinOverlay.tsx`;
+editados `Reto.tsx` y `ZeusQaPanel.tsx`. `ResultadoOverlay.tsx` se CONSERVA en
+el repo aunque ya nadie lo importe.
+
+**QA:** el panel de `?qa=zeus` gana un boton `7 · HADES (LOSS)`; la casilla de
+reduced motion pasa a `8`.
+
+**SIN VERIFICACION VISUAL.** No puedo abrir el navegador ni leer los PNG. Ni
+las tres ilustraciones ni las tres animaciones han sido vistas por nadie
+todavia. Lo tiene que mirar el usuario en `/?qa=zeus`.
+
+**PENDIENTES que siguen abiertos y NO se tocaron aqui:**
+- A. tipo real de entidad: hoy un parlay con `picks_data` corrupto se rotula
+  "PICK GANADO". 0 casos vivos medidos.
+- B. tope de 200 ids en `SEEN_WINS_KEY`: al pasar de 200 ganadas el FIFO expulsa
+  ids viejos y las celebraciones se repiten solas. Hoy van 14 ganadas.
+- C. `ScoreNotifBridge` en `App.tsx` lanza un toast "¡GANASTE $X!" por realtime
+  ademas del overlay. Duplicacion en la ganada real; el QA no la reproduce.
+
+### 255-B. PUBLICADO. Y la causa real de "no me sale nada"
+
+**Causa raiz, verificada descargando el bundle publicado** (no supuesta):
+`reto13.lovable.app` llevaba congelado desde el PRIMER deploy de Zeus. El
+bundle servido (`index-_pOzIyqz.js`, 926 KB) contenia `zeus_parlay_win` y el
+`WASTED` viejo, pero **NO** contenia `QA ZEUS` ni el candado de `?qa=zeus` ni
+`hades_loss`. El parametro no hacia nada porque el codigo que lo lee no estaba
+ahi. Todo lo posterior vivia solo en el preview de Lovable, que responde **401**
+a quien no tenga sesion de Lovable.
+
+**Metodo:** el proxy de salida de mi entorno bloquea lovable.app, asi que la
+inspeccion se hizo con `net.http_get` desde Postgres y `position()` sobre el
+contenido, sin traerme el bundle al contexto.
+
+**Error propio:** habia recomendado abrir el preview en incognito. En incognito
+no hay sesion de Lovable y el preview devuelve 401 — mi consejo garantizaba que
+no funcionara.
+
+**Publicado** con autorizacion explicita del usuario (deployment
+`21c9a4cb-1944-4049-9ac6-25e4a7654616`). Bundle nuevo `index-VWvNJXMf.js`,
+933 KB. Verificado en el bundle publicado:
+
+| marcador | |
+|---|---|
+| `QA ZEUS` (panel) | SI |
+| `zeus_pick_win` / `zeus_parlay_win` / `hades_loss` | SI las tres |
+| candado `rodelcast` | SI |
+| boton `HADES (LOSS)` | SI |
+| assets `zeus-sereno` / `zeus-furioso` / `hades` | SI los tres |
+
+(`qa=zeus` como cadena literal da NO, y es un falso negativo de mi grep: el
+codigo minificado compara `.get("qa")==="zeus"`, nunca escribe la cadena junta.)
+
+**DEUDA NUEVA:** el harness de QA quedo en el sitio PUBLICO. Esta cerrado con
+`?qa=zeus` + `apodo === 'rodelcast'`, pero el codigo viaja. Hay que borrarlo al
+aprobar visualmente las tres variantes; los pasos exactos estan en el comentario
+de cabecera de `ZeusQaPanel.tsx`.
+
+### 255-C. Las figuras dejan de ser calcomanias: movimiento continuo, cero assets nuevos
+
+Zeus y Hades entraban y se quedaban quietos. Se les anade vida SIN un solo
+byte de assets nuevos, todo con framer-motion y el canvas que ya existia.
+
+Cinco campos nuevos en `Preset`, dentro del MISMO bloque `PRESETS`:
+
+| campo | pick | parlay | hades |
+|---|---|---|---|
+| `respiracionPct` | 2 | 2.5 | 1.5 |
+| `destelloFigura` | si | si | no |
+| `haloPulsante` | si | si | si |
+| `parallaxPx` | 0 | 5 | 0 |
+| `particulasFrente` | 0 | 0 | **30** |
+
+- **Destello**: la figura sube a `brightness(1.55)` en el momento del rayo, con
+  `times` desiguales para que el pulso no se sienta metronomo.
+- **Respiracion**: latido infinito de 2.6 s, `scale` uniforme (no deforma).
+- **Halo**: radial-gradient del color del acento, detras de la figura
+  (`zIndex 0` contra `zIndex 1`), pulsando escala y opacidad.
+- **Parallax**: en el parlay la figura se mueve al REVES que la sacudida.
+- **Brasas de frente**: segunda instancia del MISMO componente `Particulas`
+  con `cantidad` y `encima`, solo en Hades. Ahora Hades corre dos canvas.
+
+**Anidacion deliberada en 4 capas** (entrada / parallax / respiracion /
+destello). Entrada y respiracion animan las dos `scale`, y el destello y el
+`drop-shadow` animan los dos `filter`: colapsarlas en un solo `motion.div` hace
+que se pisen. Queda documentado en el codigo.
+
+Con `prefers-reduced-motion` no se monta ninguna de las cinco.
+
+**Publicado** (deployment `30ce754b-526d-4613-9040-927c2ae47071`).
+Bundle `index-CDA5pj1n.js`, 934,732 bytes. Verificado dentro del bundle
+publicado: `brightness(1.55)` presente, respiracion presente, `hades_loss`,
+`QA ZEUS`, boton `HADES (LOSS)`, y las tres figuras
+(`zeus-sereno`, `zeus-furioso`, `hades`).
+
+Sigue **sin verificacion visual**: nadie ha visto todavia como se ve.
+
+---
+
+## 256. AUDITORIA DEL HAIRCUT — PASO 1 (PROCEDENCIA). BLOQUEANTE
+
+**Solo medicion. Cero parametros cambiados. NFL sin tocar.**
+
+### Correcciones aceptadas del auditor
+1. `medido=true` significa "hay datos observados", NO "evidencia valida ni
+   transferible". Mi reporte anterior lo dio por bueno; queda corregido.
+2. `media_beta - 1.2816*sd_beta` NO es el percentil 10 exacto de una Beta. Es
+   una **aproximacion normal del limite inferior del posterior**. Se renombra a
+   **`BETA_LOWER_NORMAL_APPROX`**. Verificado: en `kelly_stake` NO existe
+   ninguna inversa de la CDF Beta; la unica formula es esa resta.
+3. Marco del auditor adoptado: la MISMA celda historica hace TRES trabajos —
+   corrige el centro de P, castiga por incertidumbre, y vuelve a castigar por
+   la misma incertidumbre.
+
+### PROCEDENCIA — la cadena completa
+
+```
+modelo_backtest  --(recalcular_zonas_confiables)-->  zonas_confiables  -->  kelly_stake
+```
+
+`recalcular_zonas_confiables` hace `DELETE FROM zonas_confiables` y reconstruye
+todo con:
+```sql
+FROM modelo_backtest WHERE muestra_min >= 8
+GROUP BY mercado, width_bucket(prob_modelo,0,1,10)
+HAVING count(*) >= 100
+```
+Agregacion **in-sample completa**. Sin train/test. Sin walk-forward.
+
+### HALLAZGO 1 — LA POBLACION ES 100% FUTBOL
+
+`modelo_backtest`: 30,876 filas (24,618 con `muestra_min>=8`), **sin columna
+`deporte`**, solo `liga_id`. Cruzando contra `ligas_master.api_sports_id`:
+
+| deporte | ligas | 
+|---|---|
+| **soccer** | **20** |
+
+**UN SOLO deporte. Cero filas de cualquier otro. Cero sin cruce.**
+(El conteo de filas del cruce sale inflado por duplicados de `api_sports_id` en
+`ligas_master`; lo que importa es que hay UN valor distinto de `deporte` y
+ningun bucket sin cruzar.)
+
+Cobertura: partidos del **10-mar-2026 al 26-ago-2026**. Mercados: Over/Under,
+Moneyline, Total Equipo, Corners, Doble Oportunidad, Tarjetas, BTTS.
+
+**Consecuencia directa:** `kelly_stake` cruza `zonas_confiables` SOLO por
+`mercado`. Los **50 picks de MLB Moneyline** de hoy reciben:
+- `v_sesgo` = una correccion de calibracion **aprendida en futbol**;
+- Beta y Wilson calculados sobre **n y prob_real de futbol**.
+
+MLB esta siendo corregido y castigado por el error de calibracion de un modelo
+de futbol. No es transferencia justificada: es la unica celda que hay.
+
+### HALLAZGO 2 — NO HAY VERSIONADO TEMPORAL
+
+`zonas_confiables` tiene 9 columnas y **ninguna fecha de corte**. `actualizado`
+tiene **UN SOLO valor distinto** en las 44 filas: `2026-09-05 13:40:00`. Es un
+snapshot unico, reescrito de golpe. No existe tabla de historico de zonas.
+
+**No se puede saber que valor de `n/prob_real/prob_dicha` existia antes de
+ningun partido historico.**
+
+### VEREDICTO DEL CANDADO ANTI-LEAKAGE
+
+Aplicar la `zonas_confiables` de hoy a picks historicos usaria celdas
+construidas con partidos POSTERIORES a esos picks. Es leakage puro.
+
+Por la regla del auditor, el backtest historico directo queda declarado:
+**`NO_IDENTIFICABLE_SIN_RECONSTRUCCION_WALK_FORWARD`**
+
+### QUE SE PUEDE Y QUE NO SE PUEDE RECONSTRUIR
+
+- **FUTBOL: SI.** `modelo_backtest` tiene `fecha` por observacion, asi que las
+  celdas se pueden reconstruir walk-forward usando solo partidos anteriores a
+  cada fecha. La ablacion A-H es ejecutable para futbol.
+- **MLB: NO.** No existe poblacion de MLB en `modelo_backtest`. Su haircut es
+  **estructuralmente inmedible** con esta fuente: no se puede reconstruir lo que
+  nunca se midio. Clasificacion preliminar para MLB:
+  **`HEURISTICA_SIN_DATOS`** (ruta `medido=true` pero con celda ajena) —
+  pendiente de confirmar contra una fuente propia de MLB como `bt_mlb_ml`.
+
+### ESTADO
+Kelly sin cambios (md5 `f8f6f398221cddd5bca929cd6644d353`). RONGOL sin cambios.
+Allocator sin cambios. Caps sin cambios. EXP_OFF = 0.50. NFL sigue `SIN_MODELO`.
+V2 sin consumidores. Cero residuos: la auditoria fue de solo lectura.
+
+### PARALELO: HARNESS DE ZEUS RETIRADO Y VERIFICADO
+Bundle publico `index-BTsRc0Fq.js` (931,509 bytes), verificado con
+`net.http_get` + `position()`:
+
+| marcador | |
+|---|---|
+| `QA ZEUS` | **NO** (retirado) |
+| `HADES (LOSS)` | **NO** (retirado) |
+| candado `rodelcast` | **NO** (retirado) |
+| `zeus_parlay_win` | SI (intacto) |
+| `hades_loss` | SI (intacto) |
+| `brightness(1.55)` (animacion) | SI (intacta) |
+| `PARLAY GANADO` (correccion A) | **SI** (desplegada) |
+
+Correccion A incluida: el tipo de apuesta ya sale del ORIGEN, no de
+`picks_data.length`. Un parlay con patas corruptas ya NO se rotula
+"PICK GANADO". Mismo arreglo en derrotas ("PARLAY PERDIDO" en vez de
+"PARLAY X0 PERDIDO"). `legs >= 2` sigue decidiendo SOLO la intensidad.
+
+---
+
+## 257. BLOQUE A (FUTBOL WALK-FORWARD) + BLOQUE C. RESULTADO: LOS DOS HAIRCUTS DANAN OOS
+
+**Solo medicion. Cero cambios. Kelly, RONGOL, allocator, caps y NFL intactos.**
+
+### Metodo
+Reconstruccion walk-forward ESTRICTA desde `modelo_backtest`, sin usar el
+snapshot actual de `zonas_confiables`. Ventana:
+`PARTITION BY mercado, tramo ORDER BY fecha RANGE BETWEEN UNBOUNDED PRECEDING
+AND CURRENT ROW EXCLUDE GROUP`. El `EXCLUDE GROUP` saca la fila actual **y todas
+las empatadas en fecha**, asi que ningun partido se ve a si mismo ni a otro del
+mismo instante. Regla de produccion respetada: `medido = (n_previo >= 100)`;
+si no, `n=30, k=round(p*30)`. n = 24,612 observaciones de futbol.
+
+### BLOQUE A — ABLACION A-H (Brier, menor es mejor)
+
+| variante | Brier | delta vs P0 | log loss | bias (real-pred) |
+|---|---|---|---|---|
+| **B_sesgo** | **0.22151** | **-0.00193** | **0.63699** | -0.0037 |
+| A_P0 | 0.22343 | 0 | 0.64335 | -0.0021 |
+| G_sesgo_wilson | 0.22406 | +0.00063 | 0.64343 | +0.0420 |
+| F_sesgo_beta | 0.22430 | +0.00086 | 0.64584 | +0.0416 |
+| D_wilson | 0.22562 | +0.00219 | 0.64850 | +0.0435 |
+| C_beta | 0.22632 | +0.00289 | 0.65338 | +0.0432 |
+| **H_PRODUCCION** | **0.23051** | **+0.00707** | 0.66242 | **+0.0806** |
+| E_beta_wilson | 0.23213 | +0.00869 | 0.66918 | +0.0821 |
+
+**La configuracion de produccion es la 7a de 8.** Solo le gana en maldad la
+que quita el sesgo y deja los dos recortes.
+
+### PRUEBAS PAREADAS (n=24,612). LAS SIETE SIGNIFICATIVAS
+
+| comparacion | delta Brier | t | IC95 | veredicto |
+|---|---|---|---|---|
+| sesgo aporta (B vs A) | **-0.001926** | **-5.51** | [-0.00261, -0.00124] | **MEJORA** |
+| solo Beta (C vs A) | +0.002885 | +8.61 | [+0.00223, +0.00354] | EMPEORA |
+| solo Wilson (D vs A) | +0.002364 | +6.94 | [+0.00170, +0.00303] | EMPEORA |
+| PRODUCCION vs cruda (H vs A) | +0.007157 | +10.25 | [+0.00579, +0.00853] | EMPEORA |
+| **marginal Wilson tras Beta (H vs F)** | **+0.006295** | **+22.39** | [+0.00574, +0.00685] | EMPEORA |
+| **marginal Beta tras Wilson (H vs G)** | **+0.006353** | **+23.12** | [+0.00581, +0.00689] | EMPEORA |
+| PRODUCCION vs solo sesgo (H vs B) | +0.009084 | +14.85 | [+0.00789, +0.01028] | EMPEORA |
+
+**Respuesta a la pregunta de redundancia:** el segundo bound no solo no aporta
+senal — DANA, y son los dos resultados con MAYOR certeza estadistica de toda la
+tabla (t = 22.4 y 23.1). Cobrar la incertidumbre dos veces es peor que cobrarla
+una, y cobrarla una es peor que no cobrarla.
+
+**El sesgo va en direccion contraria:** es el UNICO componente que mejora, y de
+forma significativa. P0 ya llega casi insesgada (-0.21 pp); produccion la deja
+en **+8.06 pp de subestimacion sistematica** (predice 43.84%, la realidad es
+51.91%).
+
+### BLOQUE C — RUTA `medido=false` (n=30, k=round(p*30))
+
+Monotonica: **0 violaciones** en la rejilla fina 0.30-0.99.
+
+| p inicial | Beta pp | factor | p final | caida abs | caida rel |
+|---|---|---|---|---|---|
+| 35% | 10.94 | 0.706 | **16.98%** | 18.02 pp | **51.5%** |
+| 50% | 11.33 | 0.769 | **29.74%** | 20.26 pp | 40.5% |
+| 65% | 10.72 | 0.830 | **45.04%** | 19.96 pp | 30.7% |
+| 80% | 9.22 | 0.874 | **61.84%** | 18.16 pp | 22.7% |
+
+**P inicial minima para conservar EV > 0:**
+
+| cuota | breakeven | P minima requerida | sobrecosto |
+|---|---|---|---|
+| 1.50 | 66.67% | **84%** | +17.3 pp |
+| 1.80 | 55.56% | **75%** | +19.4 pp |
+| 2.00 | 50.00% | **70%** | +20.0 pp |
+| 2.50 | 40.00% | **61%** | +21.0 pp |
+| 3.00 | 33.33% | **54%** | +20.7 pp |
+
+**Un mercado sin medir necesita ~20 pp por encima del breakeven para que el
+sistema autorice un solo peso.** Esto no es un filtro: es un apagado de facto.
+
+**Implicacion para NFL (informativa, NO es propuesta):** NFL no existe en
+`modelo_backtest`. Si se levantara `sin_modelo_independiente`, TODO pick de NFL
+caeria en la ruta `medido=false` y necesitaria ~70% declarado a cuota 2.00.
+La segunda puerta lo apagaria igual que la primera.
+
+### CLASIFICACION PRELIMINAR (solo futbol; MLB pendiente de Bloque B)
+
+| componente | futbol |
+|---|---|
+| `v_sesgo` (calibracion) | **SOPORTADA_OOS** |
+| `BETA_LOWER_NORMAL_APPROX` | **DANINA_OOS** |
+| Wilson (`v_factor_n`) | **DANINA_OOS** |
+| Beta + Wilson juntos | **DANINA_OOS** (peor que cualquiera solo) |
+| ruta `medido=false` | **HEURISTICA_SIN_DATOS** |
+| regla de produccion para MLB | **HEURISTICA_CROSS_DOMAIN_SIN_VALIDACION_MLB** |
+
+**NO SE RETIRA NADA.** Falta la parte economica del Bloque A, el Bloque B
+completo (MLB: transferencia soccer->MLB y MLB-native), y la decision de
+arquitectura, que es del auditor.
+
+---
+
+## #258 MLB "SIN PRECIO": la cartelera cae al respaldo porque la vista corre el modelo 25 veces
+
+**Estado:** DIAGNOSTICADO Y MEDIDO. No se despliega nada (la orden vigente es
+"solo medicion").
+
+**Sintoma reportado (captura del 5-sep):** tarjeta Philadelphia Phillies vs
+Atlanta Braves, HOY 04:05 P.M. Chip **SIN PRECIO**, los dos momios en `—`,
+`— casa`, y abajo **"Margen de la casa: —"**. Al mismo tiempo, el bloque de
+analisis de esa misma tarjeta dice: *"El modelo y el mercado no se parecen:
+11.9 puntos de diferencia"*. La tarjeta niega tener precio mientras el aviso
+de abajo esta usando ese precio.
+
+### El precio SI existe y esta fresco
+
+| dato | valor |
+|---|---|
+| `espn_event_id` | 401816813 |
+| inicio | 2026-09-05 22:05 UTC (16:05 CDMX) |
+| filas en `v_momios_confiables` | 117 |
+| ultimo snapshot | 2026-09-05 21:15:03 UTC |
+| `home_ml` / `away_ml` | 1.602 / 2.370 (DraftKings) |
+| `devig_1x2` | local 59.7% / visita 40.3%, margen 4.62% |
+| modelo (`predecir_mlb`) | PHI 47.8% |
+| brecha | \|47.8 - 59.7\| = **11.9** — exactamente el numero del aviso |
+
+`v_radar_mlb` tambien lo tiene: 25 filas, **0 sin `dec_home`**, y para este
+partido `dec_home=1.602`, `dec_away=2.370`, `total_linea=8`,
+`overround_ml=1.0462`.
+
+### Los dos lectores de la tarjeta NO leen lo mismo
+
+- **El aviso del modelo** lo pinta `PronosticoMlbModelo.tsx` con el RPC
+  `predecir_mlb`, que lee `v_momios_confiables`.
+- **El precio, el chip y el margen** los pinta `MLB.tsx` -> `desdeMlb()` ->
+  `GameCard` / `buildMlbMeta` con la fila de **`v_radar_mlb`**.
+
+`GameCard` imprime literalmente `"Margen de la casa: —"` cuando
+`margenCasa(match.odds)` es null, o sea cuando `dec_home`/`dec_away` vienen
+nulos. `ChipSinPrecio` sale cuando `hayMomio = (r.dec_home != null || r.mkt_home != null)`
+es false.
+
+### CAUSA RAIZ: `v_radar_mlb` invoca `predecir_mlb` dentro de la vista
+
+Fragmento real de `pg_get_viewdef('public.v_radar_mlb')`:
+
+```sql
+LEFT JOIN LATERAL (
+  SELECT (predecir_mlb(calc.espn_event_id) #>> '{prediccion,total_esperado}'::text[])::numeric
+         AS total_modelo
+) m2 ON true
+```
+
+Consecuencias medidas:
+
+1. **Permisos.** `predecir_mlb(text)` tiene
+   `postgres=X | service_role=X | authenticated=X`. **`anon` NO tiene EXECUTE.**
+   Los privilegios de EXECUTE de una funcion se checan contra el rol que
+   consulta, no contra el dueno de la vista, asi que la vista no lo blinda.
+
+   - `set role anon; select count(*) from v_radar_mlb;` -> **25** (no evalua el LATERAL)
+   - `set role anon; select count(carreras_esp) from v_radar_mlb;` -> **ERROR 42501: permission denied for function predecir_mlb**
+   - `GET /rest/v1/v_radar_mlb?select=*` con llave publicable **y** con la anon legacy
+     -> **HTTP 401**, cuerpo `{"code":"42501","message":"permission denied for function predecir_mlb"}`
+   - `GET /rest/v1/v_radar_mlb?select=espn_event_id,dec_home,...` (columnas sueltas)
+     -> **HTTP 200** con los precios correctos
+   - `set role authenticated; select count(dec_home), count(carreras_esp) ...` -> 25 / 25
+
+   La app llama `.select("*")`. Esa es exactamente la forma que falla.
+
+2. **Costo.** La lista corre el modelo de MLB **una vez por partido**: 25
+   llamadas a `predecir_mlb` en una sola consulta de cartelera. Medido en
+   caliente: **3.057 s**. `statement_timeout` es **3 s para `anon`** y **8 s
+   para `authenticated`**. Es decir: para `anon` ya esta por encima del techo
+   aunque tuviera permiso, y para `authenticated` va a 3 s de 8 en el mejor caso.
+
+### EL AMPLIFICADOR: `MLB.tsx` tira el error al piso
+
+```ts
+const { data } = await (supabase as any).from("v_radar_mlb").select("*");
+let rows = (data ?? []) as RadarMlb[];
+if (rows.length === 0) { /* respaldo desde live_scores */ }
+```
+
+`error` **no se lee**. Un 401 o un timeout es indistinguible de "hoy no hay
+partidos": `data` llega null, `rows.length === 0`, y entra el respaldo que
+arma la cartelera desde `live_scores` con **todos los precios en null**:
+
+```ts
+casa: null, dec_home: null, dec_away: null, total_linea: null,
+dec_over: null, dec_under: null, mkt_home: null, mkt_away: null, ...
+```
+
+Verificado: `live_scores` SI tiene el 401816813 (`Philadelphia Phillies` /
+`Atlanta Braves`, 22:05 UTC, `scheduled`) y **`anon` SI puede leerla**. Por eso
+el partido aparece — sin precio, sin linea y sin margen.
+
+**Huella que confirma que la tarjeta venia del respaldo:** la captura dice
+"Carreras esperadas: 8.99" **sin** el "vs linea 8". Ese sufijo solo se pinta si
+`lineaTotal != null`, y `total_linea` es 8 en `v_radar_mlb` y null en el
+respaldo. La tarjeta se dibujo con la fila del respaldo.
+
+El aviso del modelo sigue saliendo bien porque `PronosticoMlbModelo` monta al
+expandir la tarjeta y va por el RPC, no por la vista.
+
+**No esta probado cual de los dos disparos ocurrio en el navegador del
+usuario** — la peticion salio como `anon` (sesion aun no restaurada al montar
+el `useEffect`) o salio como `authenticated` y se paso de los 8 s. Los dos
+caminos son consecuencia del mismo defecto estructural y los dos quedan
+invisibles por el `error` descartado. Distinguirlos requiere el navegador, que
+yo no puedo correr.
+
+### La columna que rompe la pantalla no la usa la pantalla
+
+- Consumidores de `v_radar_mlb` en la base: **cero** vistas y **cero**
+  funciones.
+- En el front, `carreras_esp` esta en la interfaz `RadarMlb` y en la firma de
+  `buildMlbMeta`, pero **no se pinta en ningun lado**. `diff_total` se asigna a
+  una variable `diff` en `buildMlbMeta` que nunca se usa. `SenalBadge` y
+  `Pitcher` estan definidos en `MLB.tsx` y **no se renderizan**.
+- Las "Carreras esperadas" que ve el usuario salen del RPC, con un comentario
+  explicito en `desdeMlb`: *"Las carreras esperadas y la senal de total salen
+  del modelo (`predecir_mlb`), no de la suma cruda"*.
+
+**El LATERAL que tumba toda la cartelera de MLB alimenta una columna muerta.**
+
+### ARREGLO MINIMO PROPUESTO (NO DESPLEGADO — requiere visto bueno)
+
+1. **Sacar `predecir_mlb` de `v_radar_mlb`** (quitar el `LEFT JOIN LATERAL m2`
+   y las columnas derivadas). La cartelera vuelve a ser dato puro: sin permiso
+   de funcion, sin 25 corridas del modelo, sin techo de 3/8 s. La prediccion
+   sigue viniendo del RPC por tarjeta, que es donde ya vive.
+2. **`MLB.tsx`: dejar de descartar `error`.** Si la consulta falla, pintar
+   estado de error, no una cartelera fabricada. El respaldo de `live_scores`
+   debe entrar solo cuando de verdad no hay filas, nunca cuando hubo error.
+
+**NO se propone** `grant execute ... to anon`: dejaria a un anonimo disparar 25
+corridas del modelo por peticion y no arregla el costo.
+
+**Riesgo de no arreglarlo:** la app ensena "SIN PRECIO" y "Margen de la casa: —"
+sobre partidos que **si tienen precio**, en la misma tarjeta donde el aviso cita
+ese precio. Es la app mintiendo sobre el mercado, no una falta de dato.
+
+---
+
+## #258-B HOTFIX MLB: primera puerta cerrada, SEGUNDA PUERTA descubierta
+
+**Hecho (autorizado y aplicado):** `v_radar_mlb` ya no llama `predecir_mlb`
+directamente. Se retiro el `LEFT JOIN LATERAL m2`.
+
+**Contrato: IDENTICO.** 26 columnas, mismos nombres, mismos tipos, mismo orden.
+`position('predecir_mlb' in pg_get_viewdef(...))` = **0**.
+
+Se eligio la **opcion A** del auditor para `carreras_esp` y `diff_total`:
+quedan como `NULL::numeric` deprecadas. Se descarto sustituirlas por la formula
+L5 que ya vivia en el `COALESCE` porque **cambiaba las 25 filas**, con
+diferencia media absoluta de **1.657 carreras** y maxima de **4.35**. Eso habria
+sido meter un numero distinto bajo el mismo nombre: exactamente el defecto que
+este hotfix corrige. Ninguna de las dos columnas tiene consumidor en base ni se
+pinta en el front. Queda `COMMENT ON VIEW` con la prohibicion de reintroducirlo.
+
+**NO se concedio `EXECUTE ... TO anon` sobre `predecir_mlb`.** Verificado:
+`proacl = postgres=X | service_role=X | authenticated=X`. Sin cambios.
+
+### SEGUNDA PUERTA (hallazgo nuevo, NO tocada)
+
+Tras el arreglo, `select=*` como `anon` **sigue devolviendo 401 / 42501
+permission denied for function predecir_mlb**. Cadena medida:
+
+```
+v_radar_mlb
+  -> LEFT JOIN LATERAL m  (columnas mod_home / mod_away / mod_over)
+      -> v_pick_canonico
+          -> v_picks_mlb_modelo
+              -> predecir_mlb()
+```
+
+Comprobacion aislada como `anon`:
+- `select count(dec_home), count(overround_ml) from v_radar_mlb` -> **25 / 25 OK**
+- `select count(mod_home) from v_radar_mlb` -> **ERROR 42501**
+
+O sea: **el precio ya viaja; lo que rompe es la probabilidad del modelo.**
+
+**Costo real, peor de lo reportado antes.** `EXPLAIN ANALYZE select * from
+v_radar_mlb`: **4,279 ms** (planning 35 ms). El plan muestra que
+`v_picks_mlb_modelo` evalua un CTE sobre `agenda_espn` de **61 eventos de
+baseball**, no 25: la cartelera dispara ~61 corridas del modelo, no una por
+partido mostrado.
+
+`mod_home/mod_away/mod_over` **SI se consumen**: 29 de 29 filas los traen, y
+`desdeMlb` los mapea a `model.home/away/over`, que `GameCard` pinta como el
+"% modelo" de cada equipo y que `mejorVentaja` usa para el badge
+"Ventaja del modelo · +X% EV". Quitarlos NO es neutral: borra numero de
+pantalla en una tarjeta de dinero.
+
+**Opciones (ninguna ejecutada, todas cruzan una linea que el auditor trazo):**
+- **A.** Quitar `m` de `v_radar_mlb` -> cartelera 100% dato puro y anon-safe,
+  pero desaparecen el "% modelo" y el badge de ventaja de cada tarjeta de MLB.
+- **B.** Tocar `v_picks_mlb_modelo` / `v_pick_canonico` -> zona prohibida
+  (V2 / logica de picks / riesgo conocido de recursion 42P17).
+- **C.** Materializar la prediccion MLB en tabla + cron; la vista lee la tabla.
+  No pierde pantalla y no edita logica de picks, pero es infraestructura nueva
+  y exige politica de frescura.
+- **D.** `grant execute to anon` -> **prohibido explicitamente**.
+
+### FIX 2 (frontend) enviado a Lovable
+
+`src/pages/MLB.tsx` pasa de `data ?? []` a tres estados: exito con filas ->
+radar; exito con 0 filas -> unico caso que permite el respaldo de `live_scores`;
+error -> `ErrorCarga` reintentable y **prohibido** caer al respaldo. Las filas
+del respaldo se marcan `source = "live_scores_fallback"`. Esto mata la mentira
+"SIN PRECIO" con independencia de cual opcion se elija arriba.
+
+---
+
+## #259 BLOQUE A ECONOMICO: los bounds matan apuestas GANADORAS, y el sesgo solo sirve en Corners
+
+**Reconstruccion verificada.** Se rehizo el walk-forward estricto en la tabla de
+laboratorio `public.lab_bloque_a_wf` (24,618 filas). Brier reproducido contra lo
+ya aceptado: A 0.22362 (antes 0.22343), B 0.22169 (antes 0.22151), H 0.23067
+(antes 0.23051). Delta <= 2e-4; H sigue **7o de 8**. Orden completo:
+**B < A < F < E < D < C < H < G**.
+
+### BLOQUEO METODOLOGICO: no existe el momio historico
+
+`modelo_backtest` **no tiene columna de precio**. Cobertura medida de las 1,550
+fixtures del walk-forward:
+
+| fuente | fixtures cubiertas |
+|---|---|
+| `radar_odds_snapshots` (via puente ESPN) | 81 |
+| `fut_odds_history` (por `fixture_id`) | 82 |
+| `odds_pro_snapshots` (por `fixture_id`) | 36 |
+| `futbol_5ligas_2526` (cierre, via puente ESPN) | **0** |
+
+Maximo **5.3%**, y concentrado en el tramo reciente (la ingesta de momios es
+nueva): usarlo seria sesgo de seleccion puro. **A-ECO-1/2/6 tal como estan
+escritos NO son computables con dato real.** Se sustituyo por un barrido de
+6 precios sinteticos, y se reporta lo que ese barrido SI puede decir.
+
+**Ademas, el ROI del barrido no informa nada.** Con precio plano fijo `q`,
+`ROI = hit x q - 1`: es una reescala monotona del hit rate. Los ROI de +117%
+a cuota 4.00 son artefacto del precio inventado, no economia. Se descartan.
+
+### ESTRUCTURA DE LA MUESTRA (hallazgo que cambia la lectura)
+
+`modelo_backtest` **no es un registro de apuestas: es una rejilla de resultados
+enumerados**. Filas por fixture y aciertos por fixture, exactos:
+
+| mercado | filas/fixture | aciertos/fixture |
+|---|---|---|
+| Moneyline | 3.000 | **1.000** |
+| Corners | 8.000 | **4.000** |
+| Tarjetas | 6.000 | **3.000** |
+| Total Equipo | 3.000 | 1.872 |
+| Over/Under | 5.000 | 2.723 |
+| Doble Oportunidad | 2.000 | 1.241 |
+| BTTS | 1.000 | 0.511 |
+
+Es la poblacion correcta para medir CALIBRACION. No es una poblacion de
+apuestas tomadas.
+
+### A-ECO-1 — cuantos mata cada bound (barrido de precio)
+
+Filas con EV>0 sobre 24,618. `pos->neg` respecto de A:
+
+| cuota | A | B | E (=B+Beta) | H (produccion) | mata Beta (B->E) | mata Wilson (E->H) |
+|---|---|---|---|---|---|---|
+| 1.50 | 7,115 | 6,435 | 4,931 | 3,866 | 1,504 | 1,065 |
+| 1.80 | 11,062 | 10,981 | 8,891 | 7,406 | 2,090 | 1,485 |
+| 2.00 | 13,208 | 13,593 | 11,407 | 9,392 | 2,186 | 2,015 |
+| 2.50 | 17,260 | 17,785 | 15,884 | 13,856 | 1,901 | 2,028 |
+| 3.00 | 19,377 | 19,650 | 18,098 | 16,645 | 1,552 | 1,453 |
+| 4.00 | 22,435 | 22,739 | 21,023 | 19,509 | 1,716 | 1,514 |
+
+H mata entre **2,569 y 4,186** candidatos respecto de B segun el precio.
+
+### A-ECO-3 — LA PREGUNTA CENTRAL: los que matan, ¿eran peores?
+
+Grupos formados sobre B (mejor variante probabilistica). `gap` = hit real - P
+previa de B.
+
+| cuota | grupo | N | P previa B | hit real | gap | Brier previo | breakeven |
+|---|---|---|---|---|---|---|---|
+| 1.80 | SURVIVE_BETA | 8,891 | 72.34% | 70.24% | -2.11 | 0.20637 | 55.56% |
+| 1.80 | **KILLED_BY_BETA** | 2,090 | 58.63% | **57.51%** | -1.12 | 0.24428 | **55.56%** |
+| 1.80 | **KILLED_BY_WILSON** | 1,485 | 64.71% | **63.64%** | -1.07 | 0.22973 | **55.56%** |
+| 2.00 | SURVIVE_BETA | 11,407 | 69.05% | 67.17% | -1.88 | 0.21494 | 50.00% |
+| 2.00 | **KILLED_BY_BETA** | 2,186 | 53.14% | **54.03%** | **+0.89** | 0.24905 | **50.00%** |
+| 2.00 | **KILLED_BY_WILSON** | 2,015 | 58.87% | **57.42%** | -1.45 | 0.24377 | **50.00%** |
+| 2.50 | SURVIVE_BETA | 15,884 | 63.61% | 62.23% | -1.38 | 0.22447 | 40.00% |
+| 2.50 | **KILLED_BY_BETA** | 1,901 | 43.81% | **44.50%** | **+0.70** | 0.24588 | **40.00%** |
+| 2.50 | **KILLED_BY_WILSON** | 2,028 | 49.07% | **48.37%** | -0.70 | 0.24735 | **40.00%** |
+
+**En los 6 grupos eliminados, el hit real queda POR ENCIMA del breakeven del
+precio al que se eliminaron.** Beta y Wilson no estan cortando apuestas
+perdedoras: estan cortando apuestas ganadoras.
+
+Peor: a cuotas 2.00 y 2.50, el grupo que Beta mata tiene gap **POSITIVO**
+(+0.89 y +0.70: el modelo los SUBESTIMABA) mientras el grupo que sobrevive
+tiene gap negativo (-1.88 y -1.38: los SOBREESTIMABA). **Beta aplica su
+correccion a la baja justo donde el modelo ya iba corto, y conserva el segmento
+donde va largo.** Va al reves.
+
+Es cierto que el grupo eliminado tiene peor Brier previo (0.249 vs 0.215): son
+predicciones de menor calidad. Pero "menor calidad" no es "expectativa
+negativa": a los precios probados siguen por encima del breakeven.
+
+### A-ECO-5 — POR MERCADO: el sesgo global es un espejismo de Corners
+
+Delta de Brier x1000, negativo = mejora. t pareado.
+
+| mercado | N | sesgo x1000 | t | Beta x1000 | t | Wilson x1000 | t |
+|---|---|---|---|---|---|---|---|
+| Over/Under | 6,775 | **+0.495** | +1.68 | +1.944 | +3.91 | +4.790 | +11.12 |
+| Moneyline | 4,065 | -0.250 | -0.93 | +2.102 | +3.19 | +4.362 | +8.38 |
+| Total Equipo | 4,065 | **+0.361** | +1.14 | +2.288 | +3.05 | +6.336 | +9.58 |
+| **Corners** | 3,272 | **-15.810** | **-6.95** | +3.872 | +3.39 | +6.642 | +7.03 |
+| Doble Oportunidad | 2,710 | -0.309 | -0.82 | +2.477 | +2.54 | +7.025 | +7.98 |
+| Tarjetas | 2,376 | **+1.124** | +1.41 | +4.678 | +3.32 | +8.716 | +7.49 |
+| BTTS | 1,355 | -0.975 | -0.52 | +5.172 | +2.52 | +11.183 | +6.68 |
+| **TOTAL** | 24,618 | -1.926 | -5.51 | +2.783 | +8.33 | +6.198 | +21.94 |
+
+**Corners aporta -15.810 x 3272/24618 = -2.10 x1000, mas que TODA la mejora
+global (-1.926).** Sin Corners, `v_sesgo` no mejora nada; en los tres mercados
+de mayor volumen el efecto es de +-0.5 x1000 y en dos de tres va en contra.
+
+**Confundidor a vigilar:** Corners es justo la rejilla simetrica perfecta
+(8 filas / 4 aciertos exactos por fixture, prob media 0.5000, bias 0.00). La
+ganancia del sesgo ahi puede ser artefacto de la complementariedad determinista
+de la rejilla, no habilidad transferible. **NO se declara SOPORTADA_OOS.**
+
+Beta y Wilson: **empeoran en los 7 mercados, sin excepcion**, con t entre
++2.52 y +11.18.
+
+Sesgo de produccion H por mercado: **+6.29 a +11.68 pp** de subestimacion
+sistematica. En todos.
+
+### CLASIFICACION POR MERCADO
+
+| mercado | v_sesgo | Beta | Wilson |
+|---|---|---|---|
+| Over/Under | NO_APORTA_OOS | DANINA_OOS | DANINA_OOS |
+| Moneyline | NO_APORTA_OOS | DANINA_OOS | DANINA_OOS |
+| Total Equipo | NO_APORTA_OOS | DANINA_OOS | DANINA_OOS |
+| Corners | SOPORTADA_OOS_CON_CONFUNDIDOR_DE_REJILLA | DANINA_OOS | DANINA_OOS |
+| Doble Oportunidad | INCONCLUSO_MUESTRA | DANINA_OOS | DANINA_OOS |
+| Tarjetas | NO_APORTA_OOS | DANINA_OOS | DANINA_OOS |
+| BTTS | INCONCLUSO_MUESTRA | DANINA_OOS | DANINA_OOS |
+
+`v_sesgo` global baja de `SOPORTADA_OOS_GLOBAL_SOCCER_PROVISIONAL` a
+**`NO_SOPORTADA_FUERA_DE_CORNERS`**.
+
+### RESPUESTA A LAS DOS PREGUNTAS DEL BLOQUE A
+
+1. **¿Beta o Wilson mejoran la seleccion economica OOS aunque empeoren la
+   probabilidad?** **NO.** A los 3 precios probados, todo grupo que eliminan
+   tiene hit real por encima del breakeven. Empeoran probabilidad Y seleccion.
+
+2. **¿Su efecto parece calibracion o politica de abstencion/riesgo?** **Ninguna
+   de las dos.** Como calibracion van al reves del signo del error (corrigen a
+   la baja donde el modelo ya subestima). Como abstencion serian defendibles si
+   recortaran cola perdedora, y no lo hacen: recortan por encima del breakeven.
+   Lo que hacen es **reducir volumen de forma no informativa**.
+
+**Conclusion: caso A del auditor** — empeoran probabilidad y economia. Beta y
+Wilson son candidatos fuertes a salir de V2. **NO SE TOCA PRODUCCION.**
+
+### LO QUE FALTA Y POR QUE
+
+- **A-ECO-2 y A-ECO-6 (Kelly) quedan ABIERTOS por falta de precio historico.**
+  No se simulan con precio inventado.
+- **A-ECO-4** queda cubierto parcialmente (mercado + tramo de probabilidad via
+  las celdas + precio via el barrido). Falta estratificar por `n` de celda.
+- **Desbloqueo propuesto:** empezar a persistir el momio del mercado junto a
+  cada fila de backtest desde hoy, para que dentro de N semanas exista una
+  poblacion con precio real. Sin eso, la pregunta economica es estructuralmente
+  incontestable, no dificil.
+
+---
+
+## #258 CERRADO: la cartelera de MLB ya no ejecuta el modelo. 4,279 ms -> 2.4 ms
+
+Opcion **C autorizada por el auditor**: materializar. Implementada y verificada.
+
+### Lo construido
+
+**`public.mlb_modelo_snapshot`** (`espn_event_id` PK, `mod_home`, `mod_away`,
+`mod_over`, `actualizado`). SELECT concedido a `anon` y `authenticated`.
+
+**`public.refrescar_mlb_modelo_snapshot()`** — `SECURITY DEFINER`,
+`search_path = public`. Reproduce **letra por letra** el `LEFT JOIN LATERAL` que
+vivia dentro de `v_radar_mlb` sobre `v_pick_canonico` (los tres `max(case ...)`
+con `sin_acentos` y `~* '^(over|mas de)'`). Ventana -12h/+48h, mas ancha que la
+de la vista (-6h/+36h), para que la vista nunca dependa del borde del cron.
+`ON CONFLICT DO UPDATE` + purga a 7 dias.
+
+**Cron `mlb-modelo-snapshot`**, jobid **413**, `3,13,23,33,43,53 * * * *`.
+Minuto desplazado a proposito: hay **225 jobs activos** y el minuto :00 ya esta
+saturado (#88). Frescura: **10 minutos**. El costo del modelo se paga ahi, una
+vez, fuera de la peticion del usuario.
+
+### Identidad de valor: 29 de 29, cero diferencias
+
+Se tomo foto de `mod_home/mod_away/mod_over` ANTES del cambio, se materializo y
+se comparo:
+
+| comparacion | resultado |
+|---|---|
+| eventos comparados | 29 |
+| difieren en `mod_home` | **0** |
+| difieren en `mod_away` | **0** |
+| difieren en `mod_over` | **0** |
+| sin fila en el snapshot | **0** |
+| filas de la vista que cambiaron | **0** |
+
+**No se movio ni un numero.** Es la misma expresion, calculada antes en vez de
+durante la peticion.
+
+### Contrato de la vista: identico
+
+26 columnas, mismos nombres, mismos tipos, mismo orden, antes y despues.
+`position('predecir_mlb' in viewdef)` = **0**.
+`position('v_pick_canonico' in viewdef)` = **0**.
+`carreras_esp` y `diff_total` siguen deprecadas como `NULL::numeric`.
+
+### T1-T8
+
+| prueba | resultado |
+|---|---|
+| **T1 anon `select=*`** | **PASA — HTTP 200**, 17,330 bytes, momios presentes. Antes: 401 / 42501 |
+| **T2 authenticated** | PASA a nivel SQL (29/29 con precio y modelo). No pude firmar un JWT de usuario: PostgREST-como-authenticated no se probo de punta a punta |
+| **T3 partido 401816813** | **PASA** — `dec_home 1.602`, `dec_away 2.370`, `overround_ml 1.0462` (margen **4.62%**), `mod_home 47.8`, `mod_away 52.2`, `total_linea 8` |
+| **T4 RPC del modelo** | **PASA** — `predecir_mlb('401816813')` sigue dando PHI **47.8%**, aviso nivel `alto`, **"11.9 puntos de diferencia"**. El aviso sigue viniendo del RPC, no de la vista |
+| **T5 error forzado** | Verificado **solo por lectura de diff**: `if (error) { console.error; setErrorRadar(true); setRows([]); return; }` corta antes del respaldo. No puedo correr navegador |
+| **T6 vacio real** | Igual: el respaldo solo se alcanza con `error` nulo y `data` vacio. Sin navegador |
+| **T7 performance** | **4,279 ms -> 2.422 ms** (planning 3.5 ms). Plan nuevo: dos Index Scan y nada mas. **Llamadas a `predecir_mlb` para cargar el radar: ~61 -> 0** |
+| **T8 UI** | Pendiente de publicar Lovable + navegador. El dato ya viaja: la tarjeta tiene con que NO decir "SIN PRECIO" |
+
+### Cierre
+
+1. **Causa raiz:** dos puertas al modelo dentro de la cartelera. La directa
+   (`predecir_mlb` para `total_esperado`) y la indirecta
+   (`v_pick_canonico -> v_picks_mlb_modelo -> predecir_mlb` para `mod_*`). Las
+   dos exigian `EXECUTE` que `anon` no tiene -> 401 -> el front lo confundia con
+   cartelera vacia -> respaldo sin momios -> "SIN PRECIO" sobre partidos con
+   precio.
+2. **Diff:** retiradas ambas laterales; `mod_*` ahora por `LEFT JOIN` a
+   `mlb_modelo_snapshot`.
+3. **Contrato:** identico.
+4. **T1-T8:** arriba.
+5. **Latencia:** 4,279 ms -> 2.422 ms.
+6. **NO se concedio `EXECUTE ... TO anon`** sobre `predecir_mlb`. `proacl`
+   intacto: `postgres=X | service_role=X | authenticated=X`.
+7. **Cero cambios cuantitativos:** 0 de 29 filas cambiaron de valor. Modelo MLB,
+   formula de probabilidades, Kelly, calibracion/haircut, RONGOL, allocator,
+   caps, NFL, V2 y EXP_OFF sin tocar.
+8. **Cero residuos:** `lab_mod_baseline` borrada. Queda `lab_bloque_a_wf`, tabla
+   de laboratorio documentada como borrable, sin lectores.
+
+**Riesgo residual asumido:** si el cron se cae, `mod_*` envejece hasta 10 min
+(o mas). Antes ese numero era siempre fresco pero la pantalla completa se caia.
+Se cambio frescura por disponibilidad, a proposito.
+
+---
+
+## #258 DEPLOY VERIFICADO EN EL DOMINIO PUBLICADO
+
+`deploy_project` ejecutado. Bundle principal **`index-BTsRc0Fq.js` ->
+`index-Ti1wAbJw.js`**. La pantalla de MLB va en chunk aparte (por eso la primera
+inspeccion del bundle principal no encontraba ni `v_radar_mlb`): chunk
+**`MLB-Ce2w7PKQ.js` -> `MLB-BlYR6T7Z.js`**.
+
+Marcadores de FIX 2 dentro de `MLB-BlYR6T7Z.js` (11,245 bytes):
+
+| marcador | posicion |
+|---|---|
+| `v_radar_mlb` (la consulta) | 6,230 |
+| `fallo al leer v_radar_mlb` (guard de error) | 6,283 |
+| `live_scores_fallback` (respaldo marcado) | 7,173 |
+| `No pudimos cargar los datos completos de MLB` | 8,565 |
+
+El orden de las posiciones confirma la estructura pedida: consulta -> guard de
+error -> respaldo -> render del error. En el bundle ANTERIOR los cuatro estaban
+en 0 salvo `v_radar_mlb`.
+
+**Cron vivo:** jobid 413, corrida `succeeded` 22:03:00 -> 22:03:05 (**5.3 s**),
+29 filas, edad del snapshot **4.1 min** al momento de medir.
+
+### Lo que NO puedo verificar y por que
+
+Los pasos 1, 2, 4 y 5 de la verificacion visual del auditor **requieren
+navegador**, que este entorno no tiene (el proxy bloquea `reto13.lovable.app`
+con 403; solo puedo leer el bundle via `net.http_get` desde Postgres). Lo que si
+quedo probado sin navegador: el dato que alimenta esos pasos (T3 por PostgREST)
+y que el codigo que los implementa esta en el bundle publicado.
+
+**Checklist para el auditor** (recargar con la app cerrada primero: hay service
+worker y puede servir bundle viejo):
+1. abrir MLB;
+2. el juego con odds reales NO debe decir "SIN PRECIO";
+3. PHI/ATL debe mostrar **1.602 / 2.370** y **margen 4.62%**;
+4. expandir el modelo: debe seguir el aviso de **11.9 puntos**;
+5. no hay forma limpia de forzar el error desde la UI; si aparece, debe salir
+   "No pudimos cargar los datos completos de MLB. Reintentar." y **nunca** una
+   cartelera con momios en guion.
+
+---
+
+## #259-B A-ECO-4 CERRADO: los bounds no filtran por calidad, filtran por TAMANO DE MUESTRA
+
+Estratificacion pedida por el auditor para descartar que "Beta protege" sea un
+artefacto de un mercado, un tramo o una cuota. Umbral cuota 2.00 (breakeven 50%).
+
+### Por mercado: 14 de 14 grupos eliminados quedan POR ENCIMA del breakeven
+
+| mercado | base B | mata Beta | hit | mata Wilson | hit | sobrevive H |
+|---|---|---|---|---|---|---|
+| Over/Under | 4,066 | 184 | **54.35%** | 311 | **59.49%** | 69.45% |
+| Total Equipo | 3,112 | 347 | **53.03%** | 181 | **63.54%** | 72.37% |
+| Doble Oportunidad | 2,371 | 362 | **54.70%** | 370 | **54.05%** | 69.98% |
+| Corners | 1,638 | 539 | **52.50%** | 454 | **57.27%** | 60.62% |
+| Tarjetas | 1,188 | 184 | **55.98%** | 291 | **59.45%** | 68.30% |
+| BTTS | 882 | 289 | **51.56%** | 356 | **53.09%** | 54.43% |
+| Moneyline | 336 | 281 | **58.36%** | 52 | **67.31%** | **33.33%** |
+
+No es un mercado: es todos. El confundidor que el auditor pidio descartar queda
+descartado.
+
+**Moneyline es el caso extremo.** De 336 candidatos de B, produccion H deja
+**3** (mata 281 con Beta y 52 mas con Wilson). Y esos 3 aciertan 1 (33.33%),
+peor que el 58.36% que Beta elimino. Con n=3 eso es ruido y **no se afirma como
+resultado**, pero el numero que si es solido es el otro: **H aniquila el 99% del
+mercado de Moneyline**.
+
+### Por tamano de celda: ahi esta el mecanismo
+
+| banda n | filas | base B | mata Beta | hit matados | mata Wilson | hit matados | sobrevive H |
+|---|---|---|---|---|---|---|---|
+| **n >= 1000** | 2,182 | 1,066 | **19** | 31.58% | 34 | 58.82% | 1,013 |
+| n 500-999 | 5,749 | 3,388 | 202 | 56.44% | 195 | 49.23% | 2,991 |
+| n 200-499 | 7,672 | 4,381 | 582 | 52.92% | 707 | 54.03% | 3,092 |
+| n 100-199 | 4,222 | 2,293 | **621** | 54.59% | 487 | 59.96% | 1,185 |
+| **sin medir (n=30)** | 4,793 | 2,465 | **762** | 54.33% | 592 | 61.99% | 1,111 |
+
+**Donde hay evidencia abundante (n >= 1000), Beta mata 19 de 1,066: el 1.8%.**
+Y esos 19 si estan por debajo del breakeven (31.58%, aunque con n=19 es ruido).
+**Donde la celda es delgada o no existe, Beta mata entre el 27% y el 31%**, y
+esos si estan por encima del breakeven.
+
+**Conclusion mecanica:** el recorte no discrimina apuestas buenas de malas.
+Discrimina celdas grandes de celdas chicas — que es exactamente lo que hace una
+penalizacion proporcional a 1/sqrt(n). **Beta y Wilson son un castigo por falta
+de muestra disfrazado de probabilidad.**
+
+Esto es la evidencia directa para la arquitectura que planteo el auditor: el
+tamano de muestra es informacion de **CONFIANZA**, y su lugar natural es el
+stake / risk_multiplier, no `P_FAIR`. Hoy vive dentro de P, donde decide si la
+apuesta existe, y ahi hace dano medible.
+
+**NO SE TOCA PRODUCCION.** Sigue siendo solo medicion.
+
+---
+
+## #260 FASE A CERRADA — soccer, economia OOS completa
+
+Todo sobre el mismo walk-forward estricto (`lab_bloque_a_wf`, n=24,618, futbol).
+**Cero cambios en produccion.**
+
+### PRINCIPIO 0 — expected vs actual wins, con desviacion Bernoulli no identica
+
+`z = (Sum y - Sum P) / sqrt(Sum P(1-P))` (Poisson-binomial).
+
+| mercado | n | z de A (P0) | z de B (sesgo) | z de E (+Beta) | z de H (produccion) | wins que H NO predice |
+|---|---|---|---|---|---|---|
+| Over/Under | 6,775 | **-0.63** | -0.44 | +6.21 | **+12.09** | **453.0** |
+| Moneyline | 4,065 | 0.00 * | -0.06 | +4.89 | **+9.20** | 255.7 |
+| Total Equipo | 4,065 | **-0.88** | -1.53 | +4.36 | **+9.63** | 283.9 |
+| Corners | 3,272 | 0.00 * | +0.01 | +7.11 | **+13.23** | 347.6 |
+| Doble Oportunidad | 2,710 | **-0.83** | -0.49 | +4.28 | **+8.61** | 217.4 |
+| Tarjetas | 2,376 | 0.00 * | 0.00 * | +6.95 | **+12.81** | 277.6 |
+| BTTS | 1,355 | **+1.05** | -0.94 | +4.15 | **+8.55** | 149.7 |
+
+`*` **CAVEAT ESTRUCTURAL:** en Moneyline (3 filas/fixture que suman 1), Corners
+(8 filas = 4 pares complementarios) y Tarjetas (6 filas = 3 pares), `Sum P = Sum y`
+por construccion de la rejilla. Ese `z = 0.00` **no es evidencia de
+calibracion**, es aritmetica. Los z informativos son Over/Under, Total Equipo,
+Doble Oportunidad y BTTS — y ahi **P0 esta insesgado** (|z| <= 1.05).
+
+**El titular:** produccion (H) deja de predecir **~1,785 victorias** en 24,618
+observaciones, con z entre **+8.55 y +13.23 en los 7 mercados**. Eso no es
+prudencia: es una probabilidad mal especificada. En el lenguaje del Principio 0,
+produccion es el caso "esperaba 5.7 de 10 y ganaron 6" **al reves**: dice 4.4 y
+ganan 6.
+
+### Log loss (misma direccion que Brier, sin excepcion)
+
+| mercado | A | B | E | H |
+|---|---|---|---|---|
+| Over/Under | **0.60840** | 0.60957 | 0.61440 | 0.62654 |
+| Moneyline | 0.60800 | **0.60748** | 0.61211 | 0.62326 |
+| Total Equipo | **0.60738** | 0.60827 | 0.61355 | 0.62840 |
+| Corners | 0.76738 | **0.71628** | 0.73473 | 0.75760 |
+| Doble Oportunidad | 0.63617 | **0.63557** | 0.64106 | 0.65612 |
+| Tarjetas | **0.68009** | 0.68245 | 0.70330 | 0.72955 |
+| BTTS | 0.70004 | **0.69799** | 0.71048 | 0.73930 |
+
+H es el peor en los 7. Brier y log loss coinciden en todo.
+
+### Pendiente e intercepto de calibracion lineal (de P0)
+
+| mercado | pendiente | intercepto | lectura |
+|---|---|---|---|
+| Doble Oportunidad | **1.359** | -0.233 | sub-dispersa: la realidad varia MAS que el modelo |
+| Moneyline | **1.295** | -0.098 | sub-dispersa |
+| Over/Under | **1.061** | -0.037 | **bien especificada** |
+| Total Equipo | **1.016** | -0.017 | **bien especificada** |
+| Tarjetas | 0.668 | 0.166 | sobre-dispersa |
+| BTTS | 0.371 | 0.326 | muy sobre-dispersa: casi todo es ruido |
+| Corners | **0.347** | 0.327 | muy sobre-dispersa: casi todo es ruido |
+
+Esto es informacion de SKILL por mercado, no de calibracion media, y es nueva.
+Over/Under y Total Equipo tienen pendiente ~1: el modelo discrimina de verdad.
+Corners y BTTS con pendiente ~0.35: el ancho de sus predicciones es
+mayoritariamente ruido.
+
+### Estratificacion por TRAMO DE P (lo que faltaba)
+
+Umbral cuota 2.00. Sobre la base de B:
+
+| banda de P_B | base B | mata Beta | % de la banda | hit de los matados | P declarada | mata Wilson | hit |
+|---|---|---|---|---|---|---|---|
+| **50-60%** | 4,536 | **2,124** | **46.8%** | **54.19%** | 52.92% | 1,376 | **55.31%** |
+| 60-70% | 3,800 | 62 | 1.6% | 48.39% | 60.53% | 600 | 61.17% |
+| 70-80% | 3,742 | **0** | 0% | — | — | 39 | 74.36% |
+| 80-90% | 1,322 | **0** | 0% | — | — | 0 | — |
+| 90-100% | 193 | **0** | 0% | — | — | 0 | — |
+
+**Beta mata el 46.8% de la banda 50-60% y CERO por encima del 70%.** En la banda
+que arrasa, los eliminados aciertan **54.19%** contra una P declarada de 52.92%
+(el modelo los SUBESTIMABA) y contra un breakeven de 50%.
+
+Los unicos que Beta acierta en matar son 62 filas de la banda 60-70%
+(aciertan 48.39% contra 60.53% declarado): reales fallos, pero encuentra 62 de
+24,618.
+
+**Y donde SI hay un problema real de calibracion, el filtro esta inerte:** banda
+90-100%, 193 filas, aciertan **73.06%** contra una P declarada de 90%+. Beta
+mata 0. Wilson mata 0.
+
+### MECANISMO (juntando las tres estratificaciones)
+
+El recorte es una funcion de **(n chico, P cerca del breakeven)**, no de calidad:
+
+- por `n`: con `n >= 1000` mata 19 de 1,066 (**1.8%**); con celda delgada o
+  inexistente mata **27-31%**;
+- por tramo de P: mata **46.8%** de 50-60% y **0%** por encima de 70%;
+- por mercado: mata en los 7, y en los 14 grupos eliminados el hit real queda
+  por encima del breakeven.
+
+Es exactamente el perfil de una penalizacion proporcional a `1/sqrt(n)` aplicada
+sobre `p`. **Beta y Wilson son un castigo por falta de muestra disfrazado de
+probabilidad.**
+
+### CLASIFICACION FINAL POR MERCADO — `v_sesgo`
+
+| mercado | n | delta Brier x1000 | t | clasificacion |
+|---|---|---|---|---|
+| Corners | 3,272 | **-15.810** | **-6.95** | **SOPORTADA_OOS** (con reserva, ver abajo) |
+| Moneyline | 4,065 | -0.250 | -0.93 | **NO_APORTA_OOS** |
+| Doble Oportunidad | 2,710 | -0.309 | -0.82 | **NO_APORTA_OOS** |
+| Over/Under | 6,775 | +0.495 | +1.68 | **NO_APORTA_OOS** (tendencia a danina) |
+| Total Equipo | 4,065 | +0.361 | +1.14 | **NO_APORTA_OOS** |
+| Tarjetas | 2,376 | +1.124 | +1.41 | **NO_APORTA_OOS** |
+| BTTS | 1,355 | -0.975 | -0.52 | **INCONCLUSA** (menor n, |t| menor) |
+
+**Reserva sobre Corners:** es el mercado de rejilla perfectamente simetrica
+(8 filas = 4 pares complementarios, `Sum P = Sum y` exacto) y el de pendiente de
+calibracion mas baja (0.347). La correccion de media rinde ahi justo porque casi
+todo es ruido. **Soportada en esta poblacion; transferibilidad NO probada.**
+
+**Global:** `v_sesgo` **NO es `SOPORTADA_OOS_GLOBAL`**. La mejora agregada
+(-1.926 x1000) es menor que la aportacion de Corners solo
+(-15.810 x 3272/24618 = **-2.10 x1000**). Sin Corners, el sesgo no aporta.
+
+### CLASIFICACION FINAL — Beta y Wilson
+
+**DANINA_OOS en los 7 mercados**, sin una sola excepcion, por Brier (t entre
++2.52 y +11.18), por log loss y por el z del Principio 0.
+
+### RESPUESTA A LA PREGUNTA ECONOMICA
+
+**¿Beta o Wilson mejoran la seleccion economica OOS aunque empeoren la
+probabilidad?** **NO.**
+
+- 14 de 14 grupos eliminados por mercado quedan por encima del breakeven;
+- 6 de 6 grupos eliminados a cuotas 1.80 / 2.00 / 2.50 quedan por encima;
+- en la banda que arrasan (50-60%), los eliminados aciertan mas de lo que su
+  propia P decia;
+- estan inertes en la banda 90-100%, que es donde si hay error real.
+
+**Caso A del auditor: empeoran probabilidad Y economia.**
+
+### LIMITE QUE SIGUE ABIERTO
+
+**No existe momio historico** para esta poblacion (cobertura maxima 5.3%,
+sesgada al tramo reciente). Por eso el ROI unit-stake se reporta como barrido de
+precio sintetico y **no como economia**: con precio plano `ROI = hit x q - 1`,
+una reescala monotona del hit rate. **A-ECO-2 y A-ECO-6 (Kelly) siguen
+formalmente abiertos** y solo se cierran empezando a persistir el precio del
+mercado junto a cada fila de backtest desde hoy.
+
+**FASE A COMPLETA. No se avanza a FASE B sin autorizacion.**
+
+---
+
+## #261 FASE B — MLB: ninguna calibracion mejora P_RAW, ni la de futbol ni la propia
+
+Laboratorio `public.lab_bloque_b_mlb`. **Cero cambios en produccion.**
+
+### Poblacion (verificada antes de medir)
+
+`bt_mlb_ml`: **1,056 filas, 1,056 eventos distintos** (una observacion por juego,
+lado local), **2026-05-20 a 2026-08-30**, 93 dias. **0 sin resultado, 0 sin
+probabilidad, 0 resultados fuera de {0,1}.** `prob_cruda` en PORCENTAJE, rango
+37.62-65.40, media 52.304. Tasa real de victoria local **51.894%**.
+
+**No hay seleccion de picks**: es el universo de juegos, no un subconjunto
+elegido. **No hay columna de momio** -> igual que en soccer, la parte economica
+(EV crossings, ROI, survivors/killed, IC95) **NO es computable**. No se fabrica.
+
+### Cobertura de celdas (descriptivo, sin cambiar el minimo n>=100)
+
+| tramo | banda | n MLB | con celda SOCCER | n medio | con celda MLB | n medio | P media | real |
+|---|---|---|---|---|---|---|---|---|
+| 4 | 30-40% | 3 | 3 | 557 | 0 | — | 38.29% | 0.00% |
+| 5 | 40-50% | 321 | 321 | 618 | 221 | 210 | 47.21% | 47.66% |
+| 6 | 50-60% | 680 | 374 | 157 | 580 | 389 | 54.03% | 53.24% |
+| 7 | 60-70% | 52 | **0** | — | **0** | — | 61.97% | 63.46% |
+
+El modelo MLB vive casi entero en dos bandas (5 y 6 = **94.8%**). La banda 7
+(52 juegos) **no tiene celda en ninguna de las dos familias**. Cobertura total:
+soccer 698/1056 (66.1%), MLB-native 801/1056 (75.9%).
+
+### B1 — EXPERIMENTO_CROSS_DOMAIN_SOCCER_TO_MLB
+
+Celda soccer `Moneyline` construida SOLO con `modelo_backtest.fecha < T`.
+Nomenclatura de variantes segun la especificacion de Fase B del auditor.
+
+| variante | Brier | delta x1000 | t | log loss | bias pp | esperadas | reales | z | pendiente |
+|---|---|---|---|---|---|---|---|---|---|
+| **A P_RAW** | **0.24732** | 0.000 | — | **0.68774** | **-0.41** | 552.3 | 548.0 | **-0.27** | **1.066** |
+| B +sesgo soccer | 0.24785 | +0.531 | 0.86 | 0.68880 | -1.45 | 563.3 | 548.0 | -0.95 | 1.185 |
+| C +Beta soccer | 0.25144 | +4.125 | 1.83 | 0.69607 | +6.03 | 484.3 | 548.0 | +3.95 | 1.140 |
+| D +Wilson soccer | 0.25177 | +4.452 | 1.91 | 0.69672 | +6.20 | 482.5 | 548.0 | +4.06 | 1.132 |
+| E Beta+Wilson | 0.26354 | +16.225 | **3.88** | 0.72133 | +11.61 | 425.4 | 548.0 | **+7.74** | 0.419 |
+| F sesgo+Beta | 0.25144 | +4.124 | — | 0.69604 | +4.99 | 495.3 | 548.0 | +3.26 | 0.712 |
+| G sesgo+Wilson | 0.25175 | +4.430 | — | 0.69666 | +5.22 | 492.9 | 548.0 | +3.41 | 0.695 |
+| **H cadena completa** | 0.26304 | **+15.723** | **3.82** | 0.72030 | **+10.63** | 435.8 | 548.0 | **+7.06** | **0.186** |
+
+**P_RAW gana a las 7 transformaciones**, en Brier y en log loss. La cadena
+completa de soccer aplicada a MLB destruye la discriminacion: pendiente
+**1.066 -> 0.186**.
+
+**Clasificacion B1 por componente:**
+
+| componente soccer -> MLB | clasificacion |
+|---|---|
+| `v_sesgo` | **NO_APORTA** (t=0.86) |
+| Beta | **DANINA_CROSS_DOMAIN** (t=1.83, direccion clara, z +3.95) |
+| Wilson | **DANINA_CROSS_DOMAIN** (t=1.91, z +4.06) |
+| Beta+Wilson | **DANINA_CROSS_DOMAIN** (t=3.88) |
+| cadena completa | **DANINA_CROSS_DOMAIN** (t=3.82) |
+
+### B2 — MLB-NATIVE WALK-FORWARD
+
+Celda construida SOLO con `bt_mlb_ml.fecha < T`, mismo tramo, mismo minimo.
+
+| variante | Brier | delta x1000 | t | IC95 x1000 | log loss | bias pp | z | pendiente |
+|---|---|---|---|---|---|---|---|---|
+| **A P_RAW** | **0.24732** | 0.000 | — | — | **0.68774** | -0.41 | -0.27 | **1.066** |
+| B +sesgo MLB | 0.24816 | +0.846 | 1.67 | 0.996 | 0.68945 | **+0.14** | **+0.09** | 0.932 |
+| C +Beta MLB | 0.25170 | +4.386 | **2.20** | 3.911 | 0.69672 | +5.20 | +3.41 | 0.600 |
+| D +Wilson MLB | 0.25190 | +4.580 | **2.26** | 3.974 | 0.69711 | +5.29 | +3.47 | 0.589 |
+| E Beta+Wilson | 0.26179 | +14.475 | **3.92** | 7.229 | 0.71846 | +10.07 | +6.71 | 0.308 |
+| F sesgo+Beta | 0.25281 | +5.497 | — | — | 0.69895 | +5.75 | +3.77 | 0.526 |
+| G sesgo+Wilson | 0.25295 | +5.635 | — | — | 0.69923 | +5.81 | +3.81 | 0.514 |
+| **H cadena completa** | 0.26309 | **+15.779** | **4.17** | 7.416 | 0.72106 | +10.59 | +7.05 | 0.242 |
+
+**Ninguna variante MLB-native mejora P_RAW.** Ni una.
+
+**Detalle importante sobre B (sesgo MLB-native):** SI mejora la calibracion de
+MEDIA (bias -0.41 -> +0.14 pp, z -0.27 -> +0.09) pero **empeora el Brier**
+(+0.846 x1000) y **degrada la pendiente** (1.066 -> 0.932). Corrige un sesgo que
+ya era despreciable a costa de discriminacion. Es el ejemplo limpio de por que
+no basta mirar la media.
+
+### CALIBRACION DE P_RAW MLB POR BIN — no hay nada que arreglar
+
+| bin | n | P declarada | real | gap pp | esperadas | reales | z |
+|---|---|---|---|---|---|---|---|
+| < 45% | 59 | 43.16% | 47.46% | +4.29 | 25.5 | 28.0 | +0.67 |
+| 45-48% | 129 | 46.87% | 43.41% | -3.46 | 60.5 | 56.0 | -0.79 |
+| 48-51% | 221 | 49.65% | 48.87% | -0.78 | 109.7 | 108.0 | -0.23 |
+| 51-54% | 263 | 52.42% | 50.95% | -1.47 | 137.9 | 134.0 | -0.48 |
+| 54-57% | 230 | 55.26% | 56.96% | +1.70 | 127.1 | 131.0 | +0.52 |
+| >= 57% | 154 | 59.54% | 59.09% | -0.45 | 91.7 | 91.0 | -0.11 |
+
+**Ningun bin supera |z| = 0.79.** P_RAW MLB esta bien calibrada en todo su rango
+operativo. Una calibracion no tiene error que corregir; solo puede meter ruido —
+que es exactamente lo que muestran B1 y B2.
+
+### B3 — COMPARACION DIRECTA
+
+| familia | mejor variante legitima | Brier | log loss | z | pendiente |
+|---|---|---|---|---|---|
+| **P_RAW MLB** | **A** | **0.24732** | **0.68774** | **-0.27** | **1.066** |
+| SOCCER -> MLB WF | B (+sesgo) | 0.24785 | 0.68880 | -0.95 | 1.185 |
+| MLB-NATIVE WF | B (+sesgo) | 0.24816 | 0.68945 | +0.09 | 0.932 |
+
+**P_RAW gana las tres columnas.**
+
+### RESPUESTAS A LAS CINCO PREGUNTAS
+
+1. **¿La transferencia soccer -> MLB ayuda o dana?** **Dana.** El sesgo no
+   aporta (t=0.86) y todo lo demas es DANINA_CROSS_DOMAIN, hasta +15.7 x1000 y
+   pendiente 0.186.
+2. **¿MLB necesita calibracion?** **No.** Bias global -0.41 pp, z -0.27,
+   pendiente 1.066, ningun bin con |z| > 0.79.
+3. **Si necesitara, ¿cual seria sport-specific?** Ninguna de las probadas.
+   La MLB-native tampoco mejora.
+4. **¿Beta/Wilson vuelven a danar en MLB?** **Si, en las dos familias**, con la
+   misma firma que en soccer: subestimacion sistematica (z de +3.4 a +7.7) y
+   colapso de la pendiente.
+5. **¿P_RAW sigue siendo la mejor opcion?** **Si**, contra las 14 alternativas.
+
+### HALLAZGO ADICIONAL — SKILL DE MLB MONEYLINE
+
+| metrica | modelo | tasa base (51.894%) |
+|---|---|---|
+| Brier | 0.24732 | 0.24964 |
+| log loss | 0.68774 | 0.69243 |
+
+**Skill Score = 0.932%.** Prueba pareada contra la tasa base:
+**delta = -2.3256 x1000, t = -1.678, IC95 = +-2.7160** -> intervalo
+**[-5.04, +0.39]**, **cruza el cero**.
+
+**La mejora de este modelo sobre "predice siempre 51.9%" NO es estadisticamente
+distinguible de cero con n=1,056.** La direccion es favorable; la evidencia no
+alcanza. Bajo el Model Skill Gate de la Parte 2, MLB Moneyline clasificaria
+**SKILL_INCIERTO**, no `SKILL_DEMOSTRADO`.
+
+Nota honesta: esto NO dice que el modelo sea malo; dice que esta bien calibrado
+y discrimina poco, y que la muestra no basta para afirmar skill. Son cosas
+distintas y la arquitectura nueva las separa bien.
+
+### RECOMENDACION DE ARQUITECTURA PARA `P_FAIR` MLB
+
+**Posibilidad 1: `P_FAIR_MLB = P_RAW_MLB`.**
+
+Ninguna transformacion mejora OOS. La corrección soccer queda confirmada como
+**HEURISTICA_CROSS_DOMAIN_SIN_VALIDACION_MLB** y ademas medida como danina.
+No se propone calibracion MLB-native.
+
+**NO IMPLEMENTADO.** Solo reporte, como se ordeno.
+
+### LIMITES DE ESTE RESULTADO
+
+- Una sola temporada parcial (93 dias, may-ago 2026);
+- solo Moneyline, solo lado local;
+- rango estrecho del modelo (37.6-65.4%): no dice nada fuera de ahi;
+- **sin momio**: cero conclusiones economicas;
+- la banda 60-70% (52 juegos) no tuvo celda en ninguna familia, asi que ahi
+  todas las variantes cayeron a la ruta `no medida` (n=30).
+
+### INVARIANTES CONFIRMADAS
+
+Kelly intacto; Beta/Wilson de produccion intactos; RONGOL intacto; allocator
+intacto; caps intactos; EXP_OFF=0.50; NFL sigue SIN_MODELO; V2 sin consumidores;
+residuos: solo `lab_bloque_a_wf` y `lab_bloque_b_mlb`, documentadas y borrables.
+
+---
+
+## #262 FASE C / C1-C2 — #209 MEDIDO: hay TRES probabilidades y CUATRO EV en el mismo pick
+
+**Cero cambios en produccion todavia.** Esto es C1 (inventario) + C2 (traza real).
+El diff propuesto va abajo y **espera autorizacion**.
+
+### C1 — INVENTARIO
+
+**49 objetos** en `public` tienen columnas de EV/edge/ventaja (26 tablas,
+23 vistas). La inmensa mayoria son historicos o diagnosticos. **La ruta de
+dinero y las superficies accionables son estas:**
+
+| # | objeto | formula | P usada | odds | ¿decide dinero? | consumidores |
+|---|---|---|---|---|---|---|
+| 1 | `v_pick_canonico.ev_pct` | `round((probabilidad_pct/100 * momio_mercado - 1)*100, 1)` | `probabilidad_pct` | `momio_mercado` | **puerta**: `mejor_oportunidad_hoy` filtra por `ev_pct > 0` | todo lo de abajo |
+| 2 | `v_pick_canonico.edge_pct` | `round((probabilidad_pct/100 - 1/momio_mercado)*100, 1)` | idem | idem | no | UI |
+| 3 | `mejor_oportunidad_hoy.ev_pct` (`ev_cal`) | `round((pu_pct/100 * mo - 1)*100, 1)` | **`calibrar_prob_motor_live(probabilidad_pct/100, deporte)`** | `momio_mercado` | **admision**: `where ev_cal > piso` y **ranking** `order by ev_cal` | tarjeta de OPORTUNIDADES |
+| 4 | `mejor_oportunidad_hoy.ev_crudo_pct` (`ev_cru`) | `round((pcruda/100 * mo - 1)*100, 1)` | `probabilidad_pct` | idem | no | UI |
+| 5 | `mejor_oportunidad_hoy.kelly_pct` | `kelly_fraccion_pct(pu_pct, mo, 0, techo)` | **`pu_pct`** | idem | **NO** (solo se muestra) | UI |
+| 6 | `kelly_stake.ev_pct_declarado` | `p_declarada * momio - 1` | `probabilidad_pct` | momio del pick | no | diagnostico |
+| 7 | **`kelly_stake.ev_pct`** | **`prob_que_decide * momio - 1`** | **`p + sesgo - recorte_Beta) x factor_Wilson`** | momio del pick | **SI — es el unico EV con autoridad economica** | `tg_autoridad_stake`, `reto_picks_hoy` |
+| 8 | `v_mejores_picks_mlb.ev_pct` | vista propia | otra cadena | otra | no | pantalla MLB |
+| 9 | `v_super_pick.ev_real_pct` / `ev_declarado_pct` | dos EV en la misma vista | dos P | — | no | UI |
+| 10 | `destacados_cache.ev_pct` / `ev_corta_pct` / `ev_larga_pct` | tres EV cacheados | — | — | no | UI |
+
+**`kelly_stake` YA expone las dos cifras y las nombra bien**
+(`ev_pct_declarado` vs `ev_pct`). El problema no es que el backend mienta: es
+que **ninguna superficie de UI lee `ev_pct`**.
+
+### CAUSA RAIZ DE #209: tres capas de probabilidad, no una
+
+```
+v_pick_canonico.probabilidad_pct        (P_CANON)
+    |
+    +--> mejor_oportunidad_hoy: calibrar_prob_motor_live()   -> P_UI     -> EV_UI
+    |
+    +--> kelly_stake: + v_sesgo - Beta x Wilson              -> P_DECIDE -> EV_DINERO
+```
+
+Son **dos correcciones distintas, aplicadas en paralelo, sobre la misma P**, y
+ninguna sabe de la otra. La UI corrige hacia un lado y Kelly hacia otro.
+
+### C2 — TRAZA DE 12 PICKS VIVOS (2026-09-05)
+
+| # | pick | momio | P_canon | P_ui | **P_decide** | EV_canon | **EV_UI** | **EV_dinero** | brecha | Kelly_UI | **Kelly_prod** | mismo signo |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | ML Atlanta Braves | 2.37 | 52.2 | 51.8 | **44.5** | 23.7 | **22.8** | **5.57** | 17.2 | 4.15 | **1.02** | si |
+| 2 | Under 3.5 | 1.645 | 72.5 | 72.5 | 70.5 | 19.3 | 19.3 | 16.03 | 3.3 | **0.00** | **6.21** | si |
+| 3 | Under 3.5 | 1.952 | 62.6 | 60.8 | 59.5 | 22.2 | 18.7 | 16.06 | 2.6 | **0.39** | **4.22** | si |
+| 4 | Gana Austin | 2.250 | 52.5 | 51.6 | **44.8** | 18.1 | 16.1 | **0.84** | 15.3 | 3.22 | **0.17** | si |
+| 5 | ML NY Yankees | 2.050 | 54.7 | 54.4 | **46.8** | 12.1 | **+11.5** | **-4.01** | 15.5 | **1.57** | **0.00** | **NO** |
+| 6 | Under 3.5 | 1.741 | 64.7 | 62.7 | 61.5 | 12.6 | 9.2 | 7.07 | 2.1 | **0.00** | **2.38** | si |
+| 7 | Gana FC Dallas | 1.377 | 78.8 | 78.8 | **60.2** | 8.5 | **+8.5** | **-17.13** | **25.6** | 0.00 | 0.00 | **NO** |
+| 8 | Over 3.5 | 2.050 | 53.7 | 52.7 | 50.3 | 10.1 | 8.0 | 3.15 | 4.9 | 1.57 | 0.75 | si |
+| 9 | Gana FC Cincinnati | 1.625 | 68.6 | 66.3 | **48.6** | 11.5 | **+7.7** | **-21.06** | **28.8** | 0.00 | 0.00 | **NO** |
+| 10 | ML Atlanta Braves | 1.926 | 54.9 | 54.7 | **47.0** | 5.7 | **+5.4** | **-9.46** | 14.9 | **0.04** | **0.00** | **NO** |
+| 11 | Over 3.5 | 1.571 | 69.0 | 66.6 | 65.7 | 8.4 | 4.6 | 3.17 | 1.4 | **0.00** | **1.39** | si |
+| 12 | ML KC Royals | 1.926 | 54.3 | 54.0 | **46.5** | 4.6 | **+4.0** | **-10.52** | 14.5 | **0.04** | **0.00** | **NO** |
+
+**5 de 12 picks tienen CONTRADICCION DE SIGNO.** La UI dice EV positivo y el
+dinero ve EV negativo.
+
+Peor caso: **#9 FC Cincinnati — la tarjeta dice +7.7% y el dinero ve -21.06%.
+Brecha de 28.8 puntos y signo opuesto.**
+
+**Y la contradiccion corre en LAS DOS DIRECCIONES.** En Over/Under pasa al reves:
+#2 la UI muestra Kelly **0.00%** mientras produccion autoriza **6.21%**; #3 0.39%
+vs 4.22%; #6 0.00% vs 2.38%; #11 0.00% vs 1.39%. La UI no solo promete de mas en
+Moneyline: **esconde apuestas que produccion si autoriza** en Over/Under.
+
+### CLASIFICACION DE CADA DIVERGENCIA
+
+| divergencia | magnitud | clasificacion |
+|---|---|---|
+| `P_CANON -> P_UI` | -0.4 a -2.4 pp | **SEGUNDA_CALIBRACION** (`calibrar_prob_motor_live` sobre una P ya calibrada) |
+| `P_CANON -> P_DECIDE` (componente `v_sesgo`) | +1.2 pp tipico | **SEGUNDA_CALIBRACION** |
+| `P_CANON -> P_DECIDE` (Beta + Wilson) | -4.6 a -18.6 pp | **OTRO — recorte por incertidumbre** (medido DANINA_OOS en Fases A y B) |
+| `Kelly_UI` vs `Kelly_prod` | hasta 4.1x en ambos sentidos | **RECOMPUTO_UI** (`kelly_fraccion_pct(P_UI)` en vez de `kelly_stake`) |
+| odds | **0 divergencias en los 12** | **NO hay `FUENTE_ODDS_DISTINTA` en esta ruta** |
+| redondeo | <= 0.1 pp | **ROUNDING**, irrelevante |
+| datos viejos | no observado en la muestra | **STALE_DATA** no confirmado |
+
+**C5 — nota honesta sobre odds:** en esta ruta las tres capas usan
+`v_pick_canonico.momio_mercado`, asi que aqui no hay problema de precio. Pero
+existe una distincion real aguas abajo que NO se debe esconder:
+`ODDS_DISPLAY` = `momio_mercado` de la vista, mientras `ODDS_DECISION` =
+`picks.momio` que el usuario captura o escanea al registrar la apuesta. Son
+fuentes distintas por diseno y solo coinciden si el usuario apuesta al precio
+mostrado. Falta medir esa segunda brecha; no se toca en esta fase.
+
+### DIFF PROPUESTO — `EV_DECISION_V1` (NO DESPLEGADO)
+
+Regla: **la UI accionable debe leer el mismo EV que hoy autoriza dinero**, sin
+cambiar todavia la probabilidad de produccion.
+
+1. **Nueva funcion `public.ev_decision_v1(p_prob_pct, p_momio, p_mercado, p_apodo)`**
+   -> devuelve `(ev_pct, prob_que_decide_pct, origen)` leyendo **exactamente**
+   `kelly_stake(...)->>'ev_pct'`. Una sola definicion, un solo lugar.
+2. **`mejor_oportunidad_hoy`**: quitar `calibrar_prob_motor_live` del camino
+   accionable. `ev_cal` deja de existir como criterio; **admision y ranking pasan
+   a `ev_decision_v1`**. `pu_pct` y `ev_cal` se conservan **solo** como columnas
+   rotuladas `*_diagnostico`, sin efecto sobre orden ni filtro.
+3. **`mejor_oportunidad_hoy.kelly_pct`**: dejar de calcular
+   `kelly_fraccion_pct(pu_pct,...)` y devolver el `kelly_pct` que sale del mismo
+   `kelly_stake`. Kelly NO cambia; cambia quien lo pregunta.
+4. **Invariante C7**: `sign(EV_UI) = sign(EV_DECISION)` para todo pick
+   accionable, con tolerancia de redondeo 0.1 pp. Se instrumenta como consulta
+   de verificacion, no como trigger.
+5. **C9**: no se reescribe ni un pick historico. `ev_estimado` de `picks` y
+   `oraculo_picks_tracking` quedan como estan, documentados como EV_V0.
+
+**Lo que este diff NO hace:** no cambia Kelly, no cambia la probabilidad de
+produccion, no retira Beta/Wilson, no toca RONGOL, allocator, caps ni el
+ORDER BY del allocator. Solo elimina que dos superficies contesten cosas
+distintas a la misma pregunta economica.
+
+**Consecuencia esperada y que hay que aceptar de frente:** con EV_DECISION_V1,
+**5 de los 12 picks de hoy dejan de mostrarse como oportunidad** (su EV real es
+negativo) y **4 picks de Over/Under que hoy salen con Kelly 0.00% pasarian a
+mostrar el stake que produccion ya autoriza**. La tarjeta va a ensenar menos
+picks y mas honestos.
+
+---
+
+## #262-B EV_DECISION_V1 CONSTRUIDO Y VALIDADO — pero **NO-GO** para promocion
+
+**Produccion intacta. V2 sin consumidores.** Se cumplio el mandato: implementar
+y llevar hasta validacion pre-produccion, sin deploy ciego.
+
+### Lo construido
+
+**`public.ev_decision_v1(apodo, prob_pct, momio, mercado)`** -> `(ev_pct,
+kelly_pct, prob_que_decide_pct, ok, origen)`. `LANGUAGE sql STABLE`.
+**Wrapper puro**: su cuerpo entero es un `select` de cuatro casts sobre el jsonb
+de `kelly_stake`. **Cero aritmetica.** Si `kelly_stake` cambia, la UI cambia con
+el. Candado 1 cumplido por construccion.
+
+**`public.mejor_oportunidad_hoy_v2(limite, apodo)`** — misma firma de retorno
+(22 columnas) que la productiva. Admision, orden, EV y Kelly salen TODOS de
+`ev_decision_v1`. `calibrar_prob_motor_live` queda reducida al rotulo
+`fuera_de_rango` y su aviso, sin tocar `where`, orden, EV ni stake.
+
+### CANDADO 3 (C7) — **PASA PERFECTO**
+
+| metrica | resultado |
+|---|---|
+| picks accionables evaluados | 4 |
+| fallas `abs(EV_UI - EV_DINERO) > 0.1 pp` | **0** |
+| fallas `abs(Kelly_UI - Kelly_prod) > 0.01 pp` | **0** |
+| contradicciones de signo | **0** |
+| picks con EV <= 0 mostrados | **0** |
+| **desvio maximo de EV** | **0.000000** |
+| **desvio maximo de Kelly** | **0.000000** |
+
+Cero exacto, no "dentro de tolerancia": es un passthrough literal.
+
+### CANDADO 4 — LOS 9 CASOS DE REGRESION
+
+| pick | momio | EV_UI v1 | EV dinero | EV_UI v2 | Kelly_UI v1 | Kelly prod | Kelly_UI v2 | resultado |
+|---|---|---|---|---|---|---|---|---|
+| Under 3.5 | 1.952 | 18.7 | 16.06 | **16.06** | 0.39 | 4.22 | **4.22** | coherente |
+| Under 3.5 | 1.645 | 19.3 | 16.03 | **16.03** | **0.00** | 6.21 | **6.21** | coherente |
+| Under 3.5 | 1.741 | 9.2 | 7.07 | **7.07** | **0.00** | 2.38 | **2.38** | coherente |
+| Over 3.5 | 2.050 | 8.0 | 3.15 | **3.15** | 1.57 | 0.75 | **0.75** | coherente |
+| Gana Austin | 2.250 | 16.1 | **+0.84** | — | 3.22 | 0.17 | — | **retirado** (piso ML 2.0) |
+| ML NY Yankees | 2.050 | **+11.5** | **-4.01** | — | 1.57 | 0.00 | — | **retirado** (EV negativo) |
+| ML Atlanta Braves | 1.917 | **+4.9** | **-9.89** | — | 0.00 | 0.00 | — | **retirado** |
+| ML KC Royals | 1.9259 | **+4.0** | **-10.52** | — | 0.04 | 0.00 | — | **retirado** |
+| Gana FC Dallas | 1.370 | **+8.0** | **-17.55** | — | 0.00 | 0.00 | — | **retirado** |
+
+**Los 4 de Over/Under que escondian stake ahora lo muestran.** Los que tenian EV
+real negativo **desaparecieron**. Cero contradicciones de signo sobreviven.
+
+Nota honesta: los momios se movieron entre la traza de C2 y esta (mercado vivo:
+FC Dallas 1.377->1.370, Atlanta 1.926->1.917). El patron es identico. Y
+**"Gana Austin" no se retira por signo sino por el piso de 2.0 que ya existia**,
+ahora aplicado al EV real (+0.84). No se re-ajusto ningun umbral.
+
+### CANDADO 2 — **FALLA. Este es el NO-GO.**
+
+Busqueda de referencias a `calibrar_prob_motor_live` despues del diff. Sigue
+viva en rutas que **no** son diagnostico:
+
+| objeto | por que importa |
+|---|---|
+| **`refrescar_destacados(integer)`** | escribe `destacados_cache`, que alimenta la tarjeta DESTACADOS. **Accionable.** |
+| **`vale_la_pena_cerrar(uuid,numeric)`** | decide cash out. **Es dinero real.** |
+| **`favoritos_bien_pagados(numeric,numeric,numeric)`** | pantalla Favoritos, presenta picks |
+| `veredicto_vivo(text,text,numeric)` | veredicto en vivo |
+| `calibrar_prob_motor(...)` | variante base de la misma familia |
+| `invariantes_temporales()`, `tg_candado_temporal()` | guardas temporales, no economicas |
+| `mejor_oportunidad_hoy(integer)` | la productiva, aun sin tocar |
+
+**Tu condicion de NO-GO se cumple literalmente:** quedan al menos tres rutas de
+UI/decision recomputando fuera de `kelly_stake`, y una de ellas
+(`vale_la_pena_cerrar`) mueve dinero de verdad.
+
+### SEGUNDO BLOQUEO: como se resuelve el apodo
+
+`kelly_stake` necesita bankroll, o sea apodo. La funcion productiva
+`mejor_oportunidad_hoy(integer)` no lo tiene. Promoverla implica **cambiar la
+firma del RPC** (y con ella la llamada del frontend) o resolver el apodo desde
+`auth.uid()` -> `usuarios.user_id`. **Es una decision de diseno con
+consecuencias de a-quien-pertenece-el-bankroll, y no la tomo yo.**
+
+Por eso `v2` se dejo con apodo explicito: es una funcion de validacion, no una
+candidata a swap directo.
+
+### ESTADO
+
+- `ev_decision_v1`: **creada, validada, sin consumidores productivos.**
+- `mejor_oportunidad_hoy_v2`: **creada, validada, sin consumidores productivos.**
+- `mejor_oportunidad_hoy`: **intacta.** Sigue siendo la que ve el usuario.
+- **NO se promovio nada.**
+
+### LO QUE FALTA PARA EL GO
+
+1. Extender `ev_decision_v1` a `refrescar_destacados`, `vale_la_pena_cerrar` y
+   `favoritos_bien_pagados`, o justificar por escrito por que cada una puede
+   quedarse fuera.
+2. Resolver la decision del apodo.
+3. Repetir C7 sobre las cuatro superficies, no solo sobre una.
+
+### C9 — HISTORICO INTACTO
+
+Cero escrituras. `picks.ev_estimado` y `oraculo_picks_tracking.ev_estimado`
+quedan como **EV_V0**, sin reinterpretar.
+
+### INVARIANTES
+
+Kelly intacto (v2 no lo recalcula, lo lee); RONGOL intacto; allocator intacto;
+caps intactos; EXP_OFF=0.50; NFL `SIN_MODELO`; V2 sin consumidores; residuos:
+las dos funciones nuevas, ambas sin lectores, mas `lab_bloque_a_wf` y
+`lab_bloque_b_mlb`.
+
+### TICKET NUEVO ABIERTO (no bloquea)
+
+**#263 ODDS_DISPLAY != ODDS_DECISION.** Medir cuantas apuestas registradas
+tienen `picks.momio` distinto del `momio_mercado` que vio el usuario, y cuanto
+cambia el EV real por ese slippage. No se mezcla con #209.
+
+---
+
+## #262-C FASE 1 — NUCLEO CANONICO EXTRAIDO. Equivalencia 784/784, cero desvios
+
+**Produccion intacta. Sin consumidores.**
+
+### El diagnostico arquitectonico del auditor se confirma en el codigo
+
+Se leyo `kelly_stake` verbatim (md5 **`d9ba6526a52b3c03ffa51351599c50ce`**,
+13,346 chars). **`p_apodo` aparece 3 veces y las 3 en el lado del dinero:**
+`config_staking` (fraccion_kelly, stake_max_pct, stake_min) y el bankroll vivo.
+
+**La cadena de probabilidad/EV no toca el apodo ni una vez.** Era universal
+desde siempre; estaba encerrada dentro de una funcion que pide identidad.
+
+### HALLAZGO COLATERAL: la cadena viva NO es la que yo tenia anotada
+
+Al leer el codigo aparecieron dos bloques posteriores a mis notas:
+
+- **#208 (5-sep):** reemplazo un tope plano `least(v_p_usada, tasa_base)` por
+  `P_usada = P_motor * min(1, sqrt(N/300))`.
+- **#214 (5-sep):** **retiro ese `sqrt(N/300)`** porque saturaba en 1.0 con
+  N>=300 (o sea, cero recorte para los dos tramos vivos de Moneyline, n=853 y
+  n=1963) y lo sustituyo por el **limite inferior de Wilson**, que no satura
+  nunca (0.9067 con n=187, 0.9562 con n=853, 0.9711 con n=1963).
+
+**Conclusion:** la cadena viva HOY es `sesgo -> Beta -> Wilson`, que es
+exactamente lo que modele como `H` en las Fases A y B. **Mis mediciones siguen
+siendo validas.** El `sqrt(N/300)` es comentario historico, no codigo activo.
+Lo registro porque mi md5 anotado antes era otro y **no puedo afirmar** que la
+funcion no haya cambiado entre sesiones: lo que si afirmo es que la cadena que
+corre ahora es la que reproduje.
+
+### `public.decision_economica_v1(prob_pct, momio, mercado)`
+
+`jsonb`, `STABLE`, `SECURITY DEFINER`, `search_path = public`. **Sin apodo.**
+
+Transcripcion **verbatim**: guardas de momio y probabilidad, `zona_realidad`,
+lectura de `zonas_confiables`, `v_sesgo`, recorte Beta con aproximacion normal
+(`N_SIN_MEDIR = 30`, `Z10 = 1.2816`), factor Wilson y el EV final. **Ni una
+formula nueva.**
+
+Devuelve: `prob_entrada_pct`, `sesgo_pp`, `recorte_beta_pp`, `factor_wilson`,
+`prob_antes_wilson_pct`, `prob_decide_pct`, `momio`, `breakeven_pct`, `ev_pct`,
+`ev_pct_declarado`, `medido`, `n_tramo`, `mercado_medido`, `tramo`, `motivo`,
+`origen`.
+
+### CANDADO DE EQUIVALENCIA — **PASA. 784 combinaciones, 0 desvios.**
+
+Rejilla: 16 probabilidades (5-95) x 7 momios (1.20-5.00) x 7 mercados
+(Moneyline, Over/Under, BTTS, Doble Oportunidad, Corners, NULL y uno
+inexistente). **371 combos medidos y 413 no medidos.**
+
+| comparacion | desvios |
+|---|---|
+| `ok` | **0** |
+| `prob_decide_pct` | **0** |
+| `prob_antes_wilson_pct` (antes del recorte) | **0** |
+| `sesgo_pp` | **0** |
+| `factor_wilson` (`factor_muestra`) | **0** |
+| **`ev_pct`** | **0** |
+| `ev_pct_declarado` | **0** |
+
+### El unico desvio que aparecio, y por que NO era una diferencia real
+
+La primera corrida dio **77 de 784 desvios en `prob_decide_pct`** con **EV
+identico en las 784**. Contradiccion aparente que resulto ser **doble
+redondeo**: yo emitia `round(x, 2)` y el comparador volvia a redondear a 1
+decimal, mientras `kelly_stake` redondea `round(x, 1)` una sola vez.
+`44.549 -> 44.55 -> 44.6` contra `44.549 -> 44.5`.
+
+**Corregido en el nucleo: las probabilidades salen SIN redondear.** Se redondea
+una sola vez, al pintar. Queda documentado dentro de la funcion para que nadie
+lo reintroduzca. Tras el arreglo, **0 de 784**.
+
+Vale la pena decirlo claro: el EV coincidia exactamente porque se calcula sobre
+el valor sin redondear. Si hubiera aceptado el primer resultado como "casi
+igual" habria enterrado un artefacto de presentacion como si fuera un error de
+formula, o al reves.
+
+### FASE 2C RESUELTA POR ADELANTADO: `destacados_cache` es GLOBAL y ya esta limpio
+
+| pregunta | respuesta medida |
+|---|---|
+| ¿tiene columna de usuario/apodo? | **0 columnas** -> es **GLOBAL** |
+| ¿guarda kelly/stake/monto/bankroll? | **0 columnas** |
+| filas | 79 |
+
+Columnas: `deporte, liga, pais, fecha, partido, espn_event_id, mercado, linea,
+cuota, casa, prob_cruda, prob_calibrada, necesitas_pct, ev_pct, muestra,
+respaldo, calculado_at, margen_casa_pct, mercado_sin_vig_pct, vs_mercado_pts,
+ev_corta_pct, ev_larga_pct, estable`.
+
+**La prohibicion del auditor ya se cumple estructuralmente:** el cache global no
+guarda stake de nadie. Lo que falta es que `prob_calibrada` y `ev_pct` salgan del
+nucleo canonico y no de `calibrar_prob_motor_live`. **El stake se calculara al
+consumir, con identidad del usuario** — que es justo lo que el diseno pide.
+
+### ESTADO Y LO QUE FALTA
+
+Construido y validado, **sin consumidores productivos**:
+`ev_decision_v1`, `mejor_oportunidad_hoy_v2`, `decision_economica_v1`.
+
+Pendiente antes del GO:
+1. **`kelly_sombra`**: `decision_economica_v1` + bankroll -> stake, y candado
+   Kelly/stake sombra = Kelly/stake produccion, desvio 0.
+2. Adaptar en sombra las **cinco superficies** (oportunidades, destacados,
+   favoritos, vale_la_pena_cerrar, veredicto_vivo).
+3. **Identidad**: `auth.uid() -> usuarios.user_id` para la ruta user-facing.
+   **NO** aceptar `p_apodo` del cliente como prueba de identidad economica.
+4. Inventario final de `calibrar_prob_motor_live` y clasificacion
+   DIAGNOSTICO / ACCIONABLE. GO exige **0 accionables**.
+5. C7 ampliado sobre las cinco superficies.
+
+**#263 (ODDS_DISPLAY != ODDS_DECISION) sigue sin mezclarse.**
+
+**Sin cambios en:** Beta, Wilson, sesgo, Kelly, caps, RONGOL, allocator, NFL,
+EXP_OFF=0.50.
+
+---
+
+## #262-D FASE 1b — `kelly_sombra`: 0 desvios en 3,840 casos. Separacion demostrada.
+
+**Produccion intacta. Cero consumidores.**
+
+### `public.kelly_sombra(prob, momio, stake_propuesto, mercado, techo_custom, apodo)`
+
+`jsonb`, `STABLE`, `SECURITY DEFINER`, `search_path = public`.
+
+- **NO recalcula** sesgo/Beta/Wilson/EV. Los **consume** de
+  `decision_economica_v1`. Si algun dia los duplica, volvemos a tener dos motores.
+- **Identidad:** la ruta user-facing sale de `auth.uid() -> usuarios.user_id`.
+  `p_apodo` existe **solo para sombra y pruebas** y **nunca** es autoridad
+  economica venida del cliente.
+- **Orden de guardas replicado**: bankroll, luego momio, luego probabilidad.
+  Ese orden importa: con usuario invalido `kelly_stake` responde
+  'Usuario sin bankroll configurado' aunque el momio tambien sea invalido.
+
+### Lo que kelly_stake NO hace (medido, no supuesto)
+
+| busqueda en el codigo | resultado |
+|---|---|
+| `rongol` | **0 menciones** |
+| `stake_techo(` | **0 llamadas** |
+
+RONGOL y `stake_techo` viven **aguas abajo**, en `tg_autoridad_stake`, no dentro
+de `kelly_stake`. Por eso quedan fuera de este candado: no participan en su salida.
+
+### CANDADO DE EQUIVALENCIA — **PASA. 3,840 casos, jsonb COMPLETO, 0 desvios.**
+
+Rejilla: 8 momios (NULL, 0, 1, 1.01, 1.50, 2.00, 3.00, 20.00) x 10
+probabilidades (NULL, 0, 0.5, 5, 45, 52, 60, 80, 95, 99.5) x 4 mercados
+(Moneyline, Over/Under, NULL, inexistente) x 3 stakes propuestos (NULL, 10,
+99999) x 2 techos (NULL, 2.0) x 2 usuarios (uno real, uno inexistente).
+
+| comparacion | desvios |
+|---|---|
+| **jsonb completo** (menos `identidad_origen`) | **0** |
+| `ev_pct` | **0** |
+| `kelly_pct` | **0** |
+| `stake_recomendado` | **0** |
+| `techo_duro` (cap) | **0** |
+| `bankroll` aplicado | **0** |
+| `veredicto` | **0** |
+| `error` | **0** |
+
+**Ramas cubiertas:** `OK` 264, `NO APOSTAR` 564, `BLOQUEADO` 132, errores 2,880,
+tramos medidos 180. Los casos frontera que pediste (momio NULL/0/1, prob NULL,
+bankroll NULL, Kelly por encima del cap, mercados medidos y no medidos) estan
+todos dentro.
+
+### El unico desvio que aparecio, y por que NO era de formula
+
+Primera corrida: **396 de 3,840**, y el conteo coincidia EXACTAMENTE con los
+casos de stake positivo (OK 264 + BLOQUEADO 132 = 396). Diferenciando un caso
+clave por clave resulto ser **una sola clave de texto**: `nota` dentro de
+`incertidumbre`, que `kelly_stake` agrega **solo en el RETURN final** (aparece
+1 vez en todo su codigo) y yo habia omitido.
+
+**Todos los numeros ya coincidian** — `factor_muestra` 0.926,
+`prob_que_decide_pct` 83.4, `recorte` 4.9, `prob_antes` 90.1. Agregada la `nota`
+verbatim: **0 de 3,840**.
+
+Es la segunda vez en esta fase que un desvio aparente resulta ser presentacion y
+no matematica (antes el doble redondeo). Confirma la regla del auditor: **la
+equivalencia se compara antes de presentar, y aun asi hay que mirar cada clave.**
+
+### PRUEBA #6 — MISMO PICK, DISTINTA IDENTIDAD ECONOMICA
+
+Pick fijo: prob 95, momio 1.50, mercado no medido. Tres usuarios reales:
+
+| apodo | bankroll | **EV** | **P_decide** | **Kelly puro %** | **Kelly frac %** | cap $ | stake Kelly $ | **STAKE FINAL** |
+|---|---|---|---|---|---|---|---|---|
+| el dos | 3,764.44 | **25.17** | **83.4** | **50.34** | **12.59** | 188.22 | 473.78 | **188.22** |
+| joaquinbadillo | 1,500.00 | **25.17** | **83.4** | **50.34** | **12.59** | 75.00 | 188.78 | **75.00** |
+| rodelcast | 6,143.42 | **25.17** | **83.4** | **50.34** | **12.59** | 307.17 | 773.18 | **307.17** |
+
+**Lo universal no se mueve** (EV, P_decide, Kelly puro y Kelly fraccionado son
+identicos hasta el ultimo decimal). **Lo personal si** (cap y stake escalan con
+el bankroll: 75.00 / 188.22 / 307.17).
+
+Esa tabla es la demostracion arquitectonica de la separacion:
+**decision universal del pick, dimensionamiento personal del usuario.**
+
+### ESTADO
+
+Construido y validado, **sin consumidores productivos**:
+`ev_decision_v1`, `mejor_oportunidad_hoy_v2`, `decision_economica_v1`,
+`kelly_sombra`.
+
+### ORDEN QUE SIGUE (fijado por el auditor)
+
+1. identidad segura (`auth.uid()` de punta a punta);
+2. cinco superficies en sombra;
+3. inventario `calibrar_prob_motor_live` -> 0 accionables;
+4. C7 ampliado sobre las cinco;
+5. diff exacto;
+6. recien ahi, decision de produccion.
+
+**#263 (ODDS_DISPLAY != ODDS_DECISION) sigue sin mezclarse.**
+**Sin cambios en:** Beta, Wilson, sesgo, Kelly, caps, RONGOL, allocator, NFL,
+EXP_OFF=0.50.
+
+---
+
+## #262-E PASO 1 — IDENTIDAD ECONOMICA SEGURA. ID1-ID6 PASS. Y un hallazgo en produccion.
+
+**Produccion intacta. Sin consumidores.**
+
+### Lo construido
+
+**`public.usuario_economico_actual()`** — `SECURITY DEFINER`, `STABLE`.
+Unica fuente de "de quien es el bankroll": `auth.uid() -> usuarios.user_id ->
+apodo`. Devuelve NULL si no hay sesion o no hay mapping. El cliente no participa.
+(Recordatorio del sistema: `usuarios.id` NO es el auth uid; el enlace real es
+`usuarios.user_id`.)
+
+**`public.kelly_usuario(prob, momio, stake_propuesto, mercado, techo_custom)`**
+— **USER_PATH**. **No tiene parametro de apodo.** El spoof no se valida: es
+**imposible por firma**. Sin identidad devuelve `SIN_IDENTIDAD_ECONOMICA`,
+`stake 0`, y cero fallback.
+
+**`kelly_sombra`** pasa a **INTERNAL_PATH**: acepta apodo, asi que se le retiro
+EXECUTE a `authenticated`, `anon` y `public`, y se dejo solo a `service_role`.
+
+### Matriz de rutas (medida, no declarada)
+
+| funcion | ruta | acepta apodo | anon | authenticated | service_role |
+|---|---|---|---|---|---|
+| `usuario_economico_actual()` | USER_PATH | no | **false** | true | true |
+| `kelly_usuario(...)` | USER_PATH | **no** | **false** | true | true |
+| `kelly_sombra(...)` | **INTERNAL_PATH** | si | **false** | **false** | **true** |
+| `decision_economica_v1(...)` | NUCLEO universal | no | true | true | true |
+
+### PRUEBAS DE IDENTIDAD — 6 de 6 PASS (con JWT simulado real)
+
+Se simulo `request.jwt.claims` con los `user_id` reales de tres cuentas, que es
+exactamente lo que lee `auth.uid()`.
+
+| caso | escenario | resultado | evidencia |
+|---|---|---|---|
+| **ID1** | JWT de rodelcast | **PASS** | apodo resuelto `rodelcast`, bankroll **4,893.42**, stake 244.67 |
+| **ID2** | JWT de rodelcast intentando el bankroll de "el dos" | **PASS** | bankroll usado **4,893.42** (rodelcast), NO 3,764.44 ("el dos"). `kelly_usuario` no tiene parametro de apodo: **imposible por firma** |
+| **ID3** | `auth.uid()` valido sin fila en `usuarios` | **PASS** | apodo NULL, `SIN_IDENTIDAD_ECONOMICA`, **stake 0**, cero fallback |
+| **ID4** | sin sesion (anon) | **PASS** | apodo NULL, error explicito, **ningun bankroll por omision** |
+| **ID5** | service_role / cron | **PASS** | `kelly_sombra` queda solo para `service_role`; `authenticated` y `anon` en **false** |
+| **ID6** | mismo pick, dos identidades | **PASS** | **EV 25.17 en las dos**; stake **244.67** (rodelcast) vs **75.00** (joaquinbadillo) |
+
+ID6 vuelve a demostrar la separacion: **lo universal no se mueve, lo personal si.**
+
+### HALLAZGO DE SEGURIDAD EN PRODUCCION (no tocado)
+
+Al construir la matriz aparecio esto:
+
+| funcion | acepta apodo | anon | authenticated |
+|---|---|---|---|
+| **`kelly_stake(text,...)`** — la de produccion | **si** | **true** | **true** |
+
+**Hoy, cualquier usuario autenticado — y `anon` tambien — puede llamar
+`kelly_stake('<apodo_ajeno>', ...)` y recibir el bankroll, el techo y la
+configuracion de staking de esa persona.**
+
+Alcance real, sin exagerarlo: `kelly_stake` es `STABLE` y **no mueve dinero**;
+lo que se filtra es **informacion** — bankroll disponible, `stake_max_pct`,
+`fraccion_kelly` y el stake recomendado de cualquier apodo que se adivine o se
+lea del feed de Comunidad. No permite apostar por otro.
+
+**NO lo toque**: es produccion y la orden es no promover nada sin autorizacion.
+Queda como decision del auditor. La arquitectura nueva lo cierra por diseno
+(USER_PATH sin apodo + INTERNAL_PATH solo service_role); la pregunta es si se
+quiere cerrar el agujero actual **antes** del swap o **con** el swap.
+
+### RESIDUOS
+
+`lab_test_identidad()` creada para correr ID1-ID6 y **borrada** al terminar.
+
+### ESTADO
+
+Construido y validado, **cero consumidores productivos**:
+`ev_decision_v1`, `mejor_oportunidad_hoy_v2`, `decision_economica_v1`,
+`kelly_sombra`, `usuario_economico_actual`, `kelly_usuario`.
+
+**Falta (pasos 2-5 del auditor):** cinco superficies en sombra, C7 ampliado,
+inventario final de `calibrar_prob_motor_live` y de otras recomputaciones de
+P/EV, y recien entonces GO/NO-GO.
+
+**#263 sigue fuera de scope.** **Sin cambios en** Beta, Wilson, sesgo, Kelly,
+caps, RONGOL, allocator, NFL, EXP_OFF=0.50, V2.
+
+---
+
+## #262-F — POLITICA DE IDENTIDAD DE TRES ROLES (`resolver_identidad_economica`)
+
+**Fecha:** 6-sep-2026. **Estado:** construido y probado. **Cero consumidores.**
+**Produccion intacta.**
+
+El auditor fijo la politica, textual:
+
+```
+authenticated:  p_apodo NO es autoridad -> auth.uid() -> usuario propio
+                -> si p_apodo != propio, rechaza o ignora
+anon:           -> SIN_IDENTIDAD_ECONOMICA
+service_role / ruta interna: -> puede usar apodo explicito
+```
+
+Se implemento en **un solo lugar reutilizable**, `public.resolver_identidad_economica(p_apodo text)`,
+precisamente para que endurecer una funcion que ya recibe apodo (como `kelly_stake`)
+sea **un cambio de una linea** y no una reescritura.
+
+Devuelve `{ok, apodo, origen, motivo}`. `origen` ∈
+`auth_uid` | `service_role_explicito` | `interno_sin_jwt`.
+
+### HALLAZGO: `current_user` NO SIRVE DENTRO DE `SECURITY DEFINER`
+
+La primera version detectaba el rol con `current_user`. **Dentro de una funcion
+`SECURITY DEFINER`, `current_user` es el DUENO (`postgres`), no el llamador.**
+Con eso, **todos** los llamadores — incluido `anon` — habrian sido clasificados
+como "ruta interna" y la politica habria quedado invertida: el agujero, en vez
+de cerrarse, se habria abierto por completo.
+
+Se detecto antes de probar. La version buena lee la reclamacion del JWT:
+
+```sql
+v_rol_jwt := nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'role';
+v_interno := (v_rol_jwt IS NULL) OR (v_rol_jwt = 'service_role');
+```
+
+JWT nulo = conexion directa (cron, psql, backend) = interna. Es la unica lectura
+que sobrevive dentro de `SECURITY DEFINER`.
+
+### R1-R8 — PRUEBA CON JWT SIMULADOS (8/8 PASS)
+
+| caso | rol | p_apodo | resultado | veredicto |
+|---|---|---|---|---|
+| R1 | authenticated | (null) | ok, `rodelcast` (por `auth.uid()`) | PASS |
+| R2 | authenticated | `rodelcast` (propio) | ok, `rodelcast` | PASS |
+| R3 | authenticated | **apodo ajeno** | `IDENTIDAD_AJENA_RECHAZADA` | PASS |
+| R4 | anon | (null) | `SIN_IDENTIDAD_ECONOMICA` | PASS |
+| R5 | anon | apodo ajeno (intento) | `SIN_IDENTIDAD_ECONOMICA` | PASS |
+| R6 | service_role | apodo explicito | ok, ese apodo | PASS |
+| R7 | service_role | (null) | `INTERNAL_SIN_APODO` | PASS |
+| R8 | conexion directa (cron) | apodo explicito | ok, ese apodo | PASS |
+
+R3 y R5 son los dos casos que hoy estan abiertos en produccion.
+
+### PERMISOS
+
+`resolver_identidad_economica`: revocada de `public` y de `anon`;
+concedida a `authenticated` y `service_role`.
+
+### RADIO DE IMPACTO MEDIDO DE ENDURECER `kelly_stake` (no ejecutado)
+
+Llamadores **reales** de `kelly_stake` (se excluyeron las menciones en comentario):
+
+| llamador | pasa apodo | riesgo si se endurece |
+|---|---|---|
+| `autodiagnostico()` | **'rodelcast' hardcodeado** | falla para cualquier otro usuario autenticado |
+| `devils_advocate(...)` | `p_apodo` | ok si el apodo es el propio |
+| `devils_advocate_parlay(...)` | `p_apodo` | ok si el apodo es el propio |
+| `reto_picks_hoy(p_apodo)` | `p_apodo` | ok si el apodo es el propio |
+| `revisar_apuesta(...)` | `p_apodo` | ok si el apodo es el propio |
+| `ev_decision_v1(...)` | `p_apodo` | sombra, sin consumidores |
+
+`mejor_oportunidad_hoy` (produccion) **no** llama a `kelly_stake`: tiene su
+propia cuenta con `kelly_fraccion_pct`. Eso es exactamente #209.
+
+**No se endurecio nada.** El diff existe y esta sin aplicar; requiere ademas
+medir con que rol llega cada superficie del front antes de tocarla.
+
+### RESIDUOS
+
+`lab_test_roles()` creada para correr R1-R8 y **borrada** al terminar.
+Verificado: no queda ninguna funcion `lab_test_*` en la base.
+
+---
+
+## #262-G — `UNKNOWN != INTERNAL` + FUGA ECONOMICA CROSS-USER MEDIDA
+
+**Fecha:** 6-sep-2026. **Estado:** puntos 1-9 del auditor cerrados. **Punto 10 abierto.**
+
+### 1. MEDICION DEL CONTEXTO (antes de decidir nada)
+
+El auditor prohibio `JWT NULL = INTERNAL`. Se midio cada ruta real:
+
+| origen | session_user | current_user | claims JWT | role | application_name |
+|---|---|---|---|---|---|
+| PostgREST anon (apikey legacy, sin Authorization) | `authenticator` | `anon` | **SI** | anon | postgrest |
+| PostgREST anon (apikey legacy + Authorization) | `authenticator` | `anon` | SI | anon | postgrest |
+| PostgREST anon (llave publicable nueva `sb_publishable_...`) | `authenticator` | `anon` | SI | anon | postgrest |
+| PostgREST service_role | `authenticator` | `service_role` | SI | service_role | postgrest |
+| pg_cron (244 trabajos, todos `username=postgres`) | `postgres` | `postgres` | NO | — | pg_cron |
+| conexion de gestion / psql | `postgres` | `postgres` | NO | — | mgmt-api |
+| sin apikey | **nunca llega a la base**: PostgREST responde 401 | | | | |
+
+Dos consecuencias:
+1. **Toda ruta user-facing SIEMPRE trae claims.** La ausencia de claims no ocurre
+   en el mundo del usuario.
+2. `application_name` **no** se usa como evidencia: el cliente lo fija a voluntad.
+
+### 2. ALLOWLIST EXPLICITA
+
+`public.clasificar_contexto_economico(p_claims, p_session_user)` — funcion **PURA**,
+para poder probarla en rejilla completa (incluido el caso que no se puede montar en
+vivo: `postgres` en Supabase no es superusuario y no puede `SET SESSION AUTHORIZATION`).
+
+```
+INTERNAL  <=  role = 'service_role'
+          OR  (sin claims AND session_user IN ('postgres','supabase_admin'))
+USER      <=  role = 'authenticated'
+DENY      <=  todo lo demas
+```
+
+`resolver_identidad_economica()` ya no clasifica: le entrega el contexto real
+(`current_setting('request.jwt.claims')`, `session_user`) y actua.
+
+**Rejilla 8 JWT x 7 session_user = 56 celdas.** INTERNAL solo en 11; las 45
+restantes DENY o USER. En particular **sin JWT + `authenticator` / `anon` /
+`authenticated` / `service_role` / un rol inventado -> DENY**. Eso es SEC-H.
+
+### 3. LA FUGA REAL, MEDIDA COMO `anon`
+
+Se llamaron 23 RPC economicas **de solo lectura** con rol `anon` y un apodo:
+
+**19 de 23 devolvieron datos economicos completos.** Ejemplos textuales:
+bankroll `4893.42`; techo `5.0% = 244.67`; Kelly y su veredicto; exposicion viva
+con `capital_libre` y `limite_monto`; proyeccion de ruina (`aguanta 0.6 semanas`);
+estado de tilt con racha y tamano habitual; ROI y ganancia; CLV; los picks del
+RETO del dia; y `apuestas_por_revisar` con **el id del boleto**.
+
+Las 4 que fallaron **no fallaron por diseno**: fallaron por accidente
+(`SECURITY INVOKER` + falta de GRANT en una tabla: `usuarios`, `picks`,
+`clv_tracking`). No es una defensa: es un descuido con efecto secundario.
+
+### 4. INVENTARIO: 98 FUNCIONES RECIBEN APODO
+
+Correccion a mi propio inventario previo: buscar `p_apodo` **dejaba fuera 10
+funciones** que usan `user_apodo` (`get_bankroll_real`, `get_bankroll_disponible`,
+`get_tilt_alert`, `get_performance_breakdown`, evoluciones...). Total real: **98**.
+
+### 5. QUE LLAMA DE VERDAD EL FRONTEND (medido en el bundle publicado)
+
+47 archivos JS de `reto13.lovable.app` (todos 200). **40 RPC con apodo aparecen en
+el bundle.** Entre ellas `kelly_stake`, `revisar_apuesta`, `devils_advocate`,
+`stake_techo`, `tamano_apuesta`, `revisar_tamano_apuesta`, `verificar_limites`,
+`mejor_oportunidad_hoy`, `reto_13m_estado`, `cuanto_me_dura`.
+
+**`autodiagnostico`: 0 referencias en el bundle y 0 crons.** Clasificacion:
+**herramienta interna**. El hardcode `'rodelcast'` no debe sustituirse por un
+parametro libre; lo correcto es dejarla en INTERNAL_PATH (revocar anon/authenticated).
+
+**De donde sale el apodo en el front** (`src/contexts/AuthContext.tsx`): de
+`usuarios.apodo WHERE user_id = auth.uid()`. El cliente **nunca** inventa el apodo.
+Mientras restaura sesion vale `""` (cadena vacia), y los hooks economicos
+(`use-bankroll-real.ts`, `use-tamano-apuesta.ts`) ya se protegen con `!!apodo`.
+Por eso la guarda trata `''` como ausencia.
+
+### 6. BASELINE + HOTFIX EN `kelly_stake`
+
+Baseline previo: 45 respuestas (3 usuarios x OK/NO APOSTAR/BLOQUEADO/momio
+invalido/probabilidad invalida). Guarda aplicada por transformacion **programatica**
+del `pg_get_functiondef` (cero transcripcion a mano), con asertos de conteo y
+respaldo en `lab_respaldo_defs`.
+
+**Equivalencia post-hotfix: 90 comparaciones de JSON completo, 0 diferencias.**
+
+| comparacion | iguales | distintos |
+|---|---|---|
+| ruta interna, 45 casos | 45 | **0** |
+| JWT rodelcast + su propio apodo | 15 | **0** |
+| JWT rodelcast sin apodo (null) | 15 | **0** |
+| JWT rodelcast con apodo `""` | 15 | **0** |
+
+### 7. SEC-A..SEC-H sobre `kelly_stake` EN PRODUCCION
+
+| caso | resultado |
+|---|---|
+| SEC-A anon + apodo | `SIN_IDENTIDAD_ECONOMICA` |
+| SEC-B JWT A + A | OK, bankroll y stake propios |
+| SEC-C JWT A + B | `IDENTIDAD_AJENA_RECHAZADA` |
+| SEC-D JWT B + A | `IDENTIDAD_AJENA_RECHAZADA` |
+| SEC-D2 JWT B sin apodo | OK, su propio bankroll |
+| SEC-E authenticated sin mapeo | `SIN_MAPEO_DE_USUARIO` |
+| SEC-F service_role + apodo | OK |
+| SEC-G sin JWT, sesion allowlisted | OK |
+| SEC-H rol no reconocido | `CONTEXTO_NO_RECONOCIDO` |
+
+**Sin tocar** sesgo, Beta, Wilson, EV, Kelly, bankroll math, caps ni pisos.
+
+### 8. LO QUE SIGUE ABIERTO (punto 10 del auditor)
+
+`kelly_stake` esta cerrada. **Las otras ~19 fronteras siguen filtrando.** Sin eso
+no se puede declarar `IDENTIDAD_ECONOMICA_SEGURA = PASS`.
+
+### RESIDUOS
+
+Borrados: `lab_ctx_capturar()`, `lab_ctx_probe`, `lab_chunks`, `lab_diag`,
+cron `lab-ctx-probe-once` (jobid 414). Se conservan a proposito:
+`lab_baseline_kelly` (evidencia del punto 7) y `lab_respaldo_defs`
+(definicion exacta previa de `kelly_stake` para revertir en una linea).
+
+---
+
+## #262-H — P0 PRIVACIDAD: `live-day-dashboard` ESTABA ABIERTA A INTERNET
+
+**Fecha:** 6-sep-2026. **Clasificacion:** `HIGH_SENSITIVITY_PRIVATE / INTERNET_OPEN`.
+**Estado:** CERRADA en produccion (v18). Frontend migrado.
+
+### LA FUGA
+
+Edge Function con `verify_jwt = false` que tomaba `body.apodo` y no validaba nada:
+
+```ts
+const action = body?.action || 'today';
+result = await getDayDashboard(body.apodo, todayCDMX());
+...
+async function getDayDashboard(apodo, fechaYMD) {
+  if (!apodo) throw new Error('apodo requerido');   // unica "validacion"
+```
+
+Prueba real, **sin `apikey` y sin `Authorization`**, solo `Content-Type`:
+
+```
+POST /functions/v1/live-day-dashboard {"action":"date","apodo":"<cualquiera>","fecha":"2026-09-05"}
+-> HTTP 200 · 121,220 bytes
+{"ok":true,"apodo":"...","resumen":{"total_apuestas":8,"total_apostado":8353.8,
+ "ganancia_neta_actual":345.97, ... "bankroll_actual": ...}}
+```
+
+Devolvia el dia financiero completo: cada pick y cada parlay con montos, momios,
+`picks_data`, **ids de registro** y bankroll. Peor que la fuga de las 19 RPC: esa
+al menos exigia la llave `anon`; esta no exigia **nada**.
+
+### EL ARREGLO (v5 / version 18)
+
+Se uso el patron que YA existia en el repo, `_shared/auth.ts` -> `requireCaller()`,
+cuyo comentario dice literalmente *"Nunca confies en el apodo que manda el cliente"*.
+`live-day-dashboard` simplemente no lo usaba.
+
+```diff
++import { requireCaller, unauthorizedResponse } from "../_shared/auth.ts";
+ Deno.serve(async (req) => {
+   if (req.method === "OPTIONS") return new Response(null, { headers: CH });
++  let caller;
++  try { caller = await requireCaller(req); }
++  catch (e:any) {
++    const msg = String(e?.message || "");
++    return unauthorizedResponse(CH,
++      msg === "sin_apodo" ? "Tu cuenta todavia no tiene apodo vinculado" : "No autorizado");
++  }
+   try {
+     const body = ...; const action = body?.action || 'today';
++    const targetApodo = caller.isService ? (body?.apodo || null) : caller.apodo;
++    if (caller.isService && !targetApodo) return 400 'ruta interna sin apodo explicito';
+-      result = await getDayDashboard(body.apodo, todayCDMX());
++      result = await getDayDashboard(targetApodo, todayCDMX());
+-      result = await getDayDashboard(body.apodo, body.fecha);
++      result = await getDayDashboard(targetApodo, body.fecha);
+```
+
+`verify_jwt` se dejo en **false a proposito** (se paso explicito en el deploy):
+la autenticacion la hace `requireCaller` dentro de la funcion. No se mezclo ese
+cambio con el hotfix. **Cero cambios** en consultas, resumen, bankroll, picks,
+parlays, fechas, EV, Kelly o caps.
+
+### LD1-LD8 (medidas, no argumentadas)
+
+| caso | contexto | resultado |
+|---|---|---|
+| LD1 | sin apikey, sin Authorization | **401** `No autorizado` |
+| LD2 | apikey/publicable, sin sesion | **401** `No autorizado` |
+| LD3 | JWT real de A + `apodo=A` | 200, dashboard de A |
+| LD3b | JWT real de A, sin apodo | 200, dashboard de A |
+| LD4 | **JWT real de A + `apodo=B`** | 200 pero devuelve **A**: el apodo del cuerpo se ignora |
+| LD5 | JWT de B + `apodo=A` | mismo camino de codigo que LD4; NO se ejecuto para no crear sesion de la cuenta de otra persona |
+| LD6 | service_role + `apodo=B` | 200, dashboard de B (ruta interna legitima) |
+| LD6b | service_role sin apodo | **400** `ruta interna sin apodo explicito` |
+| LD7 | JWT valido sin apodo mapeado | `requireCaller` lanza `sin_apodo` -> 401; no se ejecuto en vivo (habria requerido tocar `usuarios`) |
+| LD8 | equivalencia A antes/despues | **JSON identico** salvo `version` y `timestamp` |
+
+LD8 al detalle: `resumen`, `picks`, `parlays`, `apuestas` y `pit_picks` **iguales
+byte a byte** (121,220 bytes en las dos versiones).
+
+El JWT de usuario para LD3/LD4 se genero **dentro de Postgres** (admin
+`generate_link` -> `verify` con `token_hash`), nunca paso por el chat, y la sesion
+se revoco al terminar (`/auth/v1/logout` -> 204).
+
+### CONSUMIDOR MIGRADO
+
+`src/components/track/LiveDayTab.tsx` mandaba **la llave publica como Bearer**:
+
+```ts
+headers: { apikey: ANON, Authorization: `Bearer ${ANON}` },
+body: JSON.stringify({ action: "today", apodo }),
+```
+
+Eso es exactamente lo que LD2 rechaza. Se migro al patron correcto:
+`supabase.auth.getSession()` -> `Authorization: Bearer <access_token>` y el cuerpo
+ya **no manda apodo**. Sin ese cambio la pestana LIVE DAY quedaba en 401.
+Cron: **0** trabajos llaman a esta funcion. Edge->Edge: ninguno.
+
+### `leaderboard-roi` — TICKET APARTE
+
+`PUBLIC_LEADERBOARD_DATA_MINIMIZATION`. Tambien `verify_jwt=false` y sin auth,
+pero es publico por diseno. Expone hoy: `roi_pct`, `ganancia_neta`, `drawdown_max`,
+`drawdown_actual`, `avg_stake`, `max_stake`, `clv_promedio`, rachas, `total_apostado`.
+`avg_stake` / `max_stake` / `total_apostado` / drawdown en pesos revelan **tamano de
+banca**, no habilidad. No se toco.
+
+### ROLLBACK
+
+Version anterior = 17. `deploy_edge_function` con la v4 restaura en un paso.
+
+---
+
+## #262-I — AUTH-0 FALLA: `isServiceToken` DECODIFICA, NO VALIDA (bypass de service_role)
+
+**Fecha:** 6-sep-2026. **Severidad:** P0 sistemico (bypass de autenticacion).
+**Estado:** primitivo corregido y verificado en `live-day-dashboard` (v19).
+Resto de consumidores: PENDIENTE de decision de ejecucion.
+
+### EL DEFECTO
+
+`_shared/auth.ts` -> `isServiceToken`:
+
+```ts
+function isServiceToken(token: string): boolean {
+  const service = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  if (service && token === service) return true;
+  try {
+    const payload = JSON.parse(atob(token.split(".")[1]));  // <-- DECODE, no VALIDATE
+    return payload?.role === "service_role";
+  } catch { return false; }
+}
+```
+
+La segunda rama **decodifica** el payload del JWT y confia en `role` **sin verificar
+la firma**. Cualquiera fabrica localmente `header.payload.firmafalsa` con
+`payload={"role":"service_role"}` y `requireCaller` lo clasifica como interno.
+
+### EXPLOTACION PROBADA (antes del fix)
+
+JWT falso `alg:none`, sin firma, `{"role":"service_role"}`:
+
+| endpoint | resultado |
+|---|---|
+| `live-day-dashboard` + `apodo=rodelcast` | **HTTP 200**, dia financiero completo de rodelcast (evadia el hotfix #262-H) |
+| `settle-betslip` + `id` cualquiera | **404 "Apuesta no encontrada"** (paso el auth como service; con un id real, saltaba el check de propiedad) |
+
+`_shared/auth.ts` NO es runtime compartido: cada `deploy` empaqueta su propia
+copia. El defecto vive en **toda** funcion que lo bundlea.
+
+### EL FIX (AUTH-0)
+
+service_role se prueba **solo** por igualdad en tiempo constante contra la llave
+real; se elimina la rama de decode. La rama de usuario ya validaba bien
+(`admin.auth.getUser`, server-side).
+
+```ts
+function timingSafeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let out = 0;
+  for (let i = 0; i < a.length; i++) out |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return out === 0;
+}
+function isServiceToken(token) {
+  const service = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || "";
+  return service.length > 0 && timingSafeEqual(token, service);
+}
+```
+
+### VERIFICADO EN `live-day-dashboard` v19
+
+| caso | antes | despues |
+|---|---|---|
+| AUTH-0B JWT falso service | 200 (fuga) | **401** |
+| AUTH-0A token basura | 401 | **401** |
+| AUTH-0D service real (`public.sk()`) | 200 | **200** (`public.sk()` == env de la edge; internos siguen vivos) |
+| AUTH-0C usuario real + su apodo | 200 propio | **200 propio** |
+
+### CONSUMIDORES DE `requireCaller` IDENTIFICADOS (bundlean el defecto)
+
+| funcion | verify_jwt | uso de isService | explotable |
+|---|---|---|---|
+| `live-day-dashboard` | false | `isService?body.apodo:caller.apodo` | **CORREGIDA v19** |
+| `construir-parlay-ai` | false | `isService?body.apodo:caller.apodo` | SI (lee/escribe parlay de apodo ajeno) |
+| `settle-betslip` | false | `if(!isService) checa propiedad` | SI (lee boleto ajeno con su uuid) |
+| `scan-betslip` | false | `isService?body.apodo:caller.apodo` | SI (confirmado) |
+| `analizar-partido` | false | bundlea auth (por confirmar uso) | por confirmar |
+| `auto-calificar-picks` | false | bundlea auth (grader, por confirmar) | por confirmar |
+
+### OTROS HALLAZGOS DE AUTORIZACION EN EL MISMO LOTE (no requireCaller)
+
+- `crear-parlay-screenshot` — **verify_jwt=true** pero toma `body.apodo` sin
+  validar contra el JWT e **INSERTA un parlay** con ese apodo. Un usuario
+  autenticado A puede crear apuestas en la cuenta de B. **P1-AUTHZ (write).**
+- `get-parlay-with-scores` — verify_jwt=false, `apodo` del cuerpo sin auth;
+  consulta `.in("id",ids).eq("apodo",apodo)`. Requiere el uuid del parlay + el
+  apodo. Los uuids se filtraban por #262-H/otros endpoints -> cadena de lectura.
+  **P0-READ (gated por uuid).**
+- `analizar-partido-ligamx` — sin apodo, sin datos user-private (escribe analisis
+  publico). **SAFE.**
+
+### RESTRICCION DE EJECUCION (por que no redeployé todo de golpe)
+
+Los edge functions **no viven en el git repo** (`rodrigodelcastillo117/reto` tiene
+7 archivos; no incluye `supabase/functions/`) y Lovable no expone esa carpeta.
+El unico canal para corregirlos es `deploy_edge_function` (MCP), que exige el
+codigo **inline**. Varias funciones son enormes (scan-betslip 182 KB) y manejan
+dinero: reinyectar ese volumen a mano tiene riesgo material de corrupcion. Por eso
+la correccion del resto se decide con el auditor (ver reporte), no se hizo a ciegas.
+
+---
+
+## #262-J — BARRIDO EDGE (triage por firma). Modelo de auth = confiar en el cliente
+
+**Fecha:** 6-sep-2026. Metodo autorizado por el auditor: revisar 1x1 las que reciben
+identidad/id de usuario o escriben datos de usuario; clasificar en bloque los crons
+de sync deportivo por firma (service key, sin apodo/id de usuario, tablas no privadas).
+
+### PATRON RAIZ
+La app se construyo **confiando en el cliente para la identidad** en muchas edge
+functions: `verify_jwt=false` + `body.apodo`/`body.*_id` **sin validar propiedad**.
+No es un bug aislado; es el modelo de auth por defecto del proyecto.
+
+### VULNERABLES (remediar por pipeline; ninguna tocada salvo live-day v19)
+
+| funcion | clase | vector |
+|---|---|---|
+| live-day-dashboard | P0-READ **CERRADA v19** | body.apodo sin auth (internet abierto) |
+| detect-user-patterns | P0-READ+WRITE | sin auth; devuelve pnl/insights ($) de cualquier apodo; escribe user_patterns |
+| confirmar-fecha-pick | P0-WRITE IDOR | sin auth; reescribe a que partido apunta el pick/parlay de otro (uuid) |
+| get-parlay-with-scores | P0-READ | sin auth; lee parlay/pick por uuid+apodo |
+| construir-parlay-ai | AUTH-0 | isService forjable -> body.apodo |
+| settle-betslip | AUTH-0 | isService forjable -> salta propiedad |
+| scan-betslip | AUTH-0 | isService forjable -> body.apodo |
+| analizar-partido, auto-calificar-picks | AUTH-0 | bundlean auth vuln (uso por confirmar) |
+| crear-parlay-screenshot | P1-AUTHZ write | jwt=true pero inserta parlay con body.apodo |
+| procesar-venganza | P1-AUTHZ write IDOR | jwt=true, jugador_id sin propiedad |
+| enviar-notificacion-push | P1-ABUSE | Bearer no validado -> push/phishing a cualquier apodo |
+| recalibrate-model-weights | P1-WRITE | sin auth; escribe pesos del modelo |
+| reconectar-picks-huerfanos, oraculo-premium | P2-INTERNAL | crons sin auth: abuso de costo (API-Football/Anthropic) |
+| log-scan-result | P2-WRITE | sin auth; scan_logs con apodo/image_url arbitrario |
+
+### SEGURAS (patron correcto)
+| funcion | por que |
+|---|---|
+| manual-calificar-pick / manual-calificar-parlay | getUser + propiedad por usuarios.email |
+| mi-track-record / mis-leaks | apodo SOLO del JWT |
+| settle-betslip/scan-betslip/construir (rama usuario) | requireCaller rama getUser OK (falla solo en isService, ya parchado en el fix) |
+| scan-fantasy-lineup / cashout-contexto | validan token via /auth/v1/user; service por token-as-apikey REAL (no decode) |
+| track-record / leaderboard-roi(*) / compartir-analisis / analizar-partido-ligamx | agregado/contenido publico (leaderboard: ver ticket de minimizacion) |
+| recalcular-bankroll | getUser + rol admin |
+
+### CLASE EN BLOQUE — INTERNAL_SYNC (crons de datos deportivos, por firma)
+~90 funciones de sync: service key, reciben parametros deportivos (fecha/liga/evento),
+escriben tablas deportivas (live_scores, *_partidos, *_stats, *_momios, standings),
+**no reciben apodo ni id de usuario, no leen tablas privadas**. Ejemplos: badrino-sync,
+sync-scores-global, sync-tenis-scores, espn-*, nfl-*-sync, mlb-*-enrich, soccer-stats-enrich,
+snapshot-odds, odds-pro, rongol-momios, cerrar-partidos-espn, enriquecer-fixtures, etc.
+Riesgo uniforme: `verify_jwt=false` permite disparo no autenticado = **abuso de costo**
+(APIs externas / LLM) y recomputo, NO fuga ni IDOR. Recomendacion uniforme: exigir
+service token (o `verify_jwt=true`) en todas; no es P0.
+
+### RECOMENDACION DE FRONTERA (una sola politica)
+1. Toda funcion user-facing deriva identidad del JWT (auth.getUser), NUNCA de body.apodo/id.
+2. Toda operacion por id valida propiedad server-side (apodo del recurso == apodo del JWT).
+3. Los crons/rutas internas exigen service token real (comparacion contra la llave, no decode).
+4. `verify_jwt` no es la defensa (muchas quedan false a proposito); la defensa es la
+   verificacion DENTRO de la funcion.

@@ -1,0 +1,43 @@
+-- iss067 — MLB: H2H y carreras recibidas. El dato SÍ existía, no estaba expuesto.
+--
+-- PEDIDO: "MLB, rellena el BD, la info, H2H, goles recibidos, todo".
+--
+-- LO QUE SE ENCONTRÓ, y no era lo que parecía:
+--   mlb_bateador_temporada .. 4,294 filas   → ya estaba
+--   mlb_pitcher_temporada ...   455 filas   → ya estaba
+--   mlb_player_game_logs .... 1,900 filas   → ya estaba
+--   historico_partidos_espn ..     0 de béisbol → ESA era la que estaba vacía
+--
+-- Pero los juegos sí existen: `mlb_linescore` tiene **129,019 filas de 7,323 partidos** con
+-- carreras, hits y errores POR ENTRADA y por lado. Lo que faltaba era poder leer el marcador
+-- FINAL de un partido, porque nadie había sumado las entradas. Sin eso no hay H2H ni carreras
+-- recibidas, por más lleno que esté el resto.
+--
+-- TRES VISTAS NUEVAS:
+--   `v_mlb_marcador_final`  → marcador final por partido, sumando el linescore
+--   `v_mlb_equipo_carreras` → anotadas, recibidas, diferencial, ganados/perdidos, y el corte
+--                             local/visita. Esto es el "goles recibidos" que pidió el owner.
+--   `v_mlb_h2h`             → historial directo entre cada par de equipos
+--
+-- ═══ LA TRAMPA DE IDENTIDAD, que casi dejo pasar ═══
+-- El primer intento unía con `mlb_equipo_id_nombre` y devolvía **TODOS los nombres en NULL**.
+-- Causa: esa tabla usa IDs de MLB StatsAPI (108-147) y `mlb_linescore.competitor_id` usa IDs de
+-- ESPN (1-32). Son espacios distintos. De haberlo publicado así, las tres vistas se verían
+-- "llenas" con una columna de nombre siempre vacía.
+--
+-- Segundo intento: derivar el mapeo cruzando linescore con `live_scores` por evento. Dio CERO
+-- filas, porque el linescore es histórico y live_scores sólo tiene lo reciente: no se cruzan.
+--
+-- Solución: `mlb_estadios.team_espn_id` SÍ vive en el espacio de ESPN, y parque → equipo es 1
+-- a 1. Se expone el PARQUE, que es dato real y reconocible (Dodger Stadium, Yankee Stadium),
+-- en vez de inventar nombres de equipo.
+--
+-- LO QUE FALTA EN LA BASE, dicho explícitamente: **no existe un catálogo ESPN-id → nombre de
+-- equipo para MLB.** Hay que ingerirlo. Mientras tanto el parque identifica al equipo sin
+-- ambigüedad, pero no es lo mismo y no se va a presentar como si lo fuera.
+--
+-- MEDIDO, como `anon`:
+--   Dodger Stadium ......... 501 juegos · 5.25 anotadas · 4.18 recibidas · +1.07 · 306-193
+--   Truist Park ............ 477 juegos · 4.95 / 4.12 · +0.83 · 279-193
+--   American Family Field .. 492 juegos · 4.83 / 4.02 · +0.80 · 280-209
+--   Yankee Stadium ......... 498 juegos · 4.54 / 4.06 · +0.49 · 278-218
