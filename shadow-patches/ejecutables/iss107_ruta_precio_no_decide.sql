@@ -85,15 +85,37 @@ language plpgsql immutable as $fn$
 declare
   v_lineas text[];
   v_n int;
-  i int;
+  i int; j int;
   v_l text;
   v_low text;
   v_orden_desde int := null;
   v_sen text[];
   v_con text;
+  v_ctx text;
 begin
   -- Se procesa LINEA POR LINEA a proposito: en Postgres los regex son
   -- dotall y un [^)]* cruza saltos de linea. Ese error ya nos mintio antes.
+  --
+  -- PERO linea por linea puro tiene su PROPIO punto ciego, y lo encontre
+  -- volcando picks_recomendados_hoy_raw: ahi el token vive en una linea
+  -- ("p.value ->> 'ev_estimado'") y la comparacion que decide vive tres
+  -- lineas mas abajo ("  END >= 4::numeric AND"), porque el CASE las separa.
+  -- La version anterior solo marcaba el momio y DEJABA PASAR el filtro por EV
+  -- y el ORDER BY por ev_num en la vista mas cargada de violaciones del
+  -- sistema. O sea: mi propio gate estaba sub-reportando.
+  --
+  -- Arreglo: la CONSTRUCCION se decide en la linea, pero las SENALES se
+  -- buscan en una ventana de 6 lineas hacia atras, que es el alcance tipico
+  -- de un CASE o un predicado partido en este esquema. La ventana se declara
+  -- aqui y es parte del contrato del detector.
+  --
+  -- COSTO DECLARADO DE LA VENTANA: genera falsos positivos cuando un token
+  -- queda hasta 6 lineas arriba de una comparacion que no tiene nada que ver.
+  -- En picks_recomendados_hoy_raw, las lineas 71 y 72 (ramas de parseo de
+  -- prob) heredan TOKEN_EV de la ventana y no son decisiones por EV. Por eso
+  -- el gate NO condena solo: exige clasificacion a mano de cada hallazgo P0.
+  -- El intercambio es deliberado: preferimos un falso positivo clasificable a
+  -- un falso negativo invisible.
   v_lineas := string_to_array(coalesce(p_src,''), E'\n');
   v_n := coalesce(array_length(v_lineas,1),0);
 
@@ -112,7 +134,15 @@ begin
       v_orden_desde := null;
     end if;
 
-    v_sen := public.forma_precio_en_linea(v_l) || public.token_precio_en_linea(v_l);
+    -- contexto: la linea mas hasta 6 lineas previas, sin comentarios
+    v_ctx := v_l;
+    for j in greatest(1, i-6) .. i-1 loop
+      if btrim(v_lineas[j]) !~ '^--' then
+        v_ctx := btrim(v_lineas[j]) || ' ' || v_ctx;
+      end if;
+    end loop;
+
+    v_sen := public.forma_precio_en_linea(v_ctx) || public.token_precio_en_linea(v_ctx);
     if coalesce(array_length(v_sen,1),0) = 0 then
       if v_low ~ ';' then v_orden_desde := null; end if;
       continue;
@@ -127,6 +157,7 @@ begin
     elsif v_low ~ 'row_number|dense_rank|\mrank\s*\(' then
       v_con := 'VENTANA_RANKING';
     elsif v_low ~ '^(and|or|where|having)\M' or v_low ~ '\mwhere\M'
+       or v_low ~ '^\s*end\s*(>=|<=|<>|!=|>|<|=)'
        or (v_low ~ '\mand\M' and v_low ~ '(>=|<=|<>|!=|>|<|=|\mis\s+not\s+null\M|\mis\s+null\M)') then
       v_con := 'FILTRO';
     elsif v_low ~ '^(if|elsif)\M' and v_low ~ '(>=|<=|<>|!=|>|<|=)' then
