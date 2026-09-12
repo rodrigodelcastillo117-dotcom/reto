@@ -646,3 +646,46 @@ ESTADO
   PARLAY_GANADO_CON_LEG_PENDIENTE = 0
   NFL_RESULTADO_EN_CONFLICTO      = 1   BLOCKER externo (401874394)
   PARLAY_PERDIDO_SIN_LEG_PERDIDO  = 1   hallazgo nuevo, abierto
+
+================================================================================
+RONDA ISS103 — P0-2.F coherencia matemática del modelo de fútbol (2026-09-12)
+================================================================================
+
+Reproduje el caso Cruz Azul–América (evento 401876981) y el problema es peor que
+lo reportado: no es la álgebra de la doble oportunidad, es que **hay varios
+motores publicando números distintos para el mismo evento**.
+
+Cuatro probabilidades de local para ESE evento:
+  38.4  analisis_json → probabilidades.home_win (_fuente_1x2 dixon_coles_determinista)
+  39.1  analisis_json → picks_recomendados[].prob  ← el pick PUBLICADO
+  39.9  fut_predicciones → 'Gana local'
+  49.1  lo que viste en la UI
+Y tres pares de xG, dos de ellos **dentro del mismo JSON**:
+  1.33/1.17 (goles_esperados) · 1.512/1.205 (pronostico_meta.xg) · 1.4546/1.3752 (λ)
+
+`mercados_desde_matriz()` es coherente por construcción: la doble oportunidad sale
+del mismo CTE normalizado. Verificado: 39.9+34.7 = 74.6 = el `12` guardado, exacto.
+El derivador de mercados secundarios NO es el defecto.
+
+MEDIDO EN 637 EVENTOS
+  SUMA_1X2_INVALIDA             = 0     cada motor suma 100 por separado
+  DOBLE_OPORTUNIDAD_INCOHERENTE = 0     la álgebra de fut_predicciones es correcta
+  MODEL_MATRIX_INCOHERENT       = 19    dos motores, distinta P(local)
+  PICK_FUERA_DE_SU_DISTRIBUCION = 340   el pick publicado no sale de su propia 1X2
+  desacuerdo máximo             = 28.6 pp
+
+PEOR CASO, evento 401876458:
+  Motor A: 48.6 / 25.6 / 25.7      Motor B: 20.0 / 16.2 / 63.8
+  No solo difieren: se contradicen en QUIÉN ES EL FAVORITO.
+
+DOS HALLAZGOS MÁS EN EL MISMO EVENTO
+* El pick se eligió por EDGE: `"edge_calculado": 11.3`, `"ev_estimado": "+11.4%"`,
+  `[PICK DE VALOR] Cruz Azul ML`. Viola el candado directamente.
+* `v_analisis_partido` **revienta** al leer este evento:
+  `invalid input syntax for type integer: "38.4"` — hay un cast a integer sobre
+  una probabilidad decimal. Medido y reportado; no lo toco sin su propio ciclo.
+
+Lo que NO hice, a propósito: no "corregí" ningún número. El arreglo correcto es
+elegir un motor canónico —el bakeoff A/B que el propio issue #4 exige— y suprimir
+en falla cerrada los mercados secundarios de todo evento incoherente. Eso necesita
+muestra histórica emparejada y es un frente propio, no un parche.
