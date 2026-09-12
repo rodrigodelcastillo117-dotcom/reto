@@ -361,3 +361,28 @@ begin
     raise warning 'ABIERTO: % compuertas de GATE21. Cambiar de donde sale una probabilidad publicada es cutover de modelo: requiere autorizacion del dueno.', v_fail;
   end if;
 end $$;
+
+-- =====================================================================
+-- GATE 22 (ISS117): LINAJE EN EL WRITER
+-- GATE 23 (ISS118): EL CLIENTE NO LEE EL GOBIERNO
+-- =====================================================================
+do $$
+declare g record; v_fail int := 0;
+begin
+  for g in select * from public.gate_linaje_de_writers() loop
+    if g.estado = 'PASS' then raise notice 'GATE22 % : PASS', g.gate;
+    elsif g.estado = 'INFO' then raise notice 'GATE22 % : INFO %', g.gate, g.cuenta;
+    else v_fail := v_fail + 1; raise warning 'GATE22 % : FAIL % -> %', g.gate, g.cuenta, g.detalle;
+    end if;
+  end loop;
+  if v_fail > 0 then
+    raise warning 'ABIERTO: GATE22. Registrar un modelo por motor es decision de modelo (bakeoff A/B para soccer), no plomeria.';
+  end if;
+
+  for g in select * from public.gate_gobierno_no_legible_por_cliente() loop
+    if g.gate = 'GOBIERNO_LEGIBLE_POR_CLIENTE' and g.estado <> 'PASS' then
+      raise exception 'GATE23 el cliente puede leer gobierno: %', g.detalle;
+    end if;
+    raise notice 'GATE23 % : % (%)', g.gate, g.estado, g.cuenta;
+  end loop;
+end $$;
