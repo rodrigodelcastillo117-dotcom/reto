@@ -432,3 +432,98 @@ ORDEN DE EJECUCIÓN DE ESTA RONDA
 SIGUIENTE, según tu orden: volcar toda la capa origen transitiva, luego sacar la
 verdadera model_version/calibration_version de cada P_RETO (que es lo que apaga
 el gate 13), luego clean bootstrap desde Git, y sólo después los 24/6/5/1.
+
+================================================================================
+RONDA ISS100 — issue #4, comentario 5645732488 (2026-09-12)
+================================================================================
+
+HALLAZGO P0 QUE NO ESTABA EN LA AUDITORÍA
+-----------------------------------------
+Al reproducir tu dossier de Dortmund–Paderborn encontré que `v_analisis_v2` keyea
+TODO el análisis por equipo (forma, tendencias, xG, H2H) con
+`escudos_partido.home_id/away_id`, que usa ids de **API-Football**, mientras
+`v_equipo_partido_espn_xg` e `historico_partidos_espn` usan ids de **ESPN**.
+Son dos espacios de enteros pequeños que colisionan, así que el join no falla:
+devuelve el historial de otro equipo en silencio.
+
+  evento 401884799
+    agenda_espn:     home 124 = Borussia Dortmund · away 3307 = SC Paderborn 07
+    escudos_partido: home 165                     · away 185
+    en espacio ESPN: 165 = NANTES                 · 185 = FC DALLAS
+
+O sea el bloque "tendencias.home" del dossier de Dortmund son los últimos 8 de
+**Nantes**, y el de away son los de **FC Dallas**. Medido: 186 de 186 eventos de
+fútbol desalineados, 37 con colisión silenciosa (el id ajeno existe en el espacio
+ESPN y tiene historia).
+
+Así descubrí el defecto: al comparar mi cálculo con el bloque vivo, el dossier
+decía home gana_pct=25 cuando Dortmund ganó 5 de sus últimos 8. No era un
+contrato incompleto de tendencias: eran los números de otro equipo.
+
+El H2H "sin enfrentamientos directos" también se calculó sobre Nantes vs FC
+Dallas. Da 0, y el H2H real de Dortmund vs Paderborn también da 0, así que tu
+conclusión era correcta POR CASUALIDAD, no por método.
+
+`home_forma`/`away_forma` sí estaban bien porque `v_fuerza_equipo` también usa
+ids de API-Football. Por eso el defecto es invisible: la mitad del dossier es
+correcta.
+
+LO ENTREGADO
+------------
+1. `partidos_recientes_equipo()` — últimos N reales por espn_team_id, con evento,
+   fecha, competencia (`espn_endpoint`), rival + rival_espn_id, local/visita,
+   marcador, resultado, source, capturado_max, data_asof, temporal_safe y
+   missing_reason. Si sólo hay 2, devuelve 2. Nunca rellena.
+   Dortmund da WWWWL real en 4 competencias, contra el 'WW' de `v_fuerza_equipo`
+   que sólo veía 2 partidos de Bundesliga.
+2. `tendencias_equipo_exactas()` — cada métrica con `aciertos` Y `muestra`, y el
+   pct derivado de esos dos. Ventana solicitada y obtenida por separado, más
+   `eventos_usados` para que se pueda replicar. Dortmund: gana 5/8, btts 4/8,
+   over25 5/8.
+3. `h2h_factual()` — identidad exacta por espn_team_id en ambos sentidos, corte
+   `fecha < kickoff`, falla cerrado con motivo. Para 401884799 da 0 y lo dice.
+   Nota: el H2H viejo NO usaba nombres; ya usaba ids. El problema era de qué
+   espacio venían esos ids.
+4. `v_contexto_factual_v1` — CONTEXT_ONLY, identidad ESPN desde `agenda_espn`.
+   Assertion 8 comprueba que ninguna vista la consume; no toca P_RETO.
+5. Cuarentena de Under 3.5 en el origen: tabla `mercado_cuarentena` +
+   `pick_en_cuarentena()`, aplicada a 8 vistas.
+   `MERCADO_EN_CUARENTENA_CANDIDATO = 0`.
+6. Regresión del fixture 401884799: 9 assertions.
+
+SIN ASCENSO COLATERAL
+---------------------
+18 filas Under 3.5 en `v_pick_canonico`, **11 eran rank 1**. Si borro y se
+recalcula el rank, asciende otro pick — lo que prohibiste. Apliqué el filtro como
+envoltura EXTERNA: el rank se calcula dentro, así que las filas desaparecen sin
+renumerar. Huella md5 de las 284 restantes (evento|mercado|pick|prob|rank)
+IDÉNTICA antes y después: ac7e12585a1ae9c8f7d1d6ebe8f2e287.
+
+LO QUE ENCONTRÉ DE MÁS QUE TU CONTEO
+------------------------------------
+Tú reportaste 18 + 22. El gate encontró 494 filas en 15 vistas más. Las separé en
+tres estados, no dos:
+  CANDIDATO (fecha futura probada, BLOQUEANTE)      -> 151, ahora 0
+  TEMPORALIDAD NO PROBADA (sin columna de fecha)    -> 328, SIGUE ABIERTO
+  HISTÓRICO PROBADO (fecha pasada)                  -> 0
+"Sin columna de fecha" no prueba que sea histórico, así que no le doy el beneficio
+de la duda. Y no las filtro: unas son registro histórico y borrarlas falsificaría
+el track record (ai_picks_historial 116, v_picks_medibles 116, track_record_* 28,
+picks_reales 4, v_tr_base 4); otras suenan prospectivas (v_oraculo_picks_activos
+26, v_picks_para_parlay 19, v_motor_valor_proximos 8, v_apuestas_equipo 7).
+Distinguirlas por el NOMBRE sería el atajo que este proyecto ya rechazó. Necesitan
+una declaración explícita de temporalidad.
+
+LO QUE NO HICE, A PROPÓSITO
+---------------------------
+No reescribí `v_analisis_v2`. Acotaste este bloque a "stage in Git, do not cut
+over". Dejo el gate que prueba el defecto y la vista correcta lista. Mientras el
+frontend no cambie de fuente, 37 dossieres siguen mostrando otro equipo.
+Esto es tuyo para decidir; mi recomendación es cambiarlo ya.
+
+DEUDA DE REPRODUCIBILIDAD, RECONOCIDA
+-------------------------------------
+La envoltura de cuarentena LEE la definición vigente de producción, igual que
+iss099. Es exactamente la deuda que marcaste como bloqueante del clean bootstrap.
+No queda cerrada aquí. El siguiente bloque es el volcado de la capa origen
+transitiva.
