@@ -304,3 +304,21 @@ begin
     end if;
   end loop;
 end $$;
+
+-- =====================================================================
+-- GATE 19 (ISS112): UN PARLAY NO PIERDE SI NINGUNA PATA PERDIO
+-- GUARDA_DE_CIERRE_INSTALADA es DURO. Las violaciones historicas quedan
+-- como WARNING porque revertir un cobro es decision del dueno.
+-- =====================================================================
+do $$
+declare g record;
+begin
+  for g in select * from public.gate_parlay_coherente() loop
+    if g.gate = 'GUARDA_DE_CIERRE_INSTALADA' and g.estado <> 'PASS' then
+      raise exception 'GATE19 la guarda zzzzz_parlay_no_pierde_sin_pata_perdida NO esta instalada';
+    elsif g.estado = 'PASS' then raise notice 'GATE19 % : PASS', g.gate;
+    elsif g.estado = 'INFO' then raise notice 'GATE19 % : INFO %', g.gate, g.cuenta;
+    else raise warning 'GATE19 % : FAIL % -> %', g.gate, g.cuenta, g.detalle;
+    end if;
+  end loop;
+end $$;
