@@ -24,26 +24,31 @@ with c as (
     (p->>'model_version') is not null and (p->>'model_version') <> ''       as modelo_ok,
     coalesce(p->>'semantic_validity','FAIL') = 'PASS'                       as identidad_ok,
     coalesce(p->>'empirical_sufficiency','PENDING') = 'OK'                  as datos_ok,
-    coalesce((p->>'temporalidad_limpia')::boolean, false)                   as tiempo_ok,
-    coalesce(p->>'respaldo','SIN_REGISTRO') in ('VALIDADO','EARLY')         as calidad_ok,
+    -- TEMPORALIDAD MEDIDA: el as-of real de las features tiene que ser ANTERIOR
+    -- al evento. Sin as-of medido no se afirma nada: FALLA CERRADO.
+    -- Antes usaba arranca_en > now(), que NO demuestra ausencia de lookahead.
+    ((p->>'feature_asof') is not null and (p->>'evento_at') is not null
+      and (p->>'feature_asof')::timestamptz < (p->>'evento_at')::timestamptz) as tiempo_ok,
+    -- SOLO VALIDADO autoriza. EARLY significa "no paso el holdout limpio".
+    coalesce(p->>'respaldo','SIN_REGISTRO') = 'VALIDADO'                    as calidad_ok,
     coalesce(p->>'data_readiness','') = 'READY'                             as datos_listos
 )
 select jsonb_build_object(
   'eligible', (modelo_ok and identidad_ok and datos_ok and tiempo_ok and calidad_ok and datos_listos),
   'reason_code', case
      when not modelo_ok    then 'SIN_MODEL_VERSION'
+     when not tiempo_ok    then 'SIN_LINAJE_MEDIDO'
+     when not calidad_ok   then 'CALIBRACION_NO_VALIDADA'
      when not identidad_ok then 'IDENTIDAD_EN_DISPUTA'
      when not datos_ok     then 'MUESTRA_INSUFICIENTE'
-     when not tiempo_ok    then 'TEMPORALIDAD_SUCIA'
-     when not calidad_ok   then 'CALIBRACION_NO_PERMITIDA'
      when not datos_listos then 'DATOS_NO_LISTOS'
      else 'OK' end,
   'criterios', jsonb_build_object('modelo',modelo_ok,'identidad',identidad_ok,
-     'datos',datos_ok,'temporalidad',tiempo_ok,'calidad',calidad_ok,'listos',datos_listos))
+     'datos',datos_ok,'temporalidad_medida',tiempo_ok,'calidad',calidad_ok,'listos',datos_listos))
 from c;
 $function$;
 comment on function public.elegibilidad_no_economica_v1(jsonb) is
-  'Elegibilidad canonica SIN NADA ECONOMICO. No lee ev, edge, kelly, stake ni momio. Sustituye a economic_eligibility_v1 en el objeto canonico.';
+  'Elegibilidad canonica SIN NADA ECONOMICO. Solo VALIDADO autoriza (EARLY no). La temporalidad se MIDE comparando feature_asof contra evento_at; sin as-of medido falla cerrado.';
 grant execute on function public.elegibilidad_no_economica_v1(jsonb) to anon, authenticated, service_role;
 
 -- ===========================================================================
@@ -101,7 +106,7 @@ begin
   d := nd; paso := 'entradas_elegibilidad';
   nd := replace(nd,
     '''ev_pct'', c.ev_pct, ''ev_threshold'', 2.5',
-    '''respaldo'', public.estado_respaldo(c.deporte, c.mercado, public.modelo_de_pick(c.fuente, c.deporte, c.mercado)), ''temporalidad_limpia'', (c.arranca_en > now())');
+    '''respaldo'', public.estado_respaldo(c.deporte, c.mercado, public.modelo_de_pick(c.fuente, c.deporte, c.mercado)), ''feature_asof'', NULL::text, ''evento_at'', c.arranca_en');
   if nd = d then raise exception 'iss096 PARCHE NO APLICADO en %', paso; end if;
 
   d := nd; paso := 'model_version';
@@ -255,3 +260,12 @@ end $$;
 --   SPORT_QUOTA                =  1  v_reto13m_daily: PARTITION BY deporte, dia_mx
 --   EV_EN_RUNTIME_ACTIVO       =  7  vistas USUARIO que invocan logica economica
 -- C NO ESTA COMPLETO. Los gates lo dicen en vez de esconderlo.
+
+-- ===========================================================================
+-- 8) LA DEFINICION FINAL DE v_pick_canonico VIVE EN GIT
+-- ===========================================================================
+-- baseline/v_pick_canonico.sql contiene el volcado INTEGRO ya limpio, byte a
+-- byte identico a produccion (md5 d12fd2437bba938a4ab90f8d833afce4, verificado).
+-- Antes este archivo AFIRMABA que ese baseline existia y NO ESTABA EN EL REPO.
+-- El dueno lo detecto. Con el baseline presente, la cadena se puede levantar
+-- desde Git sin memoria ni estado previo invisible.

@@ -94,3 +94,47 @@ normal_cdf(z numeric)	64700411fe3fddb2c06463daddc610fb
 # v_pick_canonico (21 KB) nunca estuvo en git. iss096 aporta la TRANSFORMACION,
 # que es reproducible contra esa base; una reconstruccion desde CERO absoluto
 # necesita ademas el volcado integro de esa vista preexistente.
+
+# ---------------------------------------------------------------------------
+# SEGUNDA RONDA DE RECAPTURA — 12-sep-2026 (AUDIT_NO_PASS 5643434081)
+# ---------------------------------------------------------------------------
+# El dueno encontro 4 cosas mas, las 4 ciertas:
+#
+# 1. iss094 dejaba COMENTADA la corrida que re-descarga y aplica el historico.
+#    Sobre una base limpia el archivo no reconstruia nada; las assertions
+#    pasaban solo porque produccion ya estaba corregida.
+#    ARREGLADO: bootstrap AUTO-CONDUCIDO con pg_cron. Un solo comando,
+#      select public.mlb_bootstrap_arrancar('2023-02-15','2026-09-12');
+#    y el job se desprograma solo al terminar. PROBADO sobre 6 fechas: paso 1
+#    encolo 6, paso 2 termino, aplico, cron_activo=0.
+#    La prueba encontro DOS bugs mios que ya estan corregidos:
+#      - arrancar() reiniciaba TODA la tabla de control (1,306 fechas) sin
+#        importar el rango pedido.
+#      - mlb_backfill_encolar (de iss088) insertaba el rango pedido pero
+#        SELECCIONABA cualquier fecha pendiente de toda la tabla: la causa raiz.
+#
+# 2. iss096 AFIRMABA que existia un baseline de v_pick_canonico y NO ESTABA EN
+#    EL REPO. ARREGLADO: baseline/v_pick_canonico.sql, volcado integro de 21 KB,
+#    byte a byte identico a produccion (md5 d12fd2437bba938a4ab90f8d833afce4,
+#    verificado calculando el hash del archivo y comparandolo).
+#
+# 3. elegibilidad_no_economica_v1 tenia DOS bugs conceptuales:
+#      - aceptaba EARLY como suficiente para elegir. EARLY significa "el
+#        calibrador NO paso el holdout limpio": no puede autorizar nada.
+#      - usaba arranca_en > now() como "temporalidad limpia". Que el partido no
+#        haya empezado NO demuestra ausencia de lookahead.
+#    ARREGLADO: solo VALIDADO autoriza, y la temporalidad se MIDE comparando
+#    feature_asof contra evento_at. Sin as-of medido falla cerrado. Como los
+#    motores no exponen as-of, v_pick_canonico pasa NULL y es_pick queda en
+#    false por dos razones independientes y correctas.
+#
+# 4. iss094b reconstruia NFL desde etiqueta de texto aunque el mismo archivo
+#    reconocia que su season_type esta sucio.
+#    ARREGLADO: NFL AISLADO. Fuera de calib_lambda y calib_eventos, sus
+#    calibradores invalidados con motivo, y un TRIGGER que revienta si alguien
+#    intenta reintroducirlo. Probado: la guarda rechaza la insercion.
+#
+# CHECKSUMS: 18 objetos. NUEVO ORDEN:
+#   iss088 -> iss089 -> iss090 -> iss091 -> iss094 -> iss094b -> iss095
+#          -> iss096 -> baseline/v_pick_canonico.sql -> gates_selector
+#          -> verificar_checksums_iss094_096
