@@ -1,0 +1,100 @@
+-- iss096 — C (parcial) + E: fuera la semántica económica del objeto canónico,
+--          y el registro de superficies COMPLETO con fail-closed.
+-- AUDIT_NO_PASS #5643138683.
+--
+-- ===========================================================================
+-- LO PRIMERO: EL DUEÑO TENÍA RAZÓN Y EL PROBLEMA ERA MUCHO MÁS GRANDE
+-- ===========================================================================
+-- Medido en el runtime activo: **71 funciones y 8 vistas** con semántica de
+-- EV/Kelly/edge/stake. No era "una vista con ev_pct": es un subsistema económico
+-- completo, con Kelly (kelly_fraccion_pct, kelly_sombra, kelly_stake__base),
+-- stake (build_stake_link, tamano_apuesta__base, tg_autoridad_stake), bankroll
+-- (simular_bankroll, sincronizar_bankroll__base) y límites de exposición.
+-- No lo arranco a ciegas. Este patch hace la parte que se puede hacer con
+-- certeza y DEJA MEDIDO el resto.
+--
+-- ===========================================================================
+-- C — HECHO
+-- ===========================================================================
+-- 1. `v_diagnostico_precio` ELIMINADA. El dueño fue explícito: mover el EV a una
+--    vista de diagnóstico no cumple lo que pidió. Tenía razón; la creé yo en
+--    iss093 y no debía existir.
+--
+-- 2. `elegibilidad_no_economica_v1(jsonb)` sustituye a `economic_eligibility_v1`
+--    en el objeto canónico. Implementa exactamente los 5 criterios del dueño:
+--      modelo correcto (model_version rastreable)
+--      identidad correcta (los motores no se contradicen)
+--      datos suficientes
+--      temporalidad limpia
+--      calidad/calibración permitida (VALIDADO o EARLY)
+--    No lee ev, edge, kelly, stake ni momio. Nada económico.
+--
+-- 3. `v_pick_canonico` operada con 7 parches verificados (aborta si alguno no
+--    aplica). Quedó en 0 la presencia de: decision_economica_v1,
+--    economic_eligibility_v1, el gate `edge_pct >= 5`, la narrativa "paga
+--    MAS/MENOS de lo que vale" y `ev_threshold`.
+--    `nivel_ventaja` ya no sale de edge_pct: ahora es `estado_respaldo()`.
+--    Estado verificado: 314 filas, es_pick=0 en todas con razón
+--    SIN_MODEL_VERSION, y ev_pct / edge_pct / prob_implícita todos NULL.
+--
+-- 4. Cinco vistas hoja limpiadas envolviéndolas en sí mismas y quitando las
+--    columnas económicas (sin reescribir sus definiciones a mano, para no
+--    divergir de producción): v_mejores_picks_mlb, v_motor_valor_proximos,
+--    v_oraculo_canonico, v_picks_con_valor, v_super_pick.
+--    Ahí salieron **Kelly de vistas de usuario**: `v_oraculo_canonico.kelly_pct`
+--    y `v_super_pick.kelly_pct_sugerido` estaban vivos.
+--
+-- ===========================================================================
+-- E — HECHO: el registro ya no miente
+-- ===========================================================================
+-- `superficie_usuario` pasa de 4 a 83 vistas con columna `clase`:
+--     USUARIO 58 · DIAGNOSTICO 20 · LAB 5
+-- Clasificación CONSERVADORA: el default es USUARIO; sólo baja de categoría lo
+-- inequívocamente interno. Gate nuevo `SUPERFICIE_SIN_CLASIFICAR`: una vista
+-- predictiva nueva que nadie clasifique CUENTA COMO VIOLACIÓN. Falla cerrado.
+--
+-- ===========================================================================
+-- Y AQUÍ ESTÁ EL PRECIO DE MEDIR DE VERDAD
+-- ===========================================================================
+-- El dueño avisó: «un gate que diga EV visible = 0 todavía no garantiza que toda
+-- la app esté limpia». Exacto. Con 4 vistas registradas el gate daba 0. Con 58:
+--
+--   EV_FIELDS_USER_VISIBLE        = 31   (era 0 con el registro chico)
+--   UNIFORM_BASELINE_PICK_GATE    =  5
+--   SPORT_QUOTA                   =  1
+--   EV_EN_RUNTIME_ACTIVO          =  7
+--   IN_SAMPLE_PROB_MUTATION       =  0
+--   NONCANONICAL_OR_TRIVIAL_LINES =  0
+--   UNTRACEABLE_APPROVED_PICK     =  0
+--   SUPERFICIE_SIN_CLASIFICAR     =  0
+--
+-- C NO ESTÁ COMPLETO y el gate ahora lo dice en vez de esconderlo. Lo que falta:
+--   * 31 columnas económicas en 12 vistas USUARIO, entre ellas kelly_pct en
+--     `ai_picks_historial` y `picks_recomendados_hoy`, score_valor en
+--     `picks_premium` / `v_picks_futbol_*`, brecha_pp en `v_picks_mlb_modelo`,
+--     y en `v_pick_canonico` las columnas que dejé en NULL (ev_pct, edge_pct,
+--     prob_implícita, explicacion_precio, favorito, prob_*_casa_pct). Esas ya no
+--     tienen semántica, pero siguen en el contrato; quitarlas exige recrear
+--     v_pick_canonico y sus 3 dependientes.
+--   * 5 vistas con baseline uniforme: v_oraculo_picks_activos,
+--     v_prediccion_reto_canonico, v_picks_futbol_calc, picks_premium,
+--     v_picks_para_parlay.
+--   * 1 cuota real por deporte: `v_reto13m_daily` hace
+--     PARTITION BY deporte, dia_mx → un pick por deporte por día.
+--   * 7 vistas USUARIO que aún invocan funciones económicas.
+--
+-- ===========================================================================
+-- UN FALSO POSITIVO MÍO, CORREGIDO
+-- ===========================================================================
+-- SPORT_QUOTA marcaba 3 e incluía `v_pick_canonico`. Falso positivo: mi patrón
+-- `partition by[^)]*deporte` cruzaba saltos de línea desde
+-- `PARTITION BY m0.espn_event_id, (` hasta un `deporte` que vive DENTRO de un
+-- CASE de deduplicación. Es el mismo tipo de error de regex que ya me pasó con
+-- v_oraculo_canonico. Patrón corregido a `partition by[^(]*\mdeporte\M`: exige
+-- que `deporte` sea DIMENSIÓN de partición y no esté dentro de un paréntesis
+-- anidado. Verificado: excluye v_pick_canonico y conserva las 2 reales.
+-- La cuota de verdad es una sola: v_reto13m_daily.
+--
+-- Y `ai_categorias_a_vetar` se reclasificó a DIAGNOSTICO porque es una lista
+-- interna de veto por rendimiento, no una pantalla. Se deja escrito el motivo:
+-- no se reclasifica para que pase un gate.
