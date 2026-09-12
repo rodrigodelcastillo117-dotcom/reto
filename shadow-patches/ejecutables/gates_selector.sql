@@ -407,3 +407,25 @@ begin
     raise exception 'GATE24 ABIERTO: % compuertas. Entro una pata nueva de un deporte sin contrato canonico, o alguien quito la guarda.', v_fail;
   end if;
 end $$;
+
+-- =====================================================================
+-- GATE 25 (ISS121): EL PRECIO LAVADO A TRAVES DE UNA FUNCION
+-- GATE21 mide si el precio esta ADENTRO de la probabilidad publicada.
+-- GATE19/ISS107 mide si el precio ELIGE, cuando se le ve en la linea.
+-- Este mide el caso que ninguno de los dos ve: el precio entra a una funcion
+-- escalar con nombre inocente y despues se filtra u ordena por su resultado,
+-- en una linea donde la palabra momio no aparece.
+-- =====================================================================
+do $$
+declare g record; v_fail int := 0;
+begin
+  for g in select * from public.gate_precio_de_segunda_mano() loop
+    if g.estado = 'PASS' then raise notice 'GATE25 % : PASS %', g.gate, g.cuenta;
+    else v_fail := v_fail + 1;
+         raise warning 'GATE25 % : FAIL % -> %', g.gate, g.cuenta, left(g.detalle,250);
+    end if;
+  end loop;
+  if v_fail > 0 then
+    raise warning 'ABIERTO: % compuertas de GATE25. La supresion de favoritos por falta de precio cambia lo que se publica: es cutover de seleccion y necesita autorizacion del dueno, no un parche mio.', v_fail;
+  end if;
+end $$;
