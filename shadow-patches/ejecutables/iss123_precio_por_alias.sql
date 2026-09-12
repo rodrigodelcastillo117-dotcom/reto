@@ -67,47 +67,60 @@ declare
   v_l text[]; v_n int; i int; ronda_n int;
   v_sucio text[] := '{}';
   v_nuevos int;
-  v_low text; v_con text; m text[]; s text; v_self text;
+  v_low text; v_con text; s text; seg text; v_self text; v_alias text;
+  v_segs text[];
   k_stop text[] := array['case','then','else','when','select','from','where','order',
                          'null','true','false','with','value','text','numeric','boolean',
-                         'jsonb','integer','interval','timestamptz','desc','nulls','last',
-                         'coalesce','nullif','round','extract','epoch','lower','upper'];
+                         'jsonb','integer','interval','desc','nulls','last','on','and','or',
+                         'not','is','in','as','by','end'];
 begin
   v_l := string_to_array(coalesce(p_src,''), E'\n');
   v_n := coalesce(array_length(v_l,1),0);
   if v_n = 0 then return; end if;
 
-  -- SIN VENTANA para sembrar. La senal tiene que estar en la MISMA linea que
-  -- define el alias. Con ventana de 6 lineas la contaminacion se desbordaba:
-  -- cualquier alias que cayera cerca de una mencion de precio quedaba sucio, y
-  -- de ahi se contagiaba todo. Precision sobre cobertura, a proposito, porque
-  -- este detector existe para producir hallazgos en los que se pueda confiar.
+  -- ATRIBUCION POR SEGMENTO, no por linea. Antes, una linea que definia varios
+  -- alias contaminaba TODOS. Caso real que me obligo a esto: en
+  -- refrescar_destacados la linea 39 define merc, ln, cu y clave, y solo cu es
+  -- el precio (b.over_odds). La version anterior ensucio clave, de ahi
+  -- pc_corta, de ahi cal_corta, y reporte como violacion un filtro por
+  -- probabilidad calibrada que no tiene nada que ver con el precio.
+  --
+  -- EXCEPCION NECESARIA: cuando la linea CIERRA mas parentesis de los que abre,
+  -- es la cola de una expresion que empezo arriba. Ahi segmentar parte la
+  -- llamada y el alias queda en un trozo sin precio. Caso real: la linea 41 de
+  -- reto_picks_hoy__base es "c.momio_mercado, c.liga) as veto", y segmentando
+  -- se perdia veto, que es una supresion real. En ese caso se atribuye con la
+  -- linea completa.
   for ronda_n in 1..8 loop
     v_nuevos := 0;
     for i in 1..v_n loop
       v_self := btrim(v_l[i]);
       if v_self ~ '^--' or v_self = '' then continue; end if;
 
-      if not (
-           coalesce(array_length(public.token_precio_en_linea(v_self),1),0) > 0
-        or coalesce(array_length(public.forma_precio_en_linea(v_self),1),0) > 0
-        or exists (select 1 from unnest(p_funcs) f where v_self ~* ('\m'||f||'\s*\('))
-        or exists (select 1 from unnest(v_sucio) x where v_self ~* ('\m'||x||'\M'))
-      ) then continue; end if;
+      if (length(v_self) - length(replace(v_self, ')', ''))) >
+         (length(v_self) - length(replace(v_self, '(', ''))) then
+        v_segs := array[v_self];
+      else
+        v_segs := public.segmentos_de_linea(v_self);
+      end if;
 
-      for m in select regexp_matches(lower(v_self), '\mas\s+([a-z_][a-z0-9_]{3,60})\s*(?:,|$)', 'g') loop
-        if m[1] = any(k_stop) or m[1] = any(v_sucio) then continue; end if;
-        v_sucio := v_sucio || m[1]; v_nuevos := v_nuevos + 1;
-        tipo := 'ALIAS_CONTAMINADO'; ord := i; nombre := m[1];
-        ronda := ronda_n; construccion := null; linea := v_self;
-        return next;
-      end loop;
-      for m in select regexp_matches(lower(v_self), '\m([a-z_][a-z0-9_]{3,60})\s*:=', 'g') loop
-        if m[1] = any(k_stop) or m[1] = any(v_sucio) then continue; end if;
-        v_sucio := v_sucio || m[1]; v_nuevos := v_nuevos + 1;
-        tipo := 'ALIAS_CONTAMINADO'; ord := i; nombre := m[1];
-        ronda := ronda_n; construccion := null; linea := v_self;
-        return next;
+      foreach seg in array v_segs loop
+        v_alias := (regexp_match(lower(seg), '\mas\s+"?([a-z_][a-z0-9_]{1,60})"?\s*$'))[1];
+        if v_alias is null then
+          v_alias := (regexp_match(lower(seg), '^([a-z_][a-z0-9_]{1,60})\s*:='))[1];
+        end if;
+        if v_alias is null or v_alias = any(k_stop) or v_alias = any(v_sucio) then continue; end if;
+
+        if     coalesce(array_length(public.token_precio_en_linea(seg),1),0) > 0
+            or coalesce(array_length(public.forma_precio_en_linea(seg),1),0) > 0
+            or exists (select 1 from unnest(p_funcs) f where seg ~* ('\m'||f||'\s*\('))
+            or exists (select 1 from unnest(v_sucio) x where seg ~* ('\m'||x||'\M'))
+        then
+          v_sucio := v_sucio || v_alias; v_nuevos := v_nuevos + 1;
+          tipo := 'ALIAS_CONTAMINADO'; ord := i; nombre := v_alias;
+          ronda := ronda_n; construccion := null; linea := left(seg,280);
+          return next;
+        end if;
       end loop;
     end loop;
     exit when v_nuevos = 0;
@@ -116,7 +129,6 @@ begin
   for i in 1..v_n loop
     v_self := btrim(v_l[i]); v_low := lower(v_self);
     if v_self ~ '^--' or v_low = '' then continue; end if;
-    -- si el precio se ve en la linea, ya es hallazgo de ISS107: no se duplica
     if coalesce(array_length(public.token_precio_en_linea(v_self),1),0) > 0
        or coalesce(array_length(public.forma_precio_en_linea(v_self),1),0) > 0 then continue; end if;
 
@@ -137,6 +149,34 @@ begin
       end if;
     end loop;
   end loop;
+end
+$fn$;
+
+-- ---------------------------------------------------------------------
+-- 1b. PARTIR UNA LINEA EN SUS SEGMENTOS "expresion as alias"
+-- ---------------------------------------------------------------------
+-- Respeta la profundidad de parentesis para no cortar dentro de una llamada,
+-- y respeta las comillas simples para no cortar dentro de un literal.
+create or replace function public.segmentos_de_linea(p_linea text)
+returns text[] language plpgsql immutable as $fn$
+declare
+  v_out text[] := '{}'; v_buf text := ''; v_prof int := 0;
+  i int; ch text; v_q boolean := false;
+begin
+  for i in 1..length(p_linea) loop
+    ch := substr(p_linea, i, 1);
+    if ch = '''' then v_q := not v_q; end if;
+    if not v_q then
+      if ch = '(' then v_prof := v_prof + 1;
+      elsif ch = ')' then v_prof := v_prof - 1;
+      elsif ch = ',' and v_prof <= 0 then
+        v_out := v_out || btrim(v_buf); v_buf := ''; continue;
+      end if;
+    end if;
+    v_buf := v_buf || ch;
+  end loop;
+  if btrim(v_buf) <> '' then v_out := v_out || btrim(v_buf); end if;
+  return v_out;
 end
 $fn$;
 
@@ -225,13 +265,31 @@ revoke all on function public.gate_precio_por_alias() from anon, authenticated;
 -- =====================================================================
 -- 4. RESULTADO (2026-09-12)
 -- =====================================================================
--- Escaneados los 158 objetos del camino de decision: 105 alias sembrados,
--- 15 decisiones por alias contaminado, en SOLO 4 objetos:
+-- Escaneados los 158 objetos del camino de decision. Hubo DOS corridas y la
+-- diferencia entre ellas es la parte honesta de este parche.
+--
+-- CORRIDA v1, atribucion por LINEA: 15 decisiones en 4 objetos.
+-- CORRIDA v2, atribucion por SEGMENTO: 12 decisiones en 3 objetos.
+-- Las 3 que desaparecieron eran FALSOS POSITIVOS MIOS, y la cadena del error
+-- quedo completamente trazada:
+--     linea  39  define merc, ln, cu y clave en la MISMA linea. Solo cu es el
+--                precio (b.over_odds). v1 ensucio los cuatro.
+--     linea  64  pc_corta referencia c.clave        -> heredo la suciedad
+--     linea  78  cal_corta referencia p.pc_corta    -> heredo la suciedad
+--     linea 111  and e.cal_corta*100 > 50           -> REPORTADO COMO VIOLACION
+--  Y era falso: comprobe que calibrar_prob_motor_live recibe (prob, deporte,
+--  mercado), NO recibe momio, no esta en ruta_precio_lavadora y no tiene ni
+--  una linea con aritmetica de precio. O sea, v1 iba a acusar un filtro por
+--  probabilidad calibrada de ser un filtro por precio.
+--  La corrida v1 se conserva en public.ruta_precio_taint_v1 para poder
+--  comparar; no se borro a ciegas.
+--
+-- LO QUE QUEDA (v2), 12 decisiones en 3 objetos:
 --
 --   reto_picks_hoy__base    8 hallazgos  VIOLACION_CANDADO
 --       ORDEN          linea  76  order by monto_cand desc
 --       FILTRO         lineas 88, 89, 93, 94
---       RAMA_SUPRESION lineas 112 (monto_cand), 59 y 125 (veto)
+--       RAMA_SUPRESION linea 112 (monto_cand), lineas 59 y 125 (veto)
 --       veto se define en la linea 41 con una llamada que recibe c.momio_mercado
 --
 --   kelly_stake__base       2 hallazgos  DIMENSIONAMIENTO_ECONOMICO
@@ -239,27 +297,35 @@ revoke all on function public.gate_precio_por_alias() from anon, authenticated;
 --       usan v_zona (que lleva precio) solo para DIMENSIONAR el stake. El
 --       dueno lo autoriza: el precio puede servir para EV/Kelly/payout.
 --
---   refrescar_destacados    3 hallazgos  REVISION_PENDIENTE
---       and e.cal_corta*100 > 50 / and e.cal_larga*100 > 50. Son
---       probabilidades CALIBRADAS, no precios. La pregunta sin resolver: la
---       calibracion que las produce se elige por BANDA DE MOMIO, como en
---       v_super_pick linea 117? Si es si, el precio esta adentro de la
---       probabilidad y es asunto de ISS114. No lo cierro sin comprobarlo.
---
 -- ESTADO DEL GATE:
 --   PRECIO_POR_ALIAS_SIN_CLASIFICAR         PASS  0
 --   PRECIO_POR_ALIAS_VIOLACION_ABIERTA      FAIL  8
---   PRECIO_POR_ALIAS_PENDIENTE_DE_LECTURA   INFO  3
+--   PRECIO_POR_ALIAS_PENDIENTE_DE_LECTURA   PASS  0
 --   ORDEN_CANONICO_SALE_DE_KELLY            FAIL  1
---   TAINT_DETECTOR_TIENE_SEMILLA            PASS  105
+--   TAINT_DETECTOR_TIENE_SEMILLA            PASS  104
 --
--- Y en ISS107, al adjudicar las 24 lineas P0 de las superficies canonicas:
+-- Y en ISS107, al adjudicar las 24 lineas P0 de las superficies canonicas
+-- leyendo cada una:
 --   VIOLACION_CANDADO                19 -> 27
---   P0 sin clasificar               279 -> 257
+--   P0 sin clasificar               279 -> 256
 --   Se agrego la categoria PRECIO_DENTRO_DE_LA_PROBABILIDAD al CHECK de
 --   ruta_precio_hallazgo, porque v_super_pick linea 117 elige la CALIBRACION
 --   por banda de momio y no habia donde clasificar eso.
---   Tres hallazgos quedaron con veredicto NULL A PROPOSITO
---   (v_pick_canonico:329, v_super_pick:150, y el de refrescar_destacados):
---   el gate los sigue contando como abiertos, que es lo correcto.
+--
+-- DOS QUE RESOLVI LEYENDO, no suponiendo:
+--   v_pick_canonico:329 (es_senal) -> DIAGNOSTICO_NO_DECIDE. Busque todos los
+--     consumidores: es_senal solo aparece PROYECTADA, en ningun WHERE, ORDER BY
+--     ni CASE de supresion. SALVEDAD anotada: codifica "pick sin momio" y viaja
+--     al frontend; si React filtra por esa columna, el precio decide del lado
+--     del cliente. El frontend es de Lovable y yo no lo audito.
+--   refrescar_destacados -> falso positivo, explicado arriba.
+--
+-- UNA QUE DEJO ABIERTA A PROPOSITO, y no por falta de evidencia:
+--   v_super_pick:150, COALESCE(c.roi_segmento,0) > 0 AS perfil_respalda.
+--   El ROI realizado se calcula con momios historicos. Usar rendimiento pasado
+--   para autorizar un pick de hoy: es el precio decidiendo, o es medicion
+--   legitima? Es una decision de PRINCIPIO del dueno, no un hueco mio, y la
+--   respuesta cambia que se publica. Queda registrada con los dos argumentos
+--   en public.ruta_precio_pregunta_abierta, y el hallazgo sigue contando como
+--   abierto en el gate, que es lo correcto.
 -- =====================================================================
