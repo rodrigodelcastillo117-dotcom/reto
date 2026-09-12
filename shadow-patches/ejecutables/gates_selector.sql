@@ -340,3 +340,24 @@ begin
     raise warning 'ABIERTO: % compuertas de GATE20. Las 19 patas sin evento y el tenis no declarado son decisiones de producto, no parches de vista.', v_fail;
   end if;
 end $$;
+
+-- =====================================================================
+-- GATE 21 (ISS114): EL PRECIO NO PUEDE ESTAR ADENTRO DE LA PROBABILIDAD
+-- ISS107 mide si el precio ELIGE un pick. Este mide si el precio esta
+-- ADENTRO del numero que se publica como probabilidad. Son dos
+-- prohibiciones distintas del candado y hacen falta los dos gates.
+-- =====================================================================
+do $$
+declare g record; v_fail int := 0;
+begin
+  for g in select * from public.gate_p_reto_sin_precio() loop
+    if g.estado = 'PASS' then raise notice 'GATE21 % : PASS', g.gate;
+    elsif g.estado = 'INFO' then raise notice 'GATE21 % : INFO % -> %', g.gate, g.cuenta, g.detalle;
+    else v_fail := v_fail + 1;
+         raise warning 'GATE21 % : FAIL % -> %', g.gate, g.cuenta, g.detalle;
+    end if;
+  end loop;
+  if v_fail > 0 then
+    raise warning 'ABIERTO: % compuertas de GATE21. Cambiar de donde sale una probabilidad publicada es cutover de modelo: requiere autorizacion del dueno.', v_fail;
+  end if;
+end $$;
