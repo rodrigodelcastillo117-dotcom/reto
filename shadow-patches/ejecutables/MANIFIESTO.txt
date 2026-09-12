@@ -593,3 +593,56 @@ sin explicación verificada.
 SIGUIENTE, según el orden fijado: volcar la capa origen transitiva (que cierra la
 deuda de los wrappers que leen definiciones de producción), luego la llave real de
 las 302 filas sin defaults, luego disposable con el candidato exacto.
+
+================================================================================
+RONDA ISS102 — P0-1 NFL RESULT TRUTH / PARLAY AUTOGRADE (2026-09-12)
+================================================================================
+
+Reproducido primero: evento 401872657, `nfl_partidos` decía `scheduled` con
+marcador NULL y se había actualizado HOY 13:23, mientras `live_scores` tenía
+FINAL 7-27 desde el día 11.
+
+VERIFIQUÉ LAS CALIFICACIONES CONTRA DATO REAL, no contra ausencia de dato:
+los game logs del evento dan McCaffrey 0 TD, Adams 0 TD, Stafford 0 pases de TD
+(el único TD de LAR fue carrera de Kyren Williams) y 34 puntos totales < 50.5.
+Las cuatro calificaciones ya eran correctas. Lo roto era la AUTORIDAD DE ESTADO.
+
+Detalle que importa para cualquier grading de TDs: en `nfl_player_game_logs`,
+`pass_tds` y `rec_tds` cuentan EL MISMO touchdown desde los dos lados. El total
+real de un equipo es rush_tds + rec_tds. Sumar pass_tds lo duplicaría.
+
+CONFLICTO REAL DE AUTORIDAD DESCUBIERTO
+---------------------------------------
+Evento 401874394 (Titans–Bears): `live_scores` dice **final 0–0**, el box score
+dice 15–24, y los game logs muestran CHI 3 TD reales y TEN 1 TD. El 0–0 es falso.
+Por eso la precedencia NO puede ser "la fuente más reciente": `live_scores` es un
+feed en vivo que puede quedar capturado y publicar `final` con placeholder.
+Precedencia declarada: box score ESPN > live_scores > game logs como prueba de
+que SE JUGÓ (nunca del marcador; no se sintetiza sumando touchdowns).
+
+IDEMPOTENCIA PROBADA
+--------------------
+  ANTES huella dca717d4…, 298 finales, 4 desalineados
+  RUN 1 huella d7514cea…, 301 finales, 1 desalineado, 3 filas
+  RUN 2 huella d7514cea…, 301 finales, 1 desalineado, **0 filas**
+
+picks_calificacion: era una segunda verdad. 42 de 68 vacías y 26 divergentes, de
+las cuales **6 discrepaban en el RESULTADO del leg** (decían `pendiente` con
+`pick_desc` NULL mientras `picks_data` ya tenía el grado). Ahora es una derivación
+por trigger. 42→0 vacías, 26→0 divergentes, run2 idéntico.
+
+ANTES DE ESCRIBIR verifiqué que los 25 triggers de `parlays` no duplicaran
+economía: bankroll, recálculo semanal, notificación, auditoría y captura de
+aprendizaje están todos guardados por cambio de `resultado`. Medido: huella
+económica idéntica en las tres fases y notificaciones 362 → 362 → 362.
+
+CONTROLES NEGATIVOS (revertidos)
+  devolver 401872657 a 'scheduled'         -> NFL_ESTADO_DESALINEADO 0 → 1
+  corromper picks_calificacion de fbb18adb -> PARLAY_CALIFICACION_DIVERGENTE 0 → 1
+
+ESTADO
+  NFL_ESTADO_DESALINEADO          = 0
+  PARLAY_CALIFICACION_DIVERGENTE  = 0
+  PARLAY_GANADO_CON_LEG_PENDIENTE = 0
+  NFL_RESULTADO_EN_CONFLICTO      = 1   BLOCKER externo (401874394)
+  PARLAY_PERDIDO_SIN_LEG_PERDIDO  = 1   hallazgo nuevo, abierto
