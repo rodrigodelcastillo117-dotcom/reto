@@ -324,3 +324,111 @@ ORDEN DE EJECUCIÓN DE ESTA RONDA
   2. iss098b_tombstone_favoritos.sql                        (5 assertions)
   3. gates_selector.sql                                     (runner de 12)
   4. verificar_checksums_iss098.sql
+
+================================================================================
+RONDA ISS099 — AUDIT_NO_PASS 5645505673 (2026-09-12)
+================================================================================
+
+Tus tres hallazgos, los tres reales, los tres reproducidos antes de tocar nada.
+
+1) IDENTIDAD INCOMPLETA: FALTABAN DEPORTE Y LIGA
+   Tu sonda: un MLB real (Cleveland Guardians vs Athletics, 401816997) pasado como
+   `soccer` con motor de fútbol devolvía PASS. Al probarla encontré que el hueco
+   era de ida y vuelta: también pasé un Liga MX real como `baseball` con motor de
+   MLB y daba PASS. La función recibía `p_deporte` y solo lo usaba para
+   `linea_es_canonica` y `motor_modelo_mapa`; nunca lo comparaba con la agenda.
+
+   Arreglo: firma nueva de 8 argumentos con `p_liga`, que verifica
+   DEPORTE_NO_COINCIDE_CON_AGENDA y LIGA_NO_COINCIDE_CON_AGENDA.
+   `deporte_canonico()` normaliza mlb/beisbol → baseball, nfl → football,
+   futbol → soccer, con el americano PRIMERO porque 'futbol americano' contiene
+   'futbol' y caería en soccer (ese hueco latente sigue en la normalización de
+   `estado_respaldo`; aquí no está).
+
+   La liga se compara por NOMBRE y no por `liga_id`: medí la cobertura antes y
+   `liga_id` es NULL en los 124 eventos de baseball. Exigir `liga_id` habría
+   rechazado todo MLB. `liga_nombre` está al 100% en los tres deportes.
+   Costo del candado: 0 filas. Las 302 canónicas ya traían deporte y liga exactos
+   (MLB/MLS/Liga MX/Scottish/Libertadores/La Liga, todas coincidiendo).
+
+   La firma de 7 argumentos no se borró —borrar con dependientes es lo que me
+   costó 10 vistas— sino que devuelve 'FIRMA_OBSOLETA_SIN_LIGA'. Y eso falla de
+   verdad: `elegibilidad_no_economica_v1` exige `semantic_validity = 'PASS'`, así
+   que cualquier vista olvidada con la firma vieja deja de producir picks en vez
+   de pasar en silencio. `v_pick_canonico` se parcheó con guarda de idempotencia
+   exigiendo 1 y solo 1 ocurrencia.
+
+2) EL GATE DE P_RETO SEGUÍA VACÍO — AHORA NO PUEDE DAR VERDE
+   Tenías razón: 302 comparados / 0 desplazados / 302 SIN LLAVE no demuestra nada.
+   Yo ya lo reportaba, pero reportarlo y dejarlo en verde es lo mismo que
+   esconderlo.
+
+   Ahora `P_RETO_SIN_LLAVE_TRAZABLE` es el gate 13, BLOQUEANTE, y vale 302.
+   Lo puse como contador SEPARADO en vez de sumarlo al 10 a propósito: "nada se
+   movió" y "no pudimos comprobar si se movió" son dos cosas distintas y meterlas
+   en el mismo número volvería a esconder una dentro de la otra.
+   `todas_en_cero` ahora es false por esto, que es el estado honesto.
+   Cerrarlo es el punto 3 de tu orden y no lo adelanté.
+
+3) AUTORIDAD DEL CALIBRADOR AMBIGUA
+   Confirmado y peor de lo que sonaba: las DOS llaves tienen 2 métodos con
+   `creado_at` EMPATADO AL MICROSEGUNDO.
+     baseball/Over-Under/mlb_totales_normal_v1/cal_v4  isotonic y platt  23:21:56.476865
+     soccer/1X2/soccer_1x2_poisson_v1/cal_v4           identity y vector_scaling  23:33:35.969210
+   `ORDER BY creado_at DESC LIMIT 1` sobre timestamps idénticos es no
+   determinista. Y el aplicador ni exigía `elegido`.
+
+   Arreglo en dos niveles:
+   - `ux_calibrador_autoridad_unica`: índice ÚNICO parcial sobre
+     (deporte, mercado, model_version, calibration_version)
+     WHERE elegido AND apto_para_lock AND NOT invalidado.
+     La ambigüedad deja de ser detectable y pasa a ser IMPOSIBLE de insertar.
+   - el aplicador exige `elegido AND apto_para_lock AND NOT invalidado` y ya no
+     ordena ni limita: 0 autoridades → identidad; más de 1 → NULL, que el gate
+     cuenta como violación. No adivina.
+   - gate nuevo `CALIBRADOR_APTO_SIN_ELEGIR`: una fila `apto_para_lock` sin
+     `elegido` el aplicador la ignora, así que parece autorizada en el registro y
+     no lo está. Hoy 0, pero antes era invisible.
+
+--------------------------------------------------------------------------------
+CONTROLES NEGATIVOS (todos revertidos)
+--------------------------------------------------------------------------------
+  identidad sin verificar deporte ni liga -> el gate marca 80 de 320 aceptadas,
+      exactamente 40 'deporte_cambiado' y 40 'liga_cambiada'. Con la nueva: 0.
+  una sola autoridad (platt elegido+apto) -> aplicador: 62.5 -> 54.2
+  segunda autoridad en la misma llave (isotonic) -> BLOQUEADO por el índice
+  dos autoridades en soccer (identity + vector_scaling) -> BLOQUEADO por el índice
+  estado restaurado: 0 autoridades, 0 aptos
+
+El gate conductual ahora prueba 320 mutaciones (40 eventos x 8 tipos), con
+deporte y liga tomados de eventos REALES de la propia agenda, no inventados.
+
+--------------------------------------------------------------------------------
+GATES: 13
+--------------------------------------------------------------------------------
+  EV_FIELDS_USER_VISIBLE                24   (sin tocar, va al final de tu orden)
+  EV_EN_RUNTIME_ACTIVO                   6   (sin tocar)
+  UNIFORM_BASELINE_PICK_GATE             5   (sin tocar)
+  SPORT_QUOTA                            1   (v_reto13m_daily, sin tocar)
+  IN_SAMPLE_PROB_MUTATION                0
+  NONCANONICAL_OR_TRIVIAL_LINES          0
+  UNTRACEABLE_APPROVED_PICK              0
+  SUPERFICIE_SIN_CLASIFICAR              0
+  IDENTIDAD_NO_EXACTA                    0   (ahora incluye deporte, liga y firma)
+  P_RETO_DESPLAZADA_NO_REGISTRADA        0
+  CALIBRADOR_AUTORIDAD_INVALIDA          0   (ahora incluye ambigüedad)
+  SUPERFICIE_ALTERADA_EN_SILENCIO        0
+  P_RETO_SIN_LLAVE_TRAZABLE            302   NUEVO Y BLOQUEANTE
+
+Reproducibilidad: 6 de 6 cuerpos IGUAL_AL_ARCHIVO a la primera. En iss098
+fallaron 7 de 9 y tuve que ejecutar el archivo para alinear producción; esta vez
+escribí el archivo con los cuerpos exactos desde el principio.
+
+ORDEN DE EJECUCIÓN DE ESTA RONDA
+  1. iss099_identidad_deporte_liga_y_autoridad_unica.sql   (10 assertions)
+  2. gates_selector.sql                                    (runner de 13)
+  3. verificar_checksums_iss099.sql
+
+SIGUIENTE, según tu orden: volcar toda la capa origen transitiva, luego sacar la
+verdadera model_version/calibration_version de cada P_RETO (que es lo que apaga
+el gate 13), luego clean bootstrap desde Git, y sólo después los 24/6/5/1.
