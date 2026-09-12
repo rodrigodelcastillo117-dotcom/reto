@@ -28,13 +28,36 @@ directa o transitivamente.**
 | `lab_dq_medicion_v1` | sí | mismo snapshot |
 | `v_lab_dq_capturas_faltantes` | sí | mismo snapshot |
 | `v_picks_con_valor` | sí | `shadow-patches/prepared/iss078_...sql` |
-| **`v_mis_favoritos_analisis`** | **NO** | **no existe definición en ningún sitio** |
+| **`v_mis_favoritos_analisis`** | **sí, tardíamente** | **`pg_stat_statements`** (ver corrección abajo) |
 
 `v_mis_favoritos_analisis` alimentaba la pantalla **Favoritos**. `iss074` decía
 literalmente que su cuerpo se recuperaba con
 `select pg_get_viewdef('public.v_mis_favoritos_analisis'::regclass, true)` —
 o sea, **nunca estuvo versionada**. Es exactamente la deuda que yo llevaba dos
 rondas señalando como "riesgo", y fui yo quien la convirtió en pérdida.
+
+### CORRECCIÓN (2026-09-12, ronda ISS098)
+
+Escribí arriba que de esta vista **"no existe definición en ningún sitio"**. Eso
+era **falso**. El texto completo del `create or replace view` estaba grabado en
+`pg_stat_statements` —2094 caracteres, contador reseteado el 2026-09-11
+10:48:44+00— y lo recuperé íntegro. Me faltó buscar ahí antes de declarar la
+pérdida total. La definición queda guardada en
+`public.superficie_retirada.definicion_historica` y en
+`iss098b_tombstone_favoritos.sql`.
+
+Dos cosas que esto cambia, y una que no:
+
+* **Sí había dónde buscar.** Declaré una pérdida irrecuperable sin agotar las
+  fuentes. Ese es un error de método aparte del `cascade`.
+* **La vista no se redespliega de todos modos.** El dueño ordenó retirarla
+  formalmente (AUDIT_NO_PASS 5644082184) porque Lovable ya quitó la dependencia.
+  Y hay una razón de fondo: la definición recuperada exponía `nivel_ventaja`,
+  `zona`, `es_pick` y `favorito_pct` directo en Favoritos, o sea diagnóstico
+  económico en una superficie de usuario. Reconstruirla tal cual habría
+  reintroducido lo que estamos sacando. Retirarla es mejor que restaurarla.
+* **Lo que no cambia:** el `cascade` fue mi error y destruyó 10 vistas. Que una
+  de ellas resultara recuperable después no lo hace menos grave.
 
 ## Por qué pasó, sin excusas
 
@@ -72,8 +95,21 @@ que no se puede reconstruir sin decidir de nuevo qué debía mostrar.
 * Regla operativa: **nunca `cascade` sin volcar antes** las definiciones de todo
   lo que aparece en `pg_depend`.
 
-## Lo que hace falta y no voy a adivinar
+## Cerrado en ISS098b: retiro formal, no reconstrucción
 
-`v_mis_favoritos_analisis` hay que reconstruirla decidiendo qué debe mostrar
-Favoritos, no inventando lo que yo creo que decía. Tenía 25 columnas, 4
-predictivas, y colgaba de `v_pick_canonico`; eso es todo lo que sé de ella.
+El dueño decidió —y era la mejor decisión— **no reconstruirla**. Quedó retirada
+con lápida en `public.superficie_retirada`, con la prueba de cero consumidores en
+cinco frentes (`pg_proc`, `pg_get_viewdef`, `pg_policy`, repositorio Git y
+`pg_stat_statements`, donde los únicos 5 statements que la mencionan son DDL mío
+y un censo mío, **cero SELECT de app**) y con la definición histórica guardada.
+
+Para que esto no se pueda repetir en silencio se añadieron dos cierres:
+
+* `gate_superficie_resucitada()` — una vista con lápida que vuelva a existir, o
+  que alguien vuelva a registrar como viva, enciende el gate.
+* trigger `tg_superficie_solo_sale_con_lapida` en `superficie_usuario` — borrar
+  una fila del registro **exige** que exista antes la lápida con motivo y
+  evidencia. Probado: `delete ... where vista='v_pick_canonico'` → bloqueado.
+
+`SUPERFICIE_REGISTRADA_INEXISTENTE` pasó de 1 a 0 por retiro con evidencia, no
+por borrar la fila para apagar el gate.

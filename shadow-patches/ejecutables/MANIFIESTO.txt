@@ -195,3 +195,132 @@ normal_cdf(z numeric)	64700411fe3fddb2c06463daddc610fb
 # CHECKSUMS a 23 objetos. BASELINE MARCADO COMO OBSOLETO a proposito: la
 # definicion cambio 3 veces despues de capturarlo, y prefiero decirlo a dejar un
 # volcado caducado pareciendo bueno.
+
+================================================================================
+RONDA ISS098 — AUDIT_NO_PASS 5644082184 (2026-09-12)
+================================================================================
+
+Los cuatro puntos del dueño, cerrados. Las dos sondas se reprodujeron en
+producción ANTES de tocar nada:
+
+  identidad_valida('401876965','soccer','Moneyline','Gana local','a','e',...)
+      antes -> PASS                          ahora -> HOME_NO_COINCIDE_CON_AGENDA
+  estado_respaldo('baseball','Over/Under','mlb_totales_normal_v1','NO_EXISTE')
+      antes -> INSUFFICIENT                  ahora -> CALIBRATION_VERSION_INEXISTENTE
+
+1) IDENTIDAD EXACTA  — iss098 secciones 1 y 2
+   Fuera las dos ramas `ilike '%'||...||'%'` que dejaban pasar 'a' y 'e'. La
+   identidad ahora es: igualdad normalizada contra agenda_espn, o un alias
+   REGISTRADO en identidad_equipo_alias atado a ESE espn_id.
+   13 variantes reales registradas a mano (MLS y Liga MX: 'Chicago Fire' vs
+   'Chicago Fire FC', 'Club America' vs 'América', 'Red Bull New York' vs
+   'New York Red Bulls'...). Cada una verificada 1:1 y sin colisionar con el
+   nombre canónico de otro equipo.
+   COSTO REAL: 0 filas canónicas perdidas. Las 302 siguen en 267 PASS /
+   35 LINEA_NO_CANONICA, igual que antes.
+   NO usé equipos_alias, la tabla que ya llena aprender_alias_equipos() por cron:
+   esa se construye con similarity() >= 0.75 e incluye entradas 'inferido' con
+   confianza 0.80-0.85. Es matching difuso. Usarla sería lavar por tabla lo que
+   el dueño acaba de rechazar.
+
+2) EL GATE DE CALIBRACIÓN  — iss098 sección 4
+   El dueño tenía razón: exigir P_RETO == P_RAW habría roto una calibración
+   futura legítima. Ahora el gate compara contra
+   aplicar_calibrador_autorizado(), que aplica SOLO el calibrador
+   apto_para_lock de la llave exacta (deporte+mercado+model+calibration).
+   Sin calibrador autorizado, la transformación esperada es la identidad.
+   vector_scaling devuelve null: es multiclase, no se verifica desde un escalar,
+   y el gate lo cuenta como violación. Falla cerrado.
+   La tolerancia se amplía solo con ajustes_a_p_reto.magnitud_max_pp, columna
+   NUEVA y numérica: el gate nunca parsea el texto de `magnitud`.
+
+3) ERROR DE VERSIÓN EXPLÍCITO  — iss098 sección 3
+   Nuevos retornos: CALIBRATION_VERSION_INEXISTENTE y CALIBRADOR_INVALIDADO
+   (este último es el caso NFL sucio). Verificado que ningún consumidor compara
+   contra 'INSUFFICIENT'; la elegibilidad exige = 'VALIDADO', así que sigue
+   fallando cerrado.
+
+4) TOMBSTONE DE v_mis_favoritos_analisis  — iss098b
+   RETIRADA, no reconstruida. Cero consumidores probado en cinco frentes.
+   Dos cierres nuevos: gate_superficie_resucitada() y el trigger
+   tg_superficie_solo_sale_con_lapida, que impide borrar una fila del registro
+   de superficie sin lápida con evidencia (probado: bloquea v_pick_canonico).
+
+--------------------------------------------------------------------------------
+TRES COSAS QUE ENCONTRÉ YO ESTA RONDA, Y QUE NO ME PIDIERON
+--------------------------------------------------------------------------------
+
+a) LA DEFINICIÓN PERDIDA NO ESTABA PERDIDA. Escribí en mi informe de incidente
+   que de v_mis_favoritos_analisis "no existe definición en ningún sitio". Era
+   FALSO: estaba íntegra en pg_stat_statements, 2094 caracteres. Declaré pérdida
+   irrecuperable sin agotar las fuentes. Corregido en el informe y guardada en
+   superficie_retirada.definicion_historica.
+   Y la definición recuperada confirma que retirarla era lo correcto: exponía
+   nivel_ventaja, zona, es_pick y favorito_pct directo en Favoritos.
+
+b) MI PROPIO GATE DE DESPLAZAMIENTO VERIFICABA NADA. Primera versión: 700
+   comparaciones sobre 302 filas, porque metí la tolerancia como JOIN y
+   (espn_event_id, mercado, fuente) no es única en v_pick_canonico (137 llaves,
+   302 filas). Corregido a función escalar: 302 de 302.
+   Peor: como modelo_de_pick() devuelve NULL en las 302 filas, la verificación
+   era VACÍA — "esperado = crudo" porque no sabíamos qué está autorizado, no
+   porque el registro dijera identidad. Ahora el gate reporta
+   sin_llave_verificacion_vacia = 302. El verde es honesto sobre ser vacío.
+   Mi primer control negativo tampoco probó nada por esta razón; lo rehice
+   inyectando la llave.
+
+c) EL CALIBRADOR ISOTÓNICO NO ES REPRODUCIBLE DESDE SU PROPIO REGISTRO.
+   calibradores.params = {bins: 50, nota: ...} pero aplicar_isotonica() lee
+   params->'bloques'. Aplicarlo devuelve NULL. No está apto_para_lock, así que
+   no bloquea, pero está en el registro como si sirviera. Nuevo gate
+   gate_calibrador_reproducible() lo marca y bloquea si alguien lo autoriza.
+
+--------------------------------------------------------------------------------
+CONTROLES NEGATIVOS (todos en transacción revertida)
+--------------------------------------------------------------------------------
+  identidad con la versión vieja (%substring%) -> 190 de 240 mutaciones
+      ACEPTADAS, incluidas 30 del caso 'a'/'e'. Con la nueva: 0 de 240.
+  platt autorizado pero no aplicado -> gate = 80 violaciones, máx 8.5 pp,
+      sin_llave baja de 302 a 222. Detecta "el registro dice transformar y la
+      superficie muestra crudo".
+  identidad autorizada con llave presente -> gate = 0. No se pone rojo solo
+      porque aparezca una llave.
+  vector_scaling autorizado -> 51 no_verificables contados como violación.
+  borrar superficie sin lápida -> BLOQUEADO.
+  resucitar la vista retirada / re-registrarla -> gate = 1 en ambos casos.
+
+--------------------------------------------------------------------------------
+REPRODUCIBILIDAD: UNA LECCIÓN QUE ME COSTÓ
+--------------------------------------------------------------------------------
+Al comparar md5(prosrc) vivo contra el md5 de los cuerpos extraídos del archivo
+.sql, 7 de 9 funciones DIFERÍAN. Causa: al redactar el parche saqué comentarios
+que sí estaban en el cuerpo que ejecuté. O sea, el archivo "documentaba"
+algo parecido a producción, no idéntico. Ejecuté el archivo para que producción
+quedara igual AL ARCHIVO, no al contrario, y verificar_checksums_iss098.sql
+ahora ancla al cuerpo del archivo, no solo a la firma. 9 de 9 IGUAL_AL_ARCHIVO.
+
+--------------------------------------------------------------------------------
+GATES: 12 AHORA, 8 ANTES
+--------------------------------------------------------------------------------
+  EV_FIELDS_USER_VISIBLE                24   (sin tocar, va después)
+  EV_EN_RUNTIME_ACTIVO                   6   (sin tocar)
+  UNIFORM_BASELINE_PICK_GATE             5   (sin tocar)
+  SPORT_QUOTA                            1   (v_reto13m_daily, sin tocar)
+  IN_SAMPLE_PROB_MUTATION                0
+  NONCANONICAL_OR_TRIVIAL_LINES          0
+  UNTRACEABLE_APPROVED_PICK              0
+  SUPERFICIE_SIN_CLASIFICAR              0
+  IDENTIDAD_NO_EXACTA                    0   NUEVO
+  P_RETO_DESPLAZADA_NO_REGISTRADA        0   NUEVO
+  CALIBRADOR_AUTORIZADO_NO_VERIFICABLE   0   NUEVO
+  SUPERFICIE_ALTERADA_EN_SILENCIO        0   NUEVO (antes 1)
+
+Los 24/6/5/1 siguen abiertos A PROPÓSITO: tu orden fue capa de origen y
+reproducibilidad primero. Lo siguiente es el punto 2 de tu orden, el volcado de
+TODA la dependencia transitiva de la capa origen.
+
+ORDEN DE EJECUCIÓN DE ESTA RONDA
+  1. iss098_identidad_exacta_y_calibracion_registrada.sql   (8 assertions)
+  2. iss098b_tombstone_favoritos.sql                        (5 assertions)
+  3. gates_selector.sql                                     (runner de 12)
+  4. verificar_checksums_iss098.sql

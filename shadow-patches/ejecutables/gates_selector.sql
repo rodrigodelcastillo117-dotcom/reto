@@ -16,7 +16,9 @@
 create or replace function public.pruebas_selector_limpio()
 returns jsonb language plpgsql volatile set search_path to 'public' as $function$
 declare t1 int; t2 int; t3 int; t4 int; t5 int; t6 int; t7 int; t8 int;
+        t9 int; t10 int; t11 int; t12 int;
         d1 jsonb; d2 jsonb; d3 jsonb; d4 jsonb; d5 jsonb; d6 jsonb; d7 jsonb; d8 jsonb;
+        g9 jsonb; g10 jsonb; g11 jsonb; g12a jsonb; g12b jsonb;
 begin
   create temporary table if not exists _sup (vista text primary key) on commit drop;
   delete from _sup;
@@ -108,7 +110,8 @@ begin
           and exists (select 1 from information_schema.columns col
                       where col.table_schema='public' and col.table_name=c.relname
                         and col.column_name ~* 'probabilidad|prob_|pick')
-          and not exists (select 1 from superficie_usuario s where s.vista=c.relname::text)) q;
+          and not exists (select 1 from superficie_usuario s where s.vista=c.relname::text)
+          and not exists (select 1 from superficie_retirada r where r.vista=c.relname::text)) q;
 
   -- 8 EV_EN_RUNTIME_ACTIVO: logica economica invocada desde una vista USUARIO
   select count(*), coalesce(jsonb_agg(jsonb_build_object('vista',nm)),'[]') into t8, d8
@@ -116,6 +119,30 @@ begin
         where n.nspname='public' and c.relkind in ('v','m')
           and c.relname::text in (select vista from _sup)
           and pg_get_viewdef(c.oid,true) ~* 'economic_eligibility_v1|decision_economica_v1|\mkelly_|ev_decision_v1|tamano_apuesta|simular_bankroll|kelly_fraccion_pct') q;
+
+  -- 9 IDENTIDAD EXACTA (ISS098): ni substrings, ni alias huerfanos, ni colisiones.
+  --   Conductual: muta nombres reales de la agenda y exige rechazo. La version
+  --   vieja con %substring% marca 190 de 240 mutaciones aceptadas.
+  g9 := gate_identidad_exacta();
+  t9 := (g9->>'IDENTIDAD_PARCIAL_ACEPTADA')::int
+      + (g9->>'ALIAS_SIN_EQUIPO_EN_AGENDA')::int
+      + (g9->>'ALIAS_COLISIONA_CON_OTRO_EQUIPO')::int;
+
+  -- 10 P_RETO solo se mueve lo que explica una transformacion REGISTRADA (ISS098).
+  --   NO exige P_RETO == P_RAW: eso rompia una calibracion futura legitima.
+  g10 := gate_p_reto_sin_desplazar();
+  t10 := (g10->>'P_RETO_DESPLAZADA')::int + (g10->>'ajustes_habilitados_sin_cota')::int;
+
+  -- 11 nada autorizado a mover P_RETO puede ser irreproducible o inverificable.
+  g11 := gate_calibrador_reproducible();
+  t11 := (g11->>'CALIBRADOR_APTO_NO_REPRODUCIBLE')::int
+       + (g11->>'CALIBRADOR_APTO_NO_VERIFICABLE_ESCALAR')::int;
+
+  -- 12 superficie: ni destruida en silencio ni resucitada en silencio.
+  g12a := gate_superficie_destruida();
+  g12b := gate_superficie_resucitada();
+  t12 := (g12a->>'SUPERFICIE_REGISTRADA_INEXISTENTE')::int
+       + (g12b->>'SUPERFICIE_RETIRADA_RESUCITADA')::int;
 
   return jsonb_build_object(
     'EV_FIELDS_USER_VISIBLE', t1, 'EV_FIELDS_detalle', d1,
@@ -126,10 +153,17 @@ begin
     'UNTRACEABLE_APPROVED_PICK', t6, 'TRAZABILIDAD_detalle', d6,
     'SUPERFICIE_SIN_CLASIFICAR', t7, 'SIN_CLASIFICAR_detalle', d7,
     'EV_EN_RUNTIME_ACTIVO', t8, 'EV_RUNTIME_detalle', d8,
+    'IDENTIDAD_NO_EXACTA', t9, 'IDENTIDAD_detalle', g9,
+    'P_RETO_DESPLAZADA_NO_REGISTRADA', t10, 'DESPLAZAMIENTO_detalle', g10,
+    'CALIBRADOR_AUTORIZADO_NO_VERIFICABLE', t11, 'CALIBRADOR_detalle', g11,
+    'SUPERFICIE_ALTERADA_EN_SILENCIO', t12,
+    'SUPERFICIE_detalle', jsonb_build_object('destruida',g12a,'resucitada',g12b),
     'superficies_USUARIO', (select count(*) from _sup),
     'cadena_revisada', (select count(*) from _cadena),
-    'todas_en_cero', (t1=0 and t2=0 and t3=0 and t4=0 and t5=0 and t6=0 and t7=0 and t8=0));
+    'todas_en_cero', (t1=0 and t2=0 and t3=0 and t4=0 and t5=0 and t6=0 and t7=0 and t8=0
+                      and t9=0 and t10=0 and t11=0 and t12=0));
 end $function$;
+
 grant execute on function public.pruebas_selector_limpio() to anon, authenticated, service_role;
 
 -- Los gates que YA deben estar en cero se asertan duro. Los que siguen abiertos
