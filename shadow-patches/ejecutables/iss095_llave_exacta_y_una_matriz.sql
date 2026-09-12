@@ -1,0 +1,116 @@
+-- iss095 — B, D(parcial), bloqueador 5 y el gate de líneas canónicas
+--
+-- ===========================================================================
+-- B. apto_para_lock EXACTO POR model_version — y el dueño tenía razón de sobra
+-- ===========================================================================
+-- Mi versión anterior autorizaba por (deporte, mercado). El dueño avisó que eso
+-- permitiría que el calibrador de un modelo autorizara a OTRO modelo del mismo
+-- mercado. NO ERA HIPOTÉTICO: ya son modelos distintos HOY.
+--
+--   El porcentaje de MLB visible lo produce `motor_mlb_cuantitativo`.
+--   El modelo que tiene calibrador es `mlb_totales_normal_v1`.
+--   SON DISTINTOS. Con la llave de 2 campos, en cuanto mlb_totales_normal_v1
+--   pasara el holdout, habría autorizado a motor_mlb_cuantitativo, que nunca fue
+--   medido. Exactamente lo que llevamos semanas evitando.
+--
+-- Y al medirlo aparecieron dos cosas más:
+--   * `modelo_version_activa('soccer')` devuelve `crossleague_v1`, que NO EXISTE
+--     en modelo_registry. Referencia colgante: de ahí venía la creencia de que
+--     crossleague era el cerebro canónico vivo.
+--   * `modelo_version_activa('baseball')` devuelve NULL: MLB no tiene modelo
+--     activo declarado.
+--
+-- ARREGLO:
+--   * `motor_modelo_mapa(fuente, deporte, mercado) -> model_version`. Los 7
+--     motores observados quedan con model_version NULL y una nota que dice por
+--     qué. NULL no es un descuido: es el estado real y hace FALLAR CERRADO.
+--   * `mercado_apto_para_lock(deporte, mercado, model_version, calibration_version)`.
+--     Sin model_version devuelve false. La versión laxa de 2 argumentos SE
+--     ELIMINÓ: si existe, alguien la llama.
+--   * La cadena visible ahora LLEVA `model_version` en cada fila.
+--
+-- MEDICIÓN HONESTA: 62 de 62 porcentajes visibles tienen model_version = NULL.
+-- Hoy NI UNO es rastreable al modelo exacto que lo produjo. Eso no se arregla
+-- con SQL: hay que registrar los motores. Queda expuesto como métrica
+-- `porcentajes_visibles_sin_model_version` en vez de esconderlo.
+--
+-- ===========================================================================
+-- D (PARCIAL). UNA SOLA MATRIZ: fuera el atajo de NFL
+-- ===========================================================================
+-- `v_reto13m_lo_mejor` hacía `UNION ALL` directo contra `nfl_tablero_semana`,
+-- una ruta paralela a la cadena canónica. Se eliminó.
+-- CONSECUENCIA QUE HAY QUE DECIR: NFL YA NO APARECE en Lo Mejor. No está
+-- "arreglado", está FUERA hasta que entre por la misma matriz que MLB y Soccer.
+-- Preferí quitarlo a dejar la ruta paralela abierta. D queda PARCIAL.
+--
+-- ===========================================================================
+-- BLOQUEADOR 2 (segunda parte). La contradicción de Lo Mejor
+-- ===========================================================================
+-- Antes: v_reto13m_mejores devolvía 0 (nada validado) mientras
+-- v_reto13m_lo_mejor devolvía 46 análisis no validados. Una pantalla llamada LO
+-- MEJOR DE HOY parecía una lista de recomendaciones mientras el gate decía cero.
+-- Ahora `v_reto13m_lo_mejor` SOLO trae picks aprobados. Hoy: 0 filas, y eso es
+-- la respuesta honesta. El material experimental vive en
+-- `v_reto13m_analisis_experimental` ("Lo que RETO ve"), con es_lock=false y una
+-- advertencia que distingue los dos casos: motor sin registrar vs calibrador que
+-- no pasó el holdout.
+--
+-- ===========================================================================
+-- BLOQUEADOR 5. `respaldo` ya no sale de los campos viejos
+-- ===========================================================================
+-- Usaba `calibracion_confiable` y `muestra_calibracion`, así que podía mostrar
+-- "ALTO" y a la vez advertir "no validado". Se sustituye por
+-- `estado_respaldo(deporte, mercado, model_version)`, que SOLO lee el registro
+-- versionado:
+--     VALIDADO      calibrador con apto_para_lock
+--     EARLY         calibrador elegido que no pasó el holdout limpio
+--     INSUFFICIENT  modelo registrado sin calibrador
+--     SIN_REGISTRO  motor sin model_version
+-- Hoy los 62 picks visibles son SIN_REGISTRO. Ya no hay forma de mostrar "ALTO"
+-- junto a "no validado".
+--
+-- ===========================================================================
+-- GATE NUEVO: NONCANONICAL_OR_TRIVIAL_LINES
+-- ===========================================================================
+-- El dueño lo pidió y el riesgo era concreto, no teórico: de los 62 picks
+-- visibles, 11 ERAN "Under 3.5" de futbol. No había Over 0.5 todavía, pero es la
+-- misma familia: líneas que aciertan por construcción y ganan cualquier argmax
+-- puro de probabilidad sin aportar nada.
+--
+-- Se resuelve restringiendo el UNIVERSO DE CANDIDATOS, no con un piso de
+-- probabilidad. Es la diferencia que importa: `lineas_canonicas` no toca P_RETO
+-- ni el orden; decide QUÉ CANDIDATOS EXISTEN. Soccer registra sólo 2.5 (la línea
+-- principal de totales); 3.5 queda fuera a propósito. MLB 7..10.5, NFL 37..49.5.
+-- El filtro se aplica ANTES del argmax, así que un Over 0.5 nunca compite.
+-- Resultado: 0 líneas no canónicas en la superficie, y los 11 Under 3.5
+-- desaparecieron.
+--
+-- INTERINO Y HAY QUE DECIRLO: esto es un universo de líneas PLAUSIBLES, no la
+-- línea real del proveedor para cada partido. Eso exige las líneas reales
+-- (punto F). Cuando existan, el gate debe endurecerse a "la línea canónica REAL
+-- de ese evento", no "una línea plausible del deporte".
+--
+-- ===========================================================================
+-- 6 GATES, TODOS EN CERO
+-- ===========================================================================
+--   EV_FIELDS_USER_VISIBLE        = 0
+--   UNIFORM_BASELINE_PICK_GATE    = 0
+--   SPORT_QUOTA                   = 0
+--   IN_SAMPLE_PROB_MUTATION       = 0
+--   NONCANONICAL_OR_TRIVIAL_LINES = 0
+--   UNTRACEABLE_APPROVED_PICK     = 0
+-- Y la métrica que no es gate porque hoy no hay aprobados:
+--   porcentajes_visibles_sin_model_version = 62
+--
+-- ===========================================================================
+-- LO QUE NO ESTÁ HECHO DE ESTE NO-PASS
+-- ===========================================================================
+-- C. La semántica EV sigue DENTRO de `v_pick_canonico.es_pick`, que nace de
+--    `economic_eligibility_v1(...)`. Ya no ordena nada y ya no sale a la
+--    superficie, pero el veneno sigue en el objeto canónico. Falta redefinir
+--    es_pick como modelo correcto + identidad + datos suficientes + temporalidad
+--    limpia + calidad permitida, sin nada económico.
+-- E. `superficie_usuario` sigue con 4 vistas. Faltan Qué Apostar, Favoritos,
+--    Oráculo, Picks, Mi Idea, Fut Pro, NFL, MLB, Dashboard, y que una superficie
+--    nueva FALLE CERRADO si no está clasificada.
+-- D. Completa: NFL entrando por la matriz canónica en vez de estar fuera.
