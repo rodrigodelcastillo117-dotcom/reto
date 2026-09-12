@@ -206,3 +206,30 @@ begin
 
   raise notice 'gates: 4 cerrados duros OK; los abiertos quedan como WARNING visible';
 end $$;
+
+-- =====================================================================
+-- GATE 14 (ISS107): EL PRECIO NO DECIDE
+-- Sustituye al viejo EV_EN_RUNTIME_ACTIVO, que era por nombres y por eso
+-- daba limpio a get_partidos_hoy_top: esa funcion filtra y ordena por EV
+-- escrito como aritmetica, sin que la palabra "ev" aparezca nunca.
+-- =====================================================================
+do $$
+declare g14 record; v_fail int := 0;
+begin
+  for g14 in select * from public.gate_precio_no_decide() loop
+    if g14.estado = 'PASS' then
+      raise notice 'GATE14 % : PASS (%)', g14.gate, g14.cuenta;
+    else
+      v_fail := v_fail + 1;
+      raise warning 'GATE14 % : FAIL cuenta=% -> %', g14.gate, g14.cuenta, g14.detalle;
+    end if;
+  end loop;
+
+  -- Declarado ABIERTO a proposito: cerrar estas violaciones cambia QUIEN
+  -- elige un pick. Eso es cutover de modelo/seleccion y el dueno lo dejo
+  -- congelado hasta que exista prueba en disposable con SHA exacto.
+  -- El gate no se apaga: grita hasta que el dueno autorice el cambio.
+  if v_fail > 0 then
+    raise warning 'ABIERTO: % compuertas de GATE14 en FAIL. Requiere autorizacion del dueno (PROD_MODEL_CUTOVER congelado).', v_fail;
+  end if;
+end $$;
