@@ -233,3 +233,34 @@ begin
     raise warning 'ABIERTO: % compuertas de GATE14 en FAIL. Requiere autorizacion del dueno (PROD_MODEL_CUTOVER congelado).', v_fail;
   end if;
 end $$;
+
+-- =====================================================================
+-- GATE 15 (ISS108): LA TABLA CRUDA ESQUIVA LAS COMPUERTAS
+-- GATE 16 (ISS109): EL GOBIERNO SOLO LO ESCRIBE EL SERVICIO  [DURO]
+-- =====================================================================
+do $$
+declare g record; v_fail int := 0;
+begin
+  for g in select * from public.gate_superficie_cruda() loop
+    if g.estado = 'PASS' then raise notice 'GATE15 % : PASS', g.gate;
+    else v_fail := v_fail + 1;
+         raise warning 'GATE15 % : FAIL cuenta=% -> %', g.gate, g.cuenta, left(g.detalle, 300);
+    end if;
+  end loop;
+  if v_fail > 0 then
+    raise warning 'ABIERTO: % compuertas de GATE15 en FAIL. Revocar SELECT a anon sobre 68 tablas es un cambio hacia afuera que puede romper lecturas del frontend: lo decide el dueno.', v_fail;
+  end if;
+end $$;
+
+-- Gate 16 es DURO: si el gobierno lo puede escribir un cliente, TODAS las
+-- demas compuertas son decorativas porque se abren con un DELETE.
+do $$
+declare g record;
+begin
+  for g in select * from public.gate_gobierno_solo_servicio() where estado <> 'INFO' loop
+    if g.estado <> 'PASS' then
+      raise exception 'GATE16 % = % (%) -> %', g.gate, g.estado, g.cuenta, g.detalle;
+    end if;
+    raise notice 'GATE16 % : PASS', g.gate;
+  end loop;
+end $$;
