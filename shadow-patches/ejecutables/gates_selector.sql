@@ -284,3 +284,23 @@ begin
     raise warning 'ABIERTO: % compuertas de GATE17 en FAIL. Arreglarlas es del lado de los generadores, no de otra vista.', v_fail;
   end if;
 end $$;
+
+-- =====================================================================
+-- GATE 18 (ISS111): NINGUN MARCADOR DE NFL POR DEBAJO DE SU COTA DE TDs
+-- MARCADOR_NFL_IMPOSIBLE es DURO: un marcador que contradice los
+-- touchdowns registrados no es una discrepancia de fuentes, es un dato falso.
+-- =====================================================================
+do $$
+declare g record;
+begin
+  for g in select * from public.gate_marcador_posible_nfl() loop
+    if g.gate = 'MARCADOR_NFL_IMPOSIBLE' and g.estado <> 'PASS' then
+      raise exception 'GATE18 % = % (%) -> %', g.gate, g.estado, g.cuenta, g.detalle;
+    elsif g.gate = 'GUARDA_DE_MARCADOR_INSTALADA' and g.estado <> 'PASS' then
+      raise exception 'GATE18 la guarda zz_no_degradar_marcador_nfl NO esta instalada';
+    elsif g.estado = 'PASS' then raise notice 'GATE18 % : PASS', g.gate;
+    elsif g.estado = 'INFO' then raise notice 'GATE18 % : INFO %', g.gate, g.cuenta;
+    else raise warning 'GATE18 % : FAIL % -> %', g.gate, g.cuenta, g.detalle;
+    end if;
+  end loop;
+end $$;
