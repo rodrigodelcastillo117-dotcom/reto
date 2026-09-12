@@ -264,3 +264,23 @@ begin
     raise notice 'GATE16 % : PASS', g.gate;
   end loop;
 end $$;
+
+-- =====================================================================
+-- GATE 17 (ISS110): COHERENCIA SOCCER, MEDIDA BIEN
+-- Sustituye el contador PICK_FUERA_DE_SU_DISTRIBUCION de ISS103, que
+-- estaba mal: comparaba cualquier pick contra la marginal de GANA LOCAL.
+-- =====================================================================
+do $$
+declare g record; v_fail int := 0;
+begin
+  for g in select * from public.gate_coherencia_soccer_v2() loop
+    if g.estado = 'PASS' then raise notice 'GATE17 % : PASS', g.gate;
+    elsif g.estado = 'INFO' then raise notice 'GATE17 % : INFO % -> %', g.gate, g.cuenta, g.detalle;
+    else v_fail := v_fail + 1;
+         raise warning 'GATE17 % : FAIL cuenta=% -> %', g.gate, g.cuenta, g.detalle;
+    end if;
+  end loop;
+  if v_fail > 0 then
+    raise warning 'ABIERTO: % compuertas de GATE17 en FAIL. Arreglarlas es del lado de los generadores, no de otra vista.', v_fail;
+  end if;
+end $$;
