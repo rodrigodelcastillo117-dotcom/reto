@@ -429,3 +429,25 @@ begin
     raise warning 'ABIERTO: % compuertas de GATE25. La supresion de favoritos por falta de precio cambia lo que se publica: es cutover de seleccion y necesita autorizacion del dueno, no un parche mio.', v_fail;
   end if;
 end $$;
+
+-- =====================================================================
+-- GATE 26 (ISS123): EL PRECIO QUE DECIDE A TRAVES DE UN ALIAS
+-- GATE19/ISS107 ve el precio en la linea. GATE25/ISS121 ve la llamada a una
+-- funcion con precio adentro. Este ve la tercera forma, que es la que
+-- encontro lo grave: kelly_monto -> monto_cand -> ORDER BY. La linea que
+-- ordena los picks publicados no menciona el precio y sale del precio.
+-- =====================================================================
+do $$
+declare g record; v_fail int := 0;
+begin
+  for g in select * from public.gate_precio_por_alias() loop
+    if g.estado = 'PASS' then raise notice 'GATE26 % : PASS %', g.gate, g.cuenta;
+    elsif g.estado = 'INFO' then raise notice 'GATE26 % : INFO % -> %', g.gate, g.cuenta, left(g.detalle,200);
+    else v_fail := v_fail + 1;
+         raise warning 'GATE26 % : FAIL % -> %', g.gate, g.cuenta, left(g.detalle,300);
+    end if;
+  end loop;
+  if v_fail > 0 then
+    raise warning 'ABIERTO: % compuertas de GATE26. El orden y la elegibilidad de reto_picks_hoy salen de un stake de Kelly calculado con el momio. Cambiarlo es cutover de modelo y seleccion: FROZEN hasta que lo autorice el dueno.', v_fail;
+  end if;
+end $$;
