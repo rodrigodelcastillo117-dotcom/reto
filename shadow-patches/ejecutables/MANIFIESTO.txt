@@ -689,3 +689,35 @@ Lo que NO hice, a propósito: no "corregí" ningún número. El arreglo correcto
 elegir un motor canónico —el bakeoff A/B que el propio issue #4 exige— y suprimir
 en falla cerrada los mercados secundarios de todo evento incoherente. Eso necesita
 muestra histórica emparejada y es un frente propio, no un parche.
+
+================================================================================
+RONDA ISS107 — P0-2.H: el reason_code contradictorio NO lo genera el backend
+================================================================================
+
+El dueño reportó: muestra `44 local / 2 visita` con razón
+`AWAY_EVENT_LEAGUE_SAMPLE_BELOW_2` y prosa "menos de 2 partidos".
+
+BUSCADO EXHAUSTIVAMENTE EN LA BASE:
+  funciones con 'EVENT_LEAGUE|AWAY_EVENT|LEAGUE_SAMPLE'  -> 0
+  vistas con esos patrones                               -> 0
+  filas de analisis_partidos que contengan la cadena     -> 0
+
+Los únicos reason codes de muestra que SÍ existen en Postgres son
+`DOMESTIC_SAMPLE_BELOW_TARGET` y `DOMESTIC_SAMPLE_STILL_LOW`, dentro de
+`get_soccer_coverage_jobs`, y no son esos.
+
+CONCLUSIÓN: ese código de razón se compone FUERA de la base — frontend o edge
+function. Por eso puede contradecir la muestra: el backend publica `muestra=2` y
+otra capa inventa un umbral que el backend nunca afirmó. No es un desajuste de
+operador (`<` vs `<=`) ni evidencia stale: es una cadena que el backend no emite.
+
+CONTRATO REQUERIDO (backend lo define, frontend lo consume; no edito React):
+  gate_metric      identificador semántico de la métrica que decide
+  observed_value   el valor medido
+  threshold        el umbral aplicado
+  operator         '<' | '<=' | '>' | '>='
+  reason_code      derivado de los cuatro anteriores, nunca escrito a mano
+  evidence_source  de dónde salió observed_value
+Invariante permanente: reason_code tiene que ser reconstruible desde
+(gate_metric, observed_value, threshold, operator). Si no se puede reconstruir,
+es prosa, no diagnóstico.
