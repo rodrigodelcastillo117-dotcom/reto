@@ -2,6 +2,8 @@
 
 **Status:** release-package artifact only. No production action is authorized by this file.
 
+**Verified runtime candidate:** `f32c7a06569138ecee9588eda2632cf5a310056d`.
+
 ## Principle
 
 Rollback is **read-contract first, destructive never**. Raw data, historical snapshots and model evidence are retained. The preferred recovery is to restore the exact pre-cutover view/function definitions captured by `reto13m_final_preflight_readonly.sql`, not to drop underlying data.
@@ -37,7 +39,7 @@ Do not touch the canonical sport candidate sources. If the target did not previo
 
 ### 2. NFL Fantasy
 
-Repoint/restore public Fantasy read/RPC surfaces to their captured definitions. Do not delete player, roster, scoring, snapshot, validation or external-context data. If the new native projection authority is uncertain after rollback, leave native prediction publication fail-closed rather than falling back to an external betting/projection proxy.
+Repoint/restore public Fantasy read/RPC surfaces to their captured definitions. The final candidate includes `iss131a_fantasy_lineup_join_repair.sql`; if rolling it back, restore the exact pre-cutover optimizer function definition captured in the mandatory snapshot, not a guessed historical version. Do not delete player, roster, scoring, snapshot, validation or external-context data. If the new native projection authority or optimizer is uncertain after rollback, leave native prediction/optimization fail-closed rather than falling back to an external betting/projection proxy.
 
 ### 3. NFL
 
@@ -45,7 +47,7 @@ Restore the captured public/RPC read definitions first. Retain model snapshots, 
 
 ### 4. MLB
 
-Restore captured read contracts; retain decision snapshots, OOS evidence and dossier data. Never roll back to price-band-derived probability authority. If the previous public surface used a price band as probability or selection authority, the rollback target is **closed**, not that contaminated surface.
+Restore captured read contracts; retain decision snapshots, OOS evidence and dossier data. The final candidate includes `iss128b_mlb_market_diagnostic_only.sql`; rollback must **not** restore a state where sportsbook/no-vig discrepancy or a price band becomes probability authority or a canonical publication veto. If the captured previous public surface has that contamination, the rollback target is **closed**, not that contaminated surface.
 
 ### 5. result-event / WASTED
 
@@ -54,11 +56,13 @@ Stop settlement writers before restoring any changed grading RPC/trigger/view. R
 2. WASTED/result-event consumer layer;
 3. canonical result-event layer.
 
+`iss000b_result_notify_branch_baseline.sql` is disposable bootstrap support only and is not a production rollback target.
+
 After restore, run idempotence checks before writers resume. Never replay already-settled rows blindly. No corners market may be graded from goals, and same-city ML identity must remain exact during rollback.
 
 ### 6. SOCCER
 
-Restore read contracts before any model/runtime definition. Retain canonical snapshots, six-fixture evidence, competition mappings and dossier records. Never restore a path in which market/no-vig, a parallel predictor or a noncanonical distribution replaces P_RETO. Unsupported competitions remain fail-closed.
+Restore read contracts before any model/runtime definition. Retain canonical snapshots, six-fixture evidence, competition mappings and dossier records. The final candidate includes `iss045c_soccer_market_diagnostic_only.sql`; rollback must **not** restore a state where sportsbook/no-vig discrepancy can veto a model-ready canonical candidate or replace P_RETO. If the captured prior definition violates ONE BRAIN / ONE P_RETO, leave the affected publication path fail-closed instead. Unsupported competitions remain fail-closed.
 
 ## Existing explicit rollback assets
 
@@ -80,6 +84,7 @@ Required before declaring recovery:
 - temporal violations = 0;
 - probability-domain violations = 0;
 - no competing canonical P_RETO source is exposed;
+- sportsbook/no-vig remains diagnostic/economic only and is never restored as predictive authority;
 - settlement replay produces no duplicate financial/state effect;
 - browser consumers either show the prior verified canonical data or fail closed;
 - production model/cutover gate returns to HOLD until a new independent release audit.
