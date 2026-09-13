@@ -2,6 +2,10 @@
 -- Covers: real parlay trigger, stable retry idempotence, correction/reversal,
 -- out-of-order fail-close, current-learning label, VOID exclusion, immutable history,
 -- app recovery ack, push request dedupe and no-subscription skip.
+--
+-- Exact-composite note: ISS127 depends on the production push_subscriptions surface,
+-- so the disposable baseline materializes that table before this gate. The gate must
+-- reuse it rather than attempt to CREATE it again.
 
 begin;
 
@@ -100,12 +104,15 @@ BEGIN
 END $$;
 
 -- 4) Push dedupe contract with a disposable stub of the existing production alert ledger.
--- These objects are rolled back; no real push is sent by this test.
+-- These objects/data are rolled back; no real push is sent by this test.
 create table public.alertas_enviadas(
   id uuid primary key default gen_random_uuid(),apodo text not null,tipo text not null,
   clave text not null,titulo text,cuerpo text,unique(apodo,tipo,clave));
-create table public.push_subscriptions(
-  id uuid primary key default gen_random_uuid(),apodo text not null,subscription jsonb,active boolean default true);
+
+-- push_subscriptions already exists in the exact-composite baseline. Remove any test
+-- identities to keep the gate deterministic, then seed only the subscribed identity.
+delete from public.push_subscriptions where apodo in ('audit_push','audit_no_sub');
+
 create or replace function public.enviar_alerta(
   p_apodo text,p_tipo text,p_clave text,p_titulo text,p_cuerpo text,p_url text default '/')
 returns boolean language plpgsql as $$
