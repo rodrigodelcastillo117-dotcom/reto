@@ -4,6 +4,8 @@
 
 This is the deterministic order for an independent disposable-branch verification of the final closeout candidate. Every stage is fail-stop: a failed assertion stops the run; later stages must not be executed to manufacture a PASS.
 
+**Verified runtime candidate:** `f32c7a06569138ecee9588eda2632cf5a310056d`.
+
 ## A. SOCCER canonical chain
 
 Apply these schema/runtime artifacts in order:
@@ -44,11 +46,16 @@ Acceptance: the six owner fixtures traverse builder -> staged -> event gate -> c
 
 ## B. result-event / WASTED
 
-Apply after SOCCER PASS:
-1. `shadow-patches/prepared/iss126a_result_events_v1_recovered.sql`
-2. `shadow-patches/prepared/iss126_wasted_result_event_v2.sql`
-3. `shadow-patches/prepared/iss127_wasted_push_single_authority_cutover.sql`
-4. existing grading-root/parlay guards only where their dependencies are explicitly satisfied.
+For a **fresh disposable verifier only**, install the minimal notification dependency baseline before the runtime chain:
+1. `shadow-patches/prepared/iss000b_result_notify_branch_baseline.sql`
+
+Then apply the runtime artifacts after SOCCER PASS:
+2. `shadow-patches/prepared/iss126a_result_events_v1_recovered.sql`
+3. `shadow-patches/prepared/iss126_wasted_result_event_v2.sql`
+4. `shadow-patches/prepared/iss127_wasted_push_single_authority_cutover.sql`
+5. existing grading-root/parlay guards only where their dependencies are explicitly satisfied.
+
+`iss000b_result_notify_branch_baseline.sql` is disposable bootstrap support, not a production read/model cutover artifact.
 
 Test:
 - `shadow-patches/tests/iss126_wasted_result_event_gate.sql`
@@ -61,12 +68,15 @@ Apply after WASTED PASS:
 1. `shadow-patches/prepared/iss052_mlb_decision_snapshot_contract.sql`
 2. `shadow-patches/prepared/iss050_mlb_dossier_manifest.sql`
 3. `shadow-patches/prepared/iss128_mlb_forward_validation_failclose.sql`
+4. `shadow-patches/prepared/iss128b_mlb_market_diagnostic_only.sql`
+
+`iss128b` is part of the verified final candidate: market/no-vig discrepancy remains diagnostic/economic metadata and cannot become probability authority or a canonical publication veto. The model's own temporal/OOS validation authority still fail-closes publication when evidence is insufficient.
 
 Data/tests:
 - `shadow-patches/tests/seed_mlb_realpath_data.sql`
 - `shadow-patches/tests/run_mlb_contract_gate.sql`
 
-Acceptance: own-model decision snapshot, temporal freeze, unique-game/time-sliced OOS validation, no price-band probability authority, fail closed if validation is insufficient.
+Acceptance: own-model decision snapshot, temporal freeze, unique-game/time-sliced OOS validation, no price-band or market/no-vig probability authority, fail closed if model validation is insufficient.
 
 ## D. NFL
 
@@ -96,9 +106,13 @@ Apply after NFL PASS:
 4. `shadow-patches/prepared/iss131_fantasy_weighted_lineup_v2.sql`
 5. `shadow-patches/prepared/iss131a_fantasy_lineup_join_repair.sql`
 
-`iss131a` is required on the current candidate: it repairs the slot join (`current_rows.roster_slot` -> canonical slot code) and PL/pgSQL output-variable ambiguity found by independent execution of the exact optimizer. The repaired function was verified for deterministic replay, late-swap locks, K/DST preservation and complete lineup output on the disposable verifier.
+`iss131a` is required on the final candidate: it repairs the slot join (`current_rows.roster_slot` -> canonical slot code) and PL/pgSQL output-variable ambiguity found by independent execution of the exact optimizer. The repaired function was verified for deterministic replay, late-swap locks, K/DST preservation and complete lineup output on the disposable verifier.
 
-Acceptance: own projection authority requires roster/scoring context plus immutable snapshot/version/as_of lineage and OOS evidence; otherwise native projections/rankings/Start-Sit fail closed. External projections may remain context only when explicitly labeled.
+Acceptance tests:
+- `shadow-patches/tests/iss131a_fantasy_optimizer_gate.sql`
+- the existing Fantasy temporal/OOS/fail-close acceptance suite for `iss130*`/`iss131*`.
+
+Acceptance: own projection authority requires roster/scoring context plus immutable snapshot/version/as_of lineage and OOS evidence; otherwise native projections/rankings/Start-Sit fail closed. External projections may remain context only when explicitly labeled. Optimizer output must be deterministic for identical canonical inputs and preserve locked/required roster constraints.
 
 ## F. GLOBAL TOP_ONLY — LAST predictive read contract
 
@@ -106,6 +120,9 @@ Apply only after all sport candidate contracts above pass independently:
 1. `shadow-patches/prepared/iss132_global_top_only_failclosed.sql`
 
 This **supersedes** the final-selector semantics of older `iss064`, `iss078`, `iss080` and any one-per-sport/filler path. Do not re-enable those semantics after ISS132.
+
+Acceptance test:
+- `shadow-patches/tests/iss132_global_top_only_gate.sql`
 
 Acceptance:
 - P_RETO copied verbatim from canonical sport candidates.
@@ -118,11 +135,11 @@ Acceptance:
 ## G. Preflight / read switch / post-switch verification
 
 1. Run `shadow-patches/deploy/reto13m_final_preflight_readonly.sql` and preserve its output as rollback evidence.
-2. Independent auditor confirms every block above against the exact implementation SHA.
+2. Independent auditor confirms every block above against the exact implementation SHA `f32c7a06569138ecee9588eda2632cf5a310056d`.
 3. Only after explicit release authorization, switch consumers to canonical read contracts in dependency order: sport candidates first, GLOBAL TOP_ONLY second, Pick del Día alias last.
 4. Cron changes are NOT part of this package. Any cron-stability fix must be reviewed/deployed separately so scheduler changes cannot silently alter model semantics.
 5. Run post-switch read-only smoke: object existence, temporal invariants, P_RETO invariance, 0/1 top-only cardinality, exact alias equality, and browser/E2E consumer equality.
 
 ## Hard stop conditions
 
-Abort and retain prior production read contracts on any: missing dependency, temporal violation, probability outside [0,1], different P_RETO across canonical surfaces for the same identity, unexpected sport quota/filler, failed rollback snapshot, non-exact candidate branch, or missing independent browser/E2E verification.
+Abort and retain prior production read contracts on any: missing dependency, temporal violation, probability outside [0,1], different P_RETO across canonical surfaces for the same identity, unexpected sport quota/filler, failed rollback snapshot, non-exact candidate branch, or missing independently authenticated browser/E2E verification.
