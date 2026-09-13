@@ -5,11 +5,12 @@
 **PACKAGE METADATA = PASS**  
 **INDEPENDENT BACKEND/DATA/MODEL VERIFICATION = PASS**  
 **FRONTEND CODE VERIFICATION = PASS**  
+**FRONTEND DEPLOYMENT = PASS**  
 **REAL AUTHENTICATED BROWSER/E2E = BLOCKED**  
 **PRODUCTION MODEL/READ CUTOVER = HOLD**  
 **PROD_FREEZE = ON**
 
-This package is reproducible evidence and an ordered cutover plan. It is **not** production authorization.
+This package is reproducible evidence and an ordered cutover plan. It is **not** production model/read-cutover authorization.
 
 ## Exact candidate identity
 
@@ -19,8 +20,10 @@ This package is reproducible evidence and an ordered cutover plan. It is **not**
 - Lovable project: `d243f279-2db6-4f18-a269-029cf284267f` (`doos / Remix of Reto 13M`)
 - **Verified Lovable frontend commit:** `42be60e30be83b5b2b85866edb59ba368d074a65`
 - Lovable edit: `edt-05bf4589-7f6e-4e66-a640-af94661e0697`
+- Published frontend: `https://doos.lovable.app`
+- Lovable deployment id: `120c3eb6-59d9-4baf-8af7-0189f8a3ff92`
 - Fresh independent Supabase disposable: `vowtknduvkdvildidvli` (`reto13m-final-independent-20260913`)
-- Production remained untouched during independent verification.
+- Production backend/model/read contracts remained untouched during independent verification and frontend deployment.
 
 The backend SHA above is the exact implementation/test candidate. Subsequent commits that modify only this release-package documentation are metadata and do not replace the runtime candidate SHA.
 
@@ -35,6 +38,7 @@ The backend SHA above is the exact implementation/test candidate. Subsequent com
 | NFL Fantasy | `PASS_INDEPENDENT` | Native canonical projection authority remains temporal/OOS gated. Independent optimizer execution found and repaired canonical-slot join and PL/pgSQL ambiguity with `iss131a_fantasy_lineup_join_repair.sql` (`198f8d592792fed2b01b0f7dfb4a87c839b625d0`); deterministic optimizer acceptance gate versioned at `819a0a5191f2b6291d79edf100f234d6fa0d3596`. |
 | GLOBAL TOP_ONLY | `PASS_INDEPENDENT` | ISS132 remains the last predictive selector: zero quota/filler, 0/1 legal output, one event identity, model-only canonical ordering, P_RETO copied verbatim, Pick del Día exact alias. Final regression gate commit: `f32c7a06569138ecee9588eda2632cf5a310056d`. |
 | Lovable frontend code | `PASS_VERIFIED` | Exact diff limited to Tendencia/MatchSheet + regression test. Recent form HOME/AWAY uses published factual form contract; no fabricated last-5; H2H stays diagnostic; no mutation of canonical P_RETO. Lovable suite: 86 files / 791 tests PASS; strict typecheck PASS; production build PASS. |
+| Lovable frontend deploy | `PASS` | Owner-authorized FRONTEND-ONLY publish executed after code verification. Lovable reports the project `is_published=true`, status `completed`, public URL `https://doos.lovable.app`, and latest screenshot/build identity `id-preview-42be60e3...`, matching the verified frontend commit prefix. No backend/model cutover was bundled with the publish. |
 | Authenticated REAL_E2E | `BLOCKED_AUTHENTICATED_SESSION` | Runner has no genuine Playwright `storageState`/authenticated Supabase browser session. No stub was substituted. The clean disposable is not an equivalent full UI/account backend, so forcing UI E2E against it would be false evidence. |
 
 `PASS_FAILCLOSED` means the safety/publication contract passed; it does **not** assert that the underlying predictive model has enough evidence to emit a recommendation. A closed sport stays closed.
@@ -76,7 +80,7 @@ Final independently audited backend candidate after these repairs: `f32c7a065691
 
 ## Frontend closeout
 
-Lovable was used only for a concrete FRONTEND-ONLY task. No Supabase/backend/SQL/model edits and no publish/deploy were performed in that repair turn.
+Lovable was used only for a concrete FRONTEND-ONLY task. The repair turn made no Supabase/backend/SQL/model edits.
 
 Verified commit: `42be60e30be83b5b2b85866edb59ba368d074a65`.
 
@@ -97,6 +101,13 @@ Machine verification reported on the exact edit:
 - strict typecheck: PASS / 0 errors.
 - production build: PASS.
 - changed-file lint: no new errors; only existing fast-refresh warnings.
+
+After that verification, the owner explicitly requested the Lovable changes be sent live. A separate FRONTEND-ONLY deployment was executed:
+- deployment id: `120c3eb6-59d9-4baf-8af7-0189f8a3ff92`
+- public URL: `https://doos.lovable.app`
+- Lovable project state after deployment: `status=completed`, `is_published=true`.
+
+This frontend deployment did **not** authorize or execute the frozen production backend/model/read-contract cutover.
 
 ## Preflight
 
@@ -124,7 +135,7 @@ Rules:
 
 ## Read-contract switch order
 
-No production switch is authorized while authenticated REAL_E2E is blocked. After that gate passes and a separate production release is explicitly authorized, the only permitted dependency order is:
+No production backend/model/read switch is authorized while authenticated REAL_E2E is blocked. After that gate passes and a separate production release is explicitly authorized, the only permitted dependency order is:
 
 1. Canonical sport candidate surfaces proven on the exact backend candidate.
 2. Result/settlement consumers after event-identity/idempotence checks.
@@ -142,9 +153,9 @@ Cron/scheduler changes are **outside this release package**. Scheduler changes c
 
 ## Remaining hard release gate — authenticated REAL_E2E
 
-This is the only remaining global release blocker.
+This is the only remaining global backend/model release blocker.
 
-The existing real runner requires a genuine browser-authenticated session (`E2E_STORAGE_STATE` / equivalent real Playwright storage state) plus a target URL. A target URL can be supplied, but no genuine authenticated storage state is available in the current automation/Lovable environment.
+The existing real runner requires a genuine browser-authenticated session (`E2E_STORAGE_STATE` / equivalent real Playwright storage state) plus a target URL. The published target URL now exists at `https://doos.lovable.app`, but no genuine authenticated storage state is available in the current automation/Lovable environment.
 
 The fresh backend disposable cannot honestly substitute for this because it does not contain the full connected account/profile UI contract, while the frontend currently points at its connected production Supabase backend. Creating or modifying production authentication solely to manufacture test credentials is outside the frozen production gate and was not done.
 
@@ -166,10 +177,11 @@ No stub or unauthenticated approximation may be labeled REAL_E2E PASS.
 | Package identity/DAG/rollback/preflight aligned to `f32c7a...` | `PASS` |
 | Fresh exact-composite backend verification | `PASS_INDEPENDENT` |
 | Lovable code + component/regression suite | `PASS_VERIFIED` |
+| Owner-authorized Lovable frontend deployment | `PASS` |
 | Any individual sport lacks predictive validation authority | Keep that sport fail-closed |
 | Authenticated REAL_E2E unavailable/not passed | `RELEASE=HOLD` |
-| Any production mutation before final release authorization | Release invalid; restore/hold |
-| Authenticated REAL_E2E PASS + no drift + explicit production release authorization | Eligible for production cutover |
+| Any backend/model/read production mutation before final release authorization | Release invalid; restore/hold |
+| Authenticated REAL_E2E PASS + no drift + explicit backend/model production release authorization | Eligible for backend/model read-contract cutover |
 
 ## Final package gate
 
@@ -180,8 +192,10 @@ No stub or unauthenticated approximation may be labeled REAL_E2E PASS.
 `NFL_FANTASY=PASS_INDEPENDENT`  
 `GLOBAL_TOP_ONLY=PASS_INDEPENDENT`  
 `FRONTEND_CODE=PASS_VERIFIED`  
+`FRONTEND_DEPLOY=PASS`  
 `REAL_E2E=BLOCKED_AUTHENTICATED_SESSION`  
 `RUNTIME_CANDIDATE=f32c7a06569138ecee9588eda2632cf5a310056d`  
 `LOVABLE_COMMIT=42be60e30be83b5b2b85866edb59ba368d074a65`  
+`LOVABLE_URL=https://doos.lovable.app`  
 `PROD_FREEZE=ON`  
 `RELEASE=HOLD`
