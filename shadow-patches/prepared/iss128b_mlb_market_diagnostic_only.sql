@@ -19,7 +19,7 @@ select s.espn_event_id as canonical_event_id,
         and coalesce(v.publish_authorized,false)) as top_only_eligible,
        nullif(concat_ws('; ',
           case when g.disc_flag is not null and g.disc_flag <> 'OK'
-               then 'MARKET_DIAGNOSTIC:'||g.disc_flag||coalesce(': '||g.reason,'') end,
+               then 'MARKET_DIAGNOSTIC:'||g.disc_flag||coalesce(': '||md.reason,'') end,
           case when not coalesce(v.publish_authorized,false)
                then 'MODEL_VALIDATION_FAIL_CLOSE:'||coalesce(v.verdict,'NO_VALIDATION_SEAL') end
        ),'') as gate_reason
