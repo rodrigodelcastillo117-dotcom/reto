@@ -94,6 +94,9 @@ Apply after NFL PASS:
 2. `shadow-patches/prepared/iss130b_fantasy_b1_rq80_authority_v2.sql`
 3. `shadow-patches/prepared/iss130c_fantasy_v2_hardening.sql`
 4. `shadow-patches/prepared/iss131_fantasy_weighted_lineup_v2.sql`
+5. `shadow-patches/prepared/iss131a_fantasy_lineup_join_repair.sql`
+
+`iss131a` is required on the current candidate: it repairs the slot join (`current_rows.roster_slot` -> canonical slot code) and PL/pgSQL output-variable ambiguity found by independent execution of the exact optimizer. The repaired function was verified for deterministic replay, late-swap locks, K/DST preservation and complete lineup output on the disposable verifier.
 
 Acceptance: own projection authority requires roster/scoring context plus immutable snapshot/version/as_of lineage and OOS evidence; otherwise native projections/rankings/Start-Sit fail closed. External projections may remain context only when explicitly labeled.
 
