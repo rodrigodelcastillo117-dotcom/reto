@@ -20,13 +20,16 @@ Apply these schema/runtime artifacts in order:
 10. `shadow-patches/prepared/iss043_model_market_discrepancy_gate.sql`
 11. `shadow-patches/prepared/iss045_gate_topological_exclusion.sql`
 12. `shadow-patches/prepared/iss045b_gate_v5_hardening.sql`
-13. `shadow-patches/prepared/iss030_soccer_dossier_manifest.sql`
-14. `shadow-patches/prepared/iss124_soccer_dossier_canonical_identity.sql`
-15. `shadow-patches/prepared/iss125_crossleague_v11_recovered_runtime.sql`
-16. `shadow-patches/prepared/iss032_real_total_line_contract.sql`
-17. `shadow-patches/prepared/iss025_soccer_manifest_contract_hardening.sql`
+13. `shadow-patches/prepared/iss045c_soccer_market_diagnostic_only.sql`
+14. `shadow-patches/prepared/iss030_soccer_dossier_manifest.sql`
+15. `shadow-patches/prepared/iss124_soccer_dossier_canonical_identity.sql`
+16. `shadow-patches/prepared/iss125_crossleague_v11_recovered_runtime.sql`
+17. `shadow-patches/prepared/iss032_real_total_line_contract.sql`
+18. `shadow-patches/prepared/iss025_soccer_manifest_contract_hardening.sql`
 
-**Important clean-bootstrap distinction:** `shadow-patches/prepared/iss026_soccer_universe_failclosed_validation.sql` is a read-only acceptance script for the legacy/public `public.v_prediccion_reto_futbol` compatibility surface. It is **not** a schema/runtime migration and must not be applied as one on an empty disposable branch. On a clean branch that legacy public view is intentionally absent, so treating ISS026 as migration produces a false bootstrap failure (`42P01 relation public.v_prediccion_reto_futbol does not exist`). Run ISS026 only when that compatibility surface exists (for example during a production/public-surface verification). The clean-branch canonical acceptance authority is the staged/candidate/dossier gate suite below.
+`iss045c` is a required authority repair discovered by the independent clean-branch gate: `disc_flag` / no-vig discrepancy remains visible as diagnostic/economic context, but it cannot veto canonical SOCCER candidate publication. Canonical eligibility is model readiness + internal distribution coherence only.
+
+**Important clean-bootstrap distinction:** `shadow-patches/prepared/iss026_soccer_universe_failclosed_validation.sql` is a read-only acceptance script for the legacy/public `public.v_prediccion_reto_futbol` compatibility surface. It is **not** a schema/runtime migration and must not be applied as one on an empty disposable branch. On a clean branch that legacy public view is intentionally absent, so treating ISS026 as migration produces a false bootstrap failure (`42P01 relation public.v_prediccion_reto_futbol does not exist`). Run ISS026 only when that compatibility surface exists. The clean-branch canonical acceptance authority is the staged/candidate/dossier gate suite below.
 
 Data/tests, in this order:
 - `shadow-patches/tests/seed_soccer_branch_data.sql`
@@ -37,7 +40,7 @@ Data/tests, in this order:
 - component adversarials under `shadow-patches/tests/iss033_*`, `iss042_*`, `iss043_*`, `iss124_*`.
 - conditional public-compatibility validation: `shadow-patches/prepared/iss026_soccer_universe_failclosed_validation.sql` **only if** `public.v_prediccion_reto_futbol` exists.
 
-Acceptance: the six owner fixtures traverse builder -> staged -> event gate -> candidates -> dossier; one canonical distribution / one P_RETO; unsupported competitions fail closed; market/no-vig does not replace P_RETO.
+Acceptance: the six owner fixtures traverse builder -> staged -> event gate -> candidates -> dossier; one canonical distribution / one P_RETO; unsupported competitions fail closed; market/no-vig is diagnostic/economic context only and cannot replace or veto canonical P_RETO.
 
 ## B. result-event / WASTED
 
