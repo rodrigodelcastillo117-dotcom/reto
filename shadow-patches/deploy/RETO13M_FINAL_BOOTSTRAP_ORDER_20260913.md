@@ -6,6 +6,8 @@ This is the deterministic order for an independent disposable-branch verificatio
 
 ## A. SOCCER canonical chain
 
+Apply these schema/runtime artifacts in order:
+
 1. `shadow-patches/prepared/iss000_soccer_branch_baseline.sql`
 2. `shadow-patches/prepared/iss029_domestic_leagues_approval.sql`
 3. `shadow-patches/prepared/iss039_competition_provider_id_mapping.sql`
@@ -23,7 +25,8 @@ This is the deterministic order for an independent disposable-branch verificatio
 15. `shadow-patches/prepared/iss125_crossleague_v11_recovered_runtime.sql`
 16. `shadow-patches/prepared/iss032_real_total_line_contract.sql`
 17. `shadow-patches/prepared/iss025_soccer_manifest_contract_hardening.sql`
-18. `shadow-patches/prepared/iss026_soccer_universe_failclosed_validation.sql`
+
+**Important clean-bootstrap distinction:** `shadow-patches/prepared/iss026_soccer_universe_failclosed_validation.sql` is a read-only acceptance script for the legacy/public `public.v_prediccion_reto_futbol` compatibility surface. It is **not** a schema/runtime migration and must not be applied as one on an empty disposable branch. On a clean branch that legacy public view is intentionally absent, so treating ISS026 as migration produces a false bootstrap failure (`42P01 relation public.v_prediccion_reto_futbol does not exist`). Run ISS026 only when that compatibility surface exists (for example during a production/public-surface verification). The clean-branch canonical acceptance authority is the staged/candidate/dossier gate suite below.
 
 Data/tests, in this order:
 - `shadow-patches/tests/seed_soccer_branch_data.sql`
@@ -32,6 +35,7 @@ Data/tests, in this order:
 - `shadow-patches/tests/run_soccer_final_branch_gate.sql`
 - `shadow-patches/tests/iss125_soccer_realpath_6_fixture_gate.sql`
 - component adversarials under `shadow-patches/tests/iss033_*`, `iss042_*`, `iss043_*`, `iss124_*`.
+- conditional public-compatibility validation: `shadow-patches/prepared/iss026_soccer_universe_failclosed_validation.sql` **only if** `public.v_prediccion_reto_futbol` exists.
 
 Acceptance: the six owner fixtures traverse builder -> staged -> event gate -> candidates -> dossier; one canonical distribution / one P_RETO; unsupported competitions fail closed; market/no-vig does not replace P_RETO.
 
