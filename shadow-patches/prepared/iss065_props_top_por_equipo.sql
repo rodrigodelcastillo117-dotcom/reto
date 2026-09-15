@@ -1,0 +1,43 @@
+-- iss065 — Las 2 mejores props por equipo, y un límite honesto que hay que decir.
+--
+-- PEDIDO: "pestaña props, quiero mejor 2 props por equipo, basado en % que pase".
+-- Antes listaba 1,657 filas por línea: eso es un muro, no una recomendación.
+--
+-- `public.nfl_props_top_por_equipo` (MATERIALIZADA) — 64 filas, 32 equipos, exactamente 2
+-- por equipo. Refresco por cron cada 6 h (job 422). Materializada porque el cálculo
+-- set-based sobre 442 jugadores pasa de 60 s si se hace en vivo.
+--
+-- Tres reglas para que "las 2 mejores" signifique algo:
+--   1. Un jugador entra UNA sola vez, con su mejor mercado. Si no, Mahomes se come los dos
+--      lugares de KC con seis mercados suyos.
+--   2. Piso de 60 % y muestra mínima de 8 juegos. Con 5 partidos, un 70 % es ruido.
+--   3. FILTRO DE RELEVANCIA por métrica. Sin él, el tablero se llenaba de suplentes:
+--      "Skyy Moore menos de 1.5 recepciones, 100 %" es cierto porque casi nunca atrapa.
+--      Es el mismo vicio del "Under 3.5" en fútbol: verdadero e inútil. Ahora se exige que
+--      el jugador de verdad haga esa cosa (mediana >= 150 yds de pase, >= 2 recepciones,
+--      >= 25 yds por tierra o aire, etc.).
+--
+-- ═══ EL LÍMITE HONESTO, Y ES IMPORTANTE ═══
+-- La línea de referencia sale de la MEDIANA DEL PROPIO JUGADOR, y eso hace que el porcentaje
+-- sea en buena medida un artefacto de dónde se pone la línea, no una ventaja:
+--
+--   línea = mediana + 0.5  → el OVER exige superar su mediana → salieron 100 % UNDER
+--   línea = mediana − 0.5  → el OVER pide "al menos su mediana" → salieron 58 OVER / 3 UNDER
+--
+-- Las dos versiones dan un tablero monótono. No es un bug que se pueda "arreglar" moviendo
+-- la línea otra vez: es circular por construcción. Con la línea puesta en la mediana del
+-- jugador, la probabilidad tiende a 50 % y lo que se desvía es la forma discreta de su
+-- distribución, no una señal.
+--
+-- Se dejó en `mediana − 0.5` porque es donde las casas ponen las líneas de verdad, así que
+-- el número al menos es comparable contra una línea real cuando la tengamos.
+--
+-- QUÉ VALE Y QUÉ NO:
+--   SÍ vale  → "estos son los 2 jugadores más constantes de cada equipo y esto es lo que
+--              suelen producir". Eso es información real y verificable.
+--   NO vale  → leer ese 90 % como una ventaja de apuesta. No lo es mientras la línea sea
+--              nuestra y no de una casa.
+--
+-- LO QUE FALTA PARA QUE SEA UN PICK DE VERDAD: una fuente de líneas de props de casa. No
+-- existe ni una en toda la base (verificado). Con eso, el % pasaría a medirse contra un
+-- precio real y ahí sí habría discriminación, igual que se hizo en `v_mejor_pick_por_partido`.

@@ -1,0 +1,59 @@
+-- ISS106 — P0-5: CONTRATO UNICO DE RESOLUCION DE ROSTER FANTASY
+-- issue #4, comentario 5646370889 (puntos 1 a 7).
+--
+-- CONFIRMADO ANTES DE ESCRIBIR: el backend canonico YA resuelve a los 13 del
+-- roster de la captura. La UI decia "no encontramos" sobre datos que si existen.
+--   match_jugador_nfl('Patrick Mahomes','QB','KC') -> resuelto, confianza 1.0,
+--   espn_player_id 3139477. Igual con el apostrofo de De'Von Achane y el guion de
+--   Jaxon Smith-Njigba.
+--   fantasy_ranking_k_def('K',...) encuentra C.Dicker LAC 10.00 pts/pg.
+--   fantasy_ranking_k_def('DEF',...) encuentra JAX 8.47.
+--
+-- LO QUE FALTABA ERA EL CONTRATO, no la identidad.
+--   1. identidad y disponibilidad de semana son estados SEPARADOS;
+--   2. una semana sin fila NUNCA se convierte en "el jugador no existe";
+--   3. K se resuelve por su catalogo propio (no esta en nfl_jugadores porque ese
+--      catalogo sale de game logs ofensivos), con match determinista
+--      inicial + apellido + equipo, no por similitud;
+--   4. DST es entity_type TEAM_DEFENSE y NUNCA pasa por match de jugador.
+--
+-- DEFECTO ENCONTRADO POR EL PROPIO CONTROL ADVERSARIAL:
+--   match_jugador_nfl('Patrick Mahomes','QB','BUF') devolvia RESUELTO con el id de
+--   KC. El equipo declarado se ignoraba. Eso es sustitucion silenciosa entre
+--   equipos, prohibida. El contrato ahora falla cerrado con TEAM_MISMATCH.
+--
+-- PGRST002 / 503: verificado que NO es un problema de permisos ni de relacion
+--   ausente. fantasy_resolver_roster, fantasy_proyectar, fantasy_ranking_k_def,
+--   fantasy_start_sit y fantasy_semana_nfl tienen EXECUTE para anon,
+--   authenticated y service_role. PGRST002 es "could not query the database for
+--   the schema cache", una condicion del servicio PostgREST que no se reproduce
+--   ni se repara desde SQL. Queda como blocker operativo separado, como pediste.
+--   Nota util: crear funciones nuevas fuerza una recarga del schema cache.
+
+-- El cuerpo completo de fantasy_resolver_roster esta en produccion; su md5 se
+-- verifica en verificar_checksums_iss106.sql.
+--
+-- CONTRATO DE SALIDA POR ENTRADA:
+--   entity_type        PLAYER | TEAM_DEFENSE
+--   estado             RESOLVED_WEEK_READY | RESOLVED_WEEK_PENDING
+--                      | IDENTITY_NOT_FOUND | TEAM_MISMATCH
+--   identity_resolved  boolean, independiente de week_ready
+--   week_ready         boolean
+--   canonical_id       espn_player_id | K:<equipo>:<nombre> | TEAM:<equipo>
+--   canonical_name, team, position, season, week, proyeccion, motivo
+--
+-- MATRIZ DE REGRESION EJECUTADA 2026-09-12, semana 1 temporada 2026:
+--   13 entradas reales del roster de la captura -> 13 RESOLVED_WEEK_READY
+--      (Mahomes, Achane, Kyren, JSN, Egbuka, Warren, Montgomery, Lloyd, Jacobs,
+--       Keenan Allen, Shakir, Dicker K, Jaguars DST)
+--      CERO falsos NOT_FOUND.
+--   4 adversariales:
+--      Mahomes declarado en BUF        -> TEAM_MISMATCH
+--      "Jaguars" como WR               -> IDENTITY_NOT_FOUND (DST no entra por jugador)
+--      "Jugador Inventado"             -> IDENTITY_NOT_FOUND
+--      Cameron Dicker declarado en KC  -> IDENTITY_NOT_FOUND (candado de equipo en K)
+--
+-- NO AUDITADO AQUI, A PROPOSITO: la CALIDAD del modelo de proyeccion. El propio
+-- comentario 5646370889 advierte que las proyecciones de semana 1 salen de bases
+-- historicas y que varios datasets de defensa-vs-posicion tienen muestras
+-- minimas. Esto resuelve identidad y transporte, no valida el modelo.

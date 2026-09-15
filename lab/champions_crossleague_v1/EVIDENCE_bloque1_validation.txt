@@ -1,0 +1,68 @@
+[data] usable rows (n>=5 both): 826  rango 2023-09-19..2026-09-08
+[split] train 375 (<2025-02-01)  test 451 (>= 2025-02-01)
+[leagues] 17 ligas en train, referencia liga_id=39
+[fit] a0=-0.093 batt=0.382 bdef=0.237 home_adv=0.352 rho=0.008
+
+=== OUT-OF-SAMPLE (test temporal) ===
+  CROSS-LEAGUE (φ)         n= 451  Brier=0.5989  LogLoss=1.0013  Acc=0.503
+  DOMESTIC naive (φ=0)     n= 451  Brier=0.6157  LogLoss=1.0243  Acc=0.508
+  BASE-RATE prior          n= 451  Brier=0.6152  LogLoss=1.0223  Acc=0.508
+
+[bootstrap] Brier(domestic)-Brier(crossleague): mean=+0.0168 95%CI=[+0.0008,+0.0333]  (>0 favorece cross-league)
+
+[calibration cross-league]
+   {'bucket': '0.2-0.4', 'n': 40, 'conf': 0.387, 'acc': 0.3}
+   {'bucket': '0.4-0.6', 'n': 344, 'conf': 0.491, 'acc': 0.485}
+   {'bucket': '0.6-0.8', 'n': 66, 'conf': 0.67, 'acc': 0.712}
+   {'bucket': '0.8-1.0', 'n': 1, 'conf': 0.806, 'acc': 1.0}
+
+[estabilidad por temporada de test]
+  2025: n=285 Brier=0.5929 LogLoss=0.9918
+  2026: n=166 Brier=0.6093 LogLoss=1.0176
+
+[cobertura φ por liga] (partidos cruzados que la identifican; piso serving=20)
+  liga_id=  39  n_cruzados=218  SERVIBLE
+  liga_id= 140  n_cruzados=191  SERVIBLE
+  liga_id=  78  n_cruzados=177  SERVIBLE
+  liga_id= 135  n_cruzados=168  SERVIBLE
+  liga_id=  61  n_cruzados=155  SERVIBLE
+  liga_id=  88  n_cruzados=106  SERVIBLE
+  liga_id=  94  n_cruzados=104  SERVIBLE
+  liga_id= 144  n_cruzados= 79  SERVIBLE
+  liga_id= 203  n_cruzados= 61  SERVIBLE
+  liga_id= 197  n_cruzados= 58  SERVIBLE
+  liga_id= 253  n_cruzados= 54  SERVIBLE
+  liga_id= 262  n_cruzados= 53  SERVIBLE
+  liga_id= 103  n_cruzados= 45  SERVIBLE
+  liga_id= 119  n_cruzados= 35  SERVIBLE
+  liga_id= 179  n_cruzados= 33  SERVIBLE
+  liga_id= 307  n_cruzados=  3  FAIL-CLOSE(muestra)
+
+[φ liga_strength] (ref=39 φ=0). Top5 y Bottom5:
+  liga_id= 262  φ=+0.199
+  liga_id= 135  φ=+0.014
+  liga_id= 188  φ=+0.000
+  liga_id= 307  φ=+0.000
+  liga_id= 140  φ=-0.004
+  liga_id= 253  φ=-0.199
+  liga_id=  88  φ=-0.263
+  liga_id= 103  φ=-0.277
+  liga_id= 203  φ=-0.351
+  liga_id= 197  φ=-0.403
+
+=== WALK-FORWARD (folds temporales) ===
+  fold>=2024-08-01 n=163: Brier cross=0.6255 dom=0.6172 (Δ=-0.0083) | LogLoss cross=1.0401 dom=1.0285
+  fold>=2025-02-01 n=144: Brier cross=0.5976 dom=0.6121 (Δ=+0.0145) | LogLoss cross=0.9959 dom=1.0202
+  fold>=2025-08-01 n=186: Brier cross=0.5807 dom=0.6160 (Δ=+0.0354) | LogLoss cross=0.9778 dom=1.0232
+  >> Brier gain medio walk-forward: +0.0138 (cross-league mejor)
+
+=== RIDGE sweep (validación interna, sin tocar test) ===
+  ridge= 0.5: val Brier=0.6461 LogLoss=1.0717
+  ridge= 1.0: val Brier=0.6446 LogLoss=1.0693
+  ridge= 2.0: val Brier=0.6422 LogLoss=1.0654
+  ridge= 5.0: val Brier=0.6377 LogLoss=1.0582
+  ridge=10.0: val Brier=0.6335 LogLoss=1.0518
+  ridge=20.0: val Brier=0.6294 LogLoss=1.0454
+  >> ridge óptimo (val logloss) = 20
+
+[saved] crossleague_result.json

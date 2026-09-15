@@ -1,0 +1,130 @@
+-- iss082 — AUDITORÍA BACKEND COMPLETA CONTRA EL CANDADO DEL DUEÑO
+-- 11-sep-2026
+--
+-- EL CANDADO (textual, del auditor externo, issue #4):
+--   "sportsbook/market disagreement (score_valor, discriminacion_pp, brecha_pp,
+--    implied-price gap, EV, etc.) may be shown as diagnostic context only;
+--    it may never select, rank, authorize, suppress, or substitute a P_RETO pick."
+--
+-- Y LA REGLA PERMANENTE DEL DUEÑO:
+--   "Nunca sustituyas P_RETO con implied/no-vig de DraftKings."
+--   "NO QUIERO NADAA DE EV, DE VERDAD NADA DE NADA."
+--
+-- La auditoría del frontend ya se había hecho. Ésta es la del backend: se
+-- barrieron TODAS las vistas, matvistas y funciones de `public` buscando campos
+-- derivados del mercado dentro de ORDER BY / WHERE / PARTITION BY / HAVING.
+--
+-- ============================================================================
+-- LO QUE SE ENCONTRÓ Y SE ARREGLÓ (24 objetos)
+-- ============================================================================
+--
+-- LO PEOR: SUSTITUCIÓN DE NUESTRA PROBABILIDAD POR LA DE LA CASA
+--   generar_parlay_seguro  : si no había calibración medida usaba
+--                            (1/momio)*0.92 y 100/momio*0.95 -- la probabilidad
+--                            implícita de DraftKings -- y la publicaba como
+--                            'probabilidad_real'. El 'probabilidad_total' del
+--                            parlay podía ser puro precio de casa con un factor
+--                            de ajuste encima. Ahora: sin probabilidad propia
+--                            medida, la pata NO entra.
+--   v_picks_para_parlay    : COALESCE(probabilidad_real*100, 100.0/momio_mercado)
+--                            -- 4 de 143 picks mostraban el implícito como nuestro.
+--
+-- EL MERCADO ELEGÍA / ORDENABA
+--   v_pick_canonico              rank_en_partido ordenaba por (nuestra - implícita)
+--   v_mejor_pick_por_partido     elegía EL pick del partido por esa misma brecha
+--   picks_premium                ORDER BY precio_verificado DESC, score_valor(EV)
+--   v_mejores_picks_mlb          DISTINCT ON ... ORDER BY brecha_pp DESC
+--   parlay_del_dia_v3            ranking, filtro y 'es_lock' por discriminacion_pp
+--   destacados_del_dia           ORDER BY vs_mercado_pts, ev_pct
+--   rongol_seleccionar_dia       tener precio de DraftKings era el PRIMER criterio
+--   mejor_oportunidad_hoy        ORDER BY ev_cal
+--   mejor_oportunidad_hoy_v2     ORDER BY ev_dec
+--   mejor_pick_hoy               ranking entero por ev_ajustado
+--   veredicto_lote__base         ORDER BY ev_pct
+--   seleccionar_picks_seguro_valor  el pick "VALOR" era, por construcción, donde
+--                                   más le llevábamos la contraria a la casa
+--   tg_filtrar_pick_del_dia      SUSTITUÍA el pick del día por el alternativo de
+--                                mayor EV (el verbo exacto que el candado prohíbe)
+--
+-- EL MERCADO AUTORIZABA O SUPRIMÍA
+--   v_picks_con_valor            exigía probabilidad_pct > implícita
+--   v_mejor_pick_por_partido     exigía implícita IS NOT NULL
+--   enrich_oraculo_prob_with_momio  rechazaba por momio<1.50, momio>2.20,
+--                                   edge<5pp ("mercado ya tiene precio justo")
+--                                   y EV<5%
+--   favoritos_bien_pagados       "where p.m is not null" borraba de la pantalla,
+--                                sin avisar, todo partido sin precio; más la
+--                                banda momio 1.30-1.85 y ev_decision > 0
+--   refrescar_destacados         'estable' era una prueba de EV contra la casa
+--   v_picks_futbol_calc          "apostable" = la casa le puso precio
+--   v_oraculo_picks_activos      exigía odds_source y momio entre 1.20 y 15
+--   v_picks_premium / v_super_pick / generar_parlay_seguro: bandas de momio
+--
+-- EL MERCADO PONÍA LA ETIQUETA QUE VE EL USUARIO
+--   reto_13m_estado__base   'SEGURO' cuando ev_pct>=5. Un letrero que decía
+--                           SEGURO por lo que paga la casa, no por lo que es
+--                           probable que pase. Ahora exige 65% de probabilidad
+--                           propia Y que la calibración medida le gane al volado.
+--   v_mejores_picks_mlb     nivel 'ojo'/'fuerte' por brecha_pp
+--   v_oraculo_picks_activos barra de confianza = 50 + ev_estimado*2
+--   v_super_pick            "Momio en el rango donde el sistema gana dinero"
+--                           como razón positiva para tomar el pick
+--   tg_filtrar_pick_del_dia "PICK PREMIUM (modelo propio: EV X%)"
+--
+-- ============================================================================
+-- CÓMO SE REEMPLAZÓ (señal propia únicamente)
+-- ============================================================================
+--   base_azar          = 33.3% en 1X2 de fútbol (3 salidas), 50% en dos vías.
+--                        NO es un precio: es cuántos resultados tiene el mercado.
+--   ventaja_sobre_azar = probabilidad_propia - base_azar. Comparable entre
+--                        deportes y sin un solo insumo de la casa.
+--   Orden canónico     : calibración confiable -> ventaja sobre azar ->
+--                        tamaño de muestra -> probabilidad.
+--   Piso honesto       : ningún pick por debajo de base_azar se publica.
+--
+-- SE CONSERVÓ COMO CONTEXTO (el candado lo permite explícitamente):
+--   momio, casa, prob_que_implica_el_precio_pct, discriminacion_pp,
+--   vs_mercado_pts, margen_casa_pct -- se MUESTRAN, no deciden nada.
+--
+-- SE CONSERVÓ COMO EVIDENCIA PROPIA (no es opinión del mercado, es lo que pasó):
+--   roi_segmento / wr_segmento / muestra de calibracion_mercado -- resultados
+--   ya liquidados. ajuste_segmento.vetar -- no recomendar donde ya se demostró
+--   que se pierde. Detectores de momio falso (momio_inflado,
+--   parlays_momio_sospechoso) -- eso es verificar un hecho, no seleccionar.
+--
+-- ============================================================================
+-- MEDIDO ANTES / DESPUÉS (como anon)
+-- ============================================================================
+--   destacados_del_dia      112 filas, 60 bajo 50%, mínimo 34.5%  ->  33 filas, 51.3%-64.2%
+--   v_reto13m_mejores       27 filas sin tope por deporte          ->  6 (tope 3 por deporte)
+--   favoritos_bien_pagados  0 filas (el filtro de precio las mataba) -> 73
+--   mejor_oportunidad_hoy   0 filas (filtraba ev_pct>0, ya nulo)   ->  10, 66.9%-72.9%
+--   v_mejores_picks_mlb     1 fila a 49.2% (bajo el volado)        ->  0
+--   mejor_pick_hoy          picks a 41.1% y 45.2% de MLB           ->  0 (honesto)
+--   picks_premium           mínimo score_valor -15.50              ->  piso > 0
+--
+-- ============================================================================
+-- HALLAZGOS QUE NO SON VIOLACIONES PERO EL DUEÑO DEBE SABER
+-- ============================================================================
+-- 1) decision_pick_v1 comprime TODA probabilidad a un techo de ~54%
+--    (fútbol 53.8%, MLB 50.9%) mientras el modelo crudo llega a 73.8% y 64.9%.
+--    Por eso el piso de 55% de RETO 13M rechazaba absolutamente todo y la caja
+--    LISTOS estaba estructuralmente vacía. NO se bajó el piso: bajarlo sería
+--    inventar picks. Hay que revisar decision_pick_v1.
+-- 2) economic_model_authorized sigue en false para todo. es_pick=0 en todos
+--    lados es comportamiento correcto, no un bug: ningún modelo se lo ha ganado.
+-- 3) v_super_pick usa ev_real_pct = ROI real del segmento, encogido hacia la
+--    media. Eso es track record medido, no EV hacia adelante, y se conservó.
+--    Pero se llama "ev" en pantalla y el frontend debería renombrarlo.
+-- 4) NFL no aparece en v_reto13m_mejores: sin_modelo_independiente lo filtra.
+--    Es la compuerta honesta funcionando.
+--
+-- ============================================================================
+-- NOTA DE MÉTODO
+-- ============================================================================
+-- Todo se aplicó con cirugía de texto sobre pg_get_viewdef / pg_get_functiondef
+-- con aserción de aparición única antes de cada reemplazo, para no reescribir
+-- de memoria objetos de 200 líneas. Se usó execute_sql y NO apply_migration
+-- (en este proyecto apply_migration hace rollback silencioso).
+-- NUNCA se usó DROP ... CASCADE: en iss056 eso destruyó v_mlb_h2h y
+-- v_mlb_equipo_carreras sin avisar.
