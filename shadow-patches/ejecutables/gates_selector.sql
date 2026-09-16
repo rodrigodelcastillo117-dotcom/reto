@@ -611,3 +611,45 @@ begin
     raise warning 'ABIERTO: % compuertas de GATE32. Hay un mercado publicado que la realidad ya desmintio. Quitarlo o etiquetarlo es decision del dueno; taparlo no es opcion.', v_fail;
   end if;
 end $$;
+
+-- =====================================================================
+-- GATE 33 (ISS138): CALIBRACION DEL TOTAL E IDENTIDAD DE LIGA DOMESTICA
+--
+-- Dos cosas que se arreglaron juntas porque las dos son lo mismo: publicar
+-- un numero que la evidencia no respalda.
+--
+-- 1) IDENTIDAD DE LIGA. A un equipo se le habia asignado una COPA como su
+--    liga domestica (bug mio de ISS129: exclui torneos continentales pero no
+--    copas domesticas). Eso contamina su GF/GA con rivales de otra division.
+--    G33.1 a G33.3 cierran esa puerta en los tres niveles: la cola de
+--    ingesta, las observaciones guardadas y la fuerza de liga instalada.
+--
+-- 2) CALIBRACION DEL OVER/UNDER. El modelo Poisson de goles es demasiado
+--    confiado: donde dice 70% la realidad es 63%, donde dice 33% es 44%.
+--    Medido sobre 26,777 partidos de futbol, con ajuste en el 70% temporal
+--    mas viejo y prueba en el 30% mas nuevo. G33.4 y G33.5 impiden que entre
+--    una calibracion sin evidencia o con pendiente que invierta el pick.
+--
+-- G33.9 es la que mas me importa de todas: verifica que el vigilante
+-- califique EL MISMO numero que ve el usuario. Meter una calibracion sin
+-- eso habria dejado al vigilante midiendo algo que nadie vio nunca.
+--
+-- G33.12 es INFO a proposito: replica el veredicto de G32.2 con la
+-- calibracion puesta, sobre las observaciones crudas ya calificadas. Hoy
+-- dice que el Over/Under SIGUE siendo conclusivamente peor que adivinar
+-- incluso calibrado. Ese numero no se maquilla y G32.2 sigue en rojo.
+-- =====================================================================
+do $$
+declare g record; v_fail int := 0;
+begin
+  for g in select * from public.gate_calibracion_y_ligas() loop
+    if g.estado = 'PASS' then raise notice 'GATE33 % : PASS %', g.gate, g.cuenta;
+    elsif g.estado = 'INFO' then raise notice 'GATE33 % : INFO % -> %', g.gate, g.cuenta, left(g.detalle,400);
+    else v_fail := v_fail + 1;
+         raise warning 'GATE33 % : FAIL % -> %', g.gate, g.cuenta, left(g.detalle,400);
+    end if;
+  end loop;
+  if v_fail > 0 then
+    raise exception 'GATE33 FALLO en % compuertas: o se publica una liga que es copa, o se aplica una calibracion sin evidencia.', v_fail;
+  end if;
+end $$;
