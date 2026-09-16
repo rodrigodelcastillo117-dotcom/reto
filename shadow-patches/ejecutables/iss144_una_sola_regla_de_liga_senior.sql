@@ -232,3 +232,54 @@ where team_espn_id in ('21622','133251','1423');
 --
 --  build_soccer_prediction_v2() -> 227 | tarjetas con P_RETO 158 | perdidas 0
 --  G33: 9 duros PASS | G34: 9 duros PASS, incluidos G34.10 y G34.11 nuevos
+
+-- ===========================================================================
+-- CIERRE: que paso cuando el selector v6 corrio de verdad (17:35 UTC)
+-- ===========================================================================
+--
+-- CORRECCION DE UN ERROR MIO EN ESTE MISMO PARCHE
+-- Al reiniciar los tres equipos les puse reason='DOMESTIC_LEAGUE_REQUIRED'.
+-- La cola NO prioriza ese motivo, asi que se habrian quedado detras de 315
+-- trabajos. Se cambio a 'DOMESTIC_SAMPLE_BELOW_TARGET', que ademas es la
+-- etiqueta correcta: tenian 0 observaciones. No se invento prioridad, se uso
+-- la real. Con eso encabezaron la cola y el trabajador los tomo.
+--
+-- RESULTADO DEL SELECTOR v6: los tres devolvieron DOMESTIC_LEAGUE_NOT_RESOLVED.
+-- domestic_league_id quedo en null. Ninguna volvio a la 1041. El guardia
+-- funciono: antes que asignar una liga mala, no asigna ninguna.
+--
+-- PERO ESO DESTAPO ALGO MAS HONDO: la identidad tambien esta mal.
+--
+--   Beira Mar   espn 1423    api_team_id 22507
+--   CF Benfica  espn 133251  api_team_id 7888
+--   Mafra       espn 21622   api_team_id 24444
+--
+-- Los UNICOS partidos de esos tres api_team_id son de Juniores U19, y el
+-- fallback /leagues?team=X&current=true tampoco devolvio ninguna liga senior
+-- valida. No es falta de cobertura del proveedor: otros clubes portugueses de
+-- 4a division SI resuelven a Campeonato de Portugal (ligas 457-460), que esta
+-- en el catalogo y en uso. La conclusion es que esos ID son los equipos
+-- JUVENILES, no los seniors.
+--
+-- Osea: arreglar la liga no alcanzaba. El problema es que la identidad de
+-- API-Football apunta al equipo equivocado desde el principio.
+--
+-- QUE SE HIZO: BLOCKED con el motivo escrito. No se sustituye la identidad
+-- "a ojo" (eso es justo lo que quedo prohibido en ISS139 cuando la resolucion
+-- por escudo discrepo en 20%), y no se deja el trabajo reintentando cada 10
+-- minutos quemando cuota de API-Football en algo que nunca va a salir.
+-- Quedan UNAVAILABLE hasta que exista el ID senior verificado.
+--
+-- ESTADO FINAL MEDIDO
+--   observaciones juveniles en produccion ............ 0
+--   trabajos con liga no senior ...................... 0
+--   respaldadas en cuarentena ........................ 108 (3 equipos, 1 liga)
+--   G34.10 el historial es de futbol senior .......... PASS (0)
+--   G34.11 ningun trabajo apunta a liga no senior .... PASS (0)
+--   G33 duros ........................................ 9/9 PASS
+--   G34 duros ........................................ 9/9 PASS
+--   G33.11 equipos sin liga verificable (INFO) ....... 4
+--                                                      (los 3 + Stenhousemuir)
+--   build_soccer_prediction_v2() ..................... 227
+--   tarjetas con P_RETO .............................. 158
+--   tarjetas perdidas por todo esto .................. 0
