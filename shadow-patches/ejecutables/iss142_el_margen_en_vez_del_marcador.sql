@@ -1,0 +1,62 @@
+-- =====================================================================
+-- ISS142 -- "SIGUEN LOS MISMOS": TODOS LOS MARCADORES ERAN 1-0
+--
+-- El dueno mando dos capturas: Deportivo 1-0 Sevilla y Atletico 1-0
+-- Osasuna. Dos partidos completamente distintos, el mismo marcador.
+--
+-- En esa misma captura se ve que el 11.4% YA ESTABA (ISS140 si llego a la
+-- app). Su queja era otra y tenia razon: el marcador no distingue nada.
+--
+-- ============ POR QUE PASA, MEDIDO ============
+--
+-- El "marcador probable" es la MODA de la distribucion. Para un Poisson
+-- con lambda ~1.5 la moda cae casi siempre en 1-0 o 1-1.
+--
+--   49.72% de las tarjetas muestran 1-0, 1-1 o 0-1
+--   marcador exacto acertado sobre 179 partidos terminados: 10.06%
+--   y 11.4% contra 10.0% contra 9.9% no se distinguen entre si
+--
+-- No es un bug: es la moda real. El problema es que como numero para
+-- ensenar no aporta nada.
+--
+-- ============ LO QUE SI DISTINGUE: EL MARGEN ============
+--
+-- Sale de la MISMA distribucion (score_dist), normalizada porque esta
+-- truncada (mide entre 91.9% y 95.3% de la masa). No se inventa nada, no
+-- es otro modelo, no es otro cerebro.
+--
+--   partido                        marcador        margen
+--   Barcelona - Racing Santander   2-1  ( 9.5%)    por 2 o mas  45.1%
+--   Sunderland - AZ Alkmaar        1-0  (11.9%)    por 2 o mas  38.5%
+--   Atletico - Osasuna             1-0  (12.1%)    por 2 o mas  37.4%
+--   Deportivo - Sevilla            1-0  (11.4%)    por 2 o mas  32.7%
+--   Levante - Athletic Club        1-0  (11.6%)    por 1        24.9%
+--   Atletico - Real Madrid         1-1  (10.6%)    EMPATE       24.3%
+--
+-- Con el marcador, Barcelona-Racing y Levante-Athletic se ven casi
+-- identicos. Con el margen, uno es 45.1% y el otro 24.9%, y ni siquiera
+-- apuntan a lo mismo.
+--
+-- SOBRE LAS 231 TARJETAS:
+--   el margen va de 22.1% a 67.3%
+--   93 respuestas distintas, contra 3 del marcador exacto
+--
+-- ============ QUE SE AGREGO A LA VISTA ============
+--
+--   margen_mas_probable      texto ya redactado, listo para pintar
+--   margen_mas_probable_pct  su probabilidad
+--   gana_local_por_3mas_pct / _2_ / _1_
+--   margen_empate_pct
+--   gana_visita_por_1_pct / _2_ / _3mas_
+--   margen_masa_medida_pct   cuanta masa se midio. Auditoria, no se pinta.
+--
+-- Los siete tramos suman 100 y ninguno queda en null cuando hay
+-- pronostico: un margen sin celdas en score_dist vale 0.0, no null.
+--
+-- El marcador exacto NO se quita. Baja a linea secundaria, con su
+-- porcentaje, que es donde pertenece.
+--
+-- MEDIDO: GATE 30 9/9 PASS y GATE 33 9/9 PASS despues del cambio.
+-- =====================================================================
+-- (definicion completa de la vista en produccion; el cambio es el CTE
+--  "margen" sobre score_dist y las columnas que expone)
