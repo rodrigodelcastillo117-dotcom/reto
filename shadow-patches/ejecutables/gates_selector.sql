@@ -531,14 +531,15 @@ begin
 end $$;
 
 -- =====================================================================
--- GATE 30 (ISS134): LOS TRES PORCENTAJES DE LA TARJETA
--- Ganador, BTTS y Over 2.5 son lo primero que ve el usuario. Esta compuerta
--- vigila que sean coherentes (suman 100), posibles (un ganador no puede ser
--- menor a 33.3 siendo el maximo de tres), completos (los tres o ninguno,
--- nunca a medias) y sobre todo que Over 2.5 NO salga de la linea del
--- bookmaker: over_line es 2.5 en solo 91 de 156 eventos, asi que usar p_over
--- como "O2.5" mentiria en el 42% y dejaria que la casa decida que mercado
--- se muestra. Sale de score_dist, el mismo cerebro que el 1X2.
+-- GATE 30 (ISS134): LOS TRES DE LA TARJETA
+-- Ganador, BTTS y total de goles EN LA LINEA REAL del partido, igual que MLB
+-- con las carreras. La casa define QUE pregunta se responde; el modelo define
+-- la RESPUESTA. El precio no entra en el numero, ni ordena, ni filtra.
+-- Las dos que mas importan:
+--   G30.7 la probabilidad publicada debe ser BYTE A BYTE la del modelo
+--         canonico, no un recalculo paralelo. Un solo cerebro.
+--   G30.8 monotonia: superar 3.5 goles NO puede salir mas probable que
+--         superar 2.5. Si eso pasa, algo esta roto y hay que parar.
 -- =====================================================================
 do $$
 declare g record; v_fail int := 0;
