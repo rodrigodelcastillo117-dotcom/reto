@@ -529,3 +529,28 @@ begin
     raise exception 'GATE29 FALLO en % compuertas de NFL/Fantasy.', v_fail;
   end if;
 end $$;
+
+-- =====================================================================
+-- GATE 30 (ISS134): LOS TRES PORCENTAJES DE LA TARJETA
+-- Ganador, BTTS y Over 2.5 son lo primero que ve el usuario. Esta compuerta
+-- vigila que sean coherentes (suman 100), posibles (un ganador no puede ser
+-- menor a 33.3 siendo el maximo de tres), completos (los tres o ninguno,
+-- nunca a medias) y sobre todo que Over 2.5 NO salga de la linea del
+-- bookmaker: over_line es 2.5 en solo 91 de 156 eventos, asi que usar p_over
+-- como "O2.5" mentiria en el 42% y dejaria que la casa decida que mercado
+-- se muestra. Sale de score_dist, el mismo cerebro que el 1X2.
+-- =====================================================================
+do $$
+declare g record; v_fail int := 0;
+begin
+  for g in select * from public.gate_tarjetas_soccer() loop
+    if g.estado = 'PASS' then raise notice 'GATE30 % : PASS %', g.gate, g.cuenta;
+    elsif g.estado = 'INFO' then raise notice 'GATE30 % : INFO % -> %', g.gate, g.cuenta, left(g.detalle,220);
+    else v_fail := v_fail + 1;
+         raise warning 'GATE30 % : FAIL % -> %', g.gate, g.cuenta, left(g.detalle,300);
+    end if;
+  end loop;
+  if v_fail > 0 then
+    raise exception 'GATE30 FALLO en % compuertas. Los porcentajes de la tarjeta no son de fiar.', v_fail;
+  end if;
+end $$;
