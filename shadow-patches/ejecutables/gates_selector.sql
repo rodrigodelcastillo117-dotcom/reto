@@ -478,3 +478,29 @@ begin
     raise exception 'GATE27 FALLO en % compuertas. O volvio el hueco silencioso, o se esta publicando un goles-esperados sin datos reales atras.', v_fail;
   end if;
 end $$;
+
+-- =====================================================================
+-- GATE 28 (ISS128): UN P_RETO PUBLICADO SIN AUTORIDAD DE RELEASE
+-- El core de MLB pone official_probability_bar en
+-- HIDDEN_NOT_RELEASE_AUTHORIZED ("MLB Moneyline no tiene P_RETO oficial
+-- validado") y el envoltorio mlb_terminal_v2 lo pisa con READY sin
+-- consultar nunca la autoridad. La autoridad dice
+-- product_release_authorized=false, n_oos=14, brier_delta_upper95=+0.0117.
+-- ESTA COMPUERTA ESTA EN ROJO A PROPOSITO: el arreglo cambia lo que el
+-- usuario ve y lo decide el dueno. NFL entra como control y sale PASS,
+-- para que se vea que no es una compuerta que siempre falla.
+-- =====================================================================
+do $$
+declare g record; v_fail int := 0;
+begin
+  for g in select * from public.gate_probabilidad_sin_autoridad() loop
+    if g.estado = 'PASS' then raise notice 'GATE28 % : PASS %', g.gate, g.cuenta;
+    elsif g.estado = 'INFO' then raise notice 'GATE28 % : INFO % -> %', g.gate, g.cuenta, left(g.detalle,200);
+    else v_fail := v_fail + 1;
+         raise warning 'GATE28 % : FAIL % -> %', g.gate, g.cuenta, left(g.detalle,300);
+    end if;
+  end loop;
+  if v_fail > 0 then
+    raise warning 'ABIERTO: % compuertas de GATE28. MLB publica un P_RETO que su propio core manda esconder. Arreglarlo quita o reetiqueta un numero en pantalla: decision del dueno, no parche mio.', v_fail;
+  end if;
+end $$;
