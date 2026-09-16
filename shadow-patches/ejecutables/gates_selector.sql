@@ -581,3 +581,33 @@ begin
     raise exception 'GATE31 FALLO en % compuertas de la tarjeta de MLB.', v_fail;
   end if;
 end $$;
+
+-- =====================================================================
+-- GATE 32 (ISS136): LA EVIDENCIA HACIA ADELANTE
+-- El vigilante (v2.model_learning_gate) ya existia y ya corria. Lo que
+-- faltaba era que MORDIERA: mide pero no frena, porque para futbol la
+-- autorizacion de release sale de la politica de competiciones y no de la
+-- evidencia.
+-- Reconstruye el intervalo COMPLETO (la tabla solo guarda el limite
+-- superior) con lower95 = 2*diff - upper95, verificado contra un caso
+-- conocido, y falla si algo que se publica es CONCLUSIVAMENTE peor que
+-- adivinar, o si el vigilante se muere y nadie lo nota.
+-- AVISO: G32.2 esta en rojo hoy y es un hallazgo real, no un falso
+-- positivo. Se pone verde de dos formas honestas: que el Over/Under de
+-- futbol deje de ser peor que adivinar, o que se deje de publicar. Bajar
+-- el umbral seria taparlo.
+-- =====================================================================
+do $$
+declare g record; v_fail int := 0;
+begin
+  for g in select * from public.gate_evidencia_hacia_adelante() loop
+    if g.estado = 'PASS' then raise notice 'GATE32 % : PASS %', g.gate, g.cuenta;
+    elsif g.estado = 'INFO' then raise notice 'GATE32 % : INFO % -> %', g.gate, g.cuenta, left(g.detalle,400);
+    else v_fail := v_fail + 1;
+         raise warning 'GATE32 % : FAIL % -> %', g.gate, g.cuenta, left(g.detalle,400);
+    end if;
+  end loop;
+  if v_fail > 0 then
+    raise warning 'ABIERTO: % compuertas de GATE32. Hay un mercado publicado que la realidad ya desmintio. Quitarlo o etiquetarlo es decision del dueno; taparlo no es opcion.', v_fail;
+  end if;
+end $$;
