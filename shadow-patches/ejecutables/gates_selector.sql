@@ -451,3 +451,30 @@ begin
     raise warning 'ABIERTO: % compuertas de GATE26. El orden y la elegibilidad de reto_picks_hoy salen de un stake de Kelly calculado con el momio. Cambiarlo es cutover de modelo y seleccion: FROZEN hasta que lo autorice el dueno.', v_fail;
   end if;
 end $$;
+
+-- =====================================================================
+-- GATE 27 (ISS127): EL HUECO SILENCIOSO DE LOS GOLES ESPERADOS
+-- El bug que reporto el dueno no era un numero malo, era la AUSENCIA de un
+-- numero: 81 de 233 partidos publicados no mostraban nada. Esta compuerta
+-- vigila las dos formas de volver a romperlo:
+--   (a) un partido publicado sin bloque, o con un estado que el front no
+--       sabe pintar -> vuelve el hueco;
+--   (b) un bloque que se declara AVAILABLE sin numeros detras, o con 1 o 2
+--       partidos de muestra -> es peor que el hueco, es un numero inventado.
+-- Y vigila la regla del dueno: UN SOLO CEREBRO. El contexto factual solo
+-- puede aparecer donde NO hay distribucion oficial, nunca junto a ella.
+-- =====================================================================
+do $$
+declare g record; v_fail int := 0;
+begin
+  for g in select * from public.gate_goles_esperados() loop
+    if g.estado = 'PASS' then raise notice 'GATE27 % : PASS %', g.gate, g.cuenta;
+    elsif g.estado = 'INFO' then raise notice 'GATE27 % : INFO % -> %', g.gate, g.cuenta, left(g.detalle,200);
+    else v_fail := v_fail + 1;
+         raise warning 'GATE27 % : FAIL % -> %', g.gate, g.cuenta, left(g.detalle,300);
+    end if;
+  end loop;
+  if v_fail > 0 then
+    raise exception 'GATE27 FALLO en % compuertas. O volvio el hueco silencioso, o se esta publicando un goles-esperados sin datos reales atras.', v_fail;
+  end if;
+end $$;
