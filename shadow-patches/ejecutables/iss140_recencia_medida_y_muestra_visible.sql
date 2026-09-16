@@ -1,0 +1,164 @@
+-- =====================================================================
+-- ISS140 -- LA RECENCIA NO ERA EL PROBLEMA. LA MUESTRA SI.
+--
+-- El dueno pidio que "pese mas esta temporada que la pasada, en todo", y
+-- senalo partidos que no le hacian coherencia: Deportivo favorito sobre
+-- Sevilla, Omonia Nicosia favorito sobre Celta Vigo.
+--
+-- Lo medi todo antes de tocar nada. El resultado contradice la peticion.
+--
+-- ============ 1) LA RECENCIA: MEDIDA Y RECHAZADA ============
+--
+-- Confirme primero que la queja tenia base real en el codigo:
+-- v2.fn_crossleague_features_canonical hace avg(gf) sobre una ventana
+-- PLANA de 540 dias. Un partido de marzo de 2025 pesa exactamente igual
+-- que uno de septiembre de 2026. La observacion del dueno era correcta.
+--
+-- Luego probe si arreglarlo mejora algo. Sobre 8,546 partidos de las 8
+-- ligas mas grandes, con los MISMOS coeficientes del cerebro canonico
+-- (a0 -0.2214, batt 0.6057, bdef 0.3896, home_adv 0.3568) y sin mirar el
+-- futuro por construccion:
+--
+--   variante                       NLL        corr(dif)   acierto 1X2
+--   decaimiento 240 dias        1.81329       0.33738       44.83%
+--   PLANO 540 DIAS (produccion) 1.81338       0.33787       44.90%
+--   plano ultimos 30 partidos   1.81383       0.33486       44.59%
+--   decaimiento 150 dias        1.81415       0.33600       44.86%
+--   decaimiento 90 dias         1.81764       0.32956       44.85%
+--
+-- Lo que hay en produccion esta practicamente empatado en primer lugar, y
+-- GANA en correlacion y en acierto de 1X2. La prueba pareada del mejor
+-- decaimiento contra produccion:
+--
+--   n=8,546  mejora 0.000092  t=0.07  IC95[-0.002586, +0.002770]
+--
+-- t de 0.07. No hay nada ahi.
+--
+-- Y hay una tendencia clara en la tabla: MIENTRAS MAS AGRESIVA LA
+-- RECENCIA, PEOR. El decaimiento de 90 dias (o sea "casi solo esta
+-- temporada") es el peor de los cinco en NLL, en correlacion y en MAE.
+--
+-- La razon es varianza. La fuerza real de un equipo cambia despacio; cinco
+-- partidos recientes son sobre todo ruido. Promediar 46 partidos estima
+-- mejor que promediar 10, aunque los 46 incluyan la temporada pasada.
+--
+-- POR ESO NO SE CAMBIO LA VENTANA. Cambiarla seria mover el cerebro sin
+-- ninguna mejora medida, y en la direccion agresiva, empeorarlo.
+--
+-- ============ 2) LA FUERZA DE LIGA: MEDIDA, NO CONCLUYENTE ============
+--
+-- Omonia favorito sobre Celta sale de aqui: phi de Chipre -0.232 con 20
+-- partidos de evidencia, contra Eredivisie -0.3837 con 91. El modelo cree
+-- que la primera de Chipre es mas fuerte que la Eredivisie.
+--
+-- Probe encoger phi hacia la media ponderada, por n/(n+k), sobre 906
+-- partidos continentales terminados:
+--
+--   variante              NLL        corr      acierto 1X2
+--   encogida k=25      1.67573     0.26826       48.34%
+--   encogida k=50      1.67684     0.26955       49.23%
+--   encogida k=10      1.67695     0.26232       48.01%
+--   PHI CRUDA (hoy)    1.68009     0.25517       47.13%
+--   sin phi            1.71509     0.10186       45.58%
+--
+-- El encogimiento le gana a la phi cruda en las TRES metricas. Pero la
+-- prueba pareada da t=1.31, IC95[-0.002165, +0.010888]: cruza el cero.
+--
+-- Y hay algo peor: EL ENCOGIMIENTO NO ARREGLA EL CASO DE OMONIA. Chipre
+-- ya esta por ENCIMA de la media ponderada, asi que encoger hacia la media
+-- lo sube todavia mas (-0.232 -> -0.2150) y ACORTA la distancia con LaLiga
+-- (-0.0998 -> -0.1127). La brecha pasa de 0.132 a 0.102.
+--
+-- Tambien intente mostrar que las ligas con poca evidencia predicen peor,
+-- para justificar dejar de servirlas. Solo hay 25 partidos continentales
+-- donde alguna liga tiene n<30. Con 25 partidos no se concluye nada.
+--
+-- POR ESO NO SE APLICO. Mejora tres metricas pero no es concluyente, no
+-- arregla lo que el dueno esta viendo, y no tengo evidencia para retirar
+-- las ligas de muestra corta. Queda medido y escrito en
+-- public.iss140_phi_prueba para cuando haya mas partidos.
+--
+-- ============ 3) LO QUE SI SE ARREGLO ============
+--
+-- La liga 318 decia "Denmark 1. Division" en v2.crossleague_league_strength.
+-- Es Chipre. El catalogo de API-Football lo dice claro y los cuatro equipos
+-- que la alimentan son Omonia, Pafos, Apoel y AEK Larnaca.
+-- Se corrigieron los 23 nombres contra el catalogo, ahora con pais. El
+-- nombre NO entra en el hash del sello (que es league_id:phi:n_cross:
+-- servable:config_hash), asi que la integridad se verifico antes y despues
+-- y sigue en true.
+--
+-- ============ 4) EL HALLAZGO QUE DE VERDAD EXPLICA LA INCOHERENCIA ======
+--
+-- 66 de 158 tarjetas con P_RETO, el 42%, se apoyan en MENOS DE 10 PARTIDOS
+-- de al menos uno de los dos equipos. Es 16 de septiembre: la temporada
+-- europea lleva cinco jornadas.
+--
+-- Y la tarjeta no lo decia. Un pronostico hecho con 5 partidos se veia
+-- EXACTAMENTE IGUAL que uno hecho con 53. Eso es lo que hace que el
+-- conjunto parezca incoherente: no es que los numeros esten mal, es que no
+-- se distinguia cual esta parado sobre roca y cual sobre arena.
+--
+-- Ahora la vista publica:
+--   muestra_local, muestra_visita   partidos reales detras de cada lado
+--   modulo_del_modelo               que ruta del cerebro se uso
+--   confianza_por_muestra           MUESTRA_CORTA / MEDIA / AMPLIA
+--   aviso_de_muestra                texto en espanol, listo para pintar
+--   marcador_esperado_pct           la probabilidad del marcador exacto
+--
+--   MUESTRA_AMPLIA  89 tarjetas
+--   MUESTRA_CORTA   66 tarjetas   (todas con aviso)
+--   MUESTRA_MEDIA    3 tarjetas
+--
+-- ============ 5) CORRECCION QUE ME DEBO ============
+--
+-- Le dije al dueno que el modulo VALIDATED_PRIOR_LOW_SAMPLE "ignora la
+-- forma de esta temporada por completo". ERA FALSO y lo verifique despues.
+-- Ese modulo SI usa la forma: encoge los partidos del equipo hacia la media
+-- de la liga con k=4. Para Deportivo, con 5 partidos a 1.8 goles por
+-- partido, da (5*1.8 + 4*1.44)/9 = 1.64 antes de localia. Su lambda
+-- publicada es 1.845. La forma esta ahi.
+--
+-- Lo que SI es cierto de ese modulo: entra cuando FORM_V2 se cae, y FORM_V2
+-- se cae por una condicion que ningun equipo recien ascendido puede
+-- cumplir:
+--     hn<3 or an<3 or last5_n<5 or last10_n<10 or venue5_n<5
+-- El venue5_n son los ultimos 5 partidos EN ESA DIVISION Y EN ESE ESTADIO.
+-- Deportivo lleva 2 de local en Primera. Nunca va a tener 5 hasta bien
+-- entrada la temporada.
+--
+-- Son 12 tarjetas y son, todas, equipos recien ascendidos: Deportivo,
+-- Racing Santander, Malaga, Hull City, Coventry, Le Mans, Troyes,
+-- SV Elversberg, Paderborn, Schalke.
+--
+-- NO LO PARCHEE. Bajar ese umbral cambia la matematica de un modulo que
+-- tiene su propia validacion OOS (test_brier 0.6131 contra baseline 0.6404,
+-- n=250) y no tengo un holdout para la version relajada. Queda medido, con
+-- su poblacion exacta identificada, y la tarjeta ya lo declara con
+-- aviso_de_muestra en vez de disimularlo.
+--
+-- ============ 6) EL NUMERO QUE EL DUENO NECESITA VER ============
+--
+-- Sobre 179 partidos YA TERMINADOS, con la prediccion congelada antes del
+-- inicio:
+--     marcador exacto acertado            10.06%
+--     lo que el modelo dijo que acertaria 12.29%
+--     1X2 correcto                        48.04%
+--     partidos que terminaron en empate   25.70%
+--     marcadores predichos que son 1-0, 1-1 o 0-1   49.72%
+--
+-- El modelo es honesto sobre su propio limite: dice que acertara el
+-- marcador ~12% de las veces y acierta 10%. Ese es el techo real del
+-- futbol, no una falla de RETO. Una lista de 20 marcadores exactos sin
+-- probabilidad al lado no es un pronostico mejor: es el mismo 10% sin
+-- avisar.
+--
+-- Lo que si es una falla de presentacion: que la mitad de los marcadores
+-- probables sean 1-0, 1-1 o 0-1. Es la moda real de un Poisson con
+-- lambda ~1.4, pero como numero para ensenar no aporta. Por eso ahora va
+-- acompanado de marcador_esperado_pct.
+--
+-- REVERSION:
+--   drop view public.v_tarjeta_soccer_v1;  -- y recrear la de ISS139
+--   update v2.crossleague_league_strength set league_name = <nombres viejos>;
+-- =====================================================================
