@@ -693,3 +693,25 @@ begin
     raise exception 'GATE34 FALLO en % compuertas: o la cola se volvio a atascar, o se aprobo una competencia que el dueno no autorizo, o la identidad de un equipo no cuadra con el marcador.', v_fail;
   end if;
 end $$;
+
+-- ===========================================================================
+-- GATE 34.10 y 34.11 (ISS144) -- el historial tiene que ser de futbol SENIOR
+-- ===========================================================================
+-- Nacieron porque la edge function `soccer-global-backfill` tenia SU PROPIA
+-- regla de "que es una liga" (solo tipo=League) y le asigno la liga JUVENIL
+-- portuguesa a Mafra, Beira Mar y CF Benfica: 108 partidos de U19 entraron
+-- como forma del equipo mayor. El filtro de ISS143 vivia en SQL y esa funcion
+-- nunca lo consultaba: habia dos reglas y mandaba la que no toque.
+--
+-- Ahora la regla es una sola (v2.fn_liga_domestica_valida), esta en el punto
+-- de escritura, y estos dos gates vigilan que nadie la vuelva a saltar.
+--
+--   G34.10  ninguna observacion domestica viene de liga juvenil/reservas/
+--           femenil/copa.  FAIL si aparece una.
+--   G34.11  ningun trabajo de cobertura queda apuntando a una liga asi.
+--           FAIL si aparece uno.
+--
+-- Ambos se agregaron a public.gate_cobertura_y_competencias() con parche de
+-- coincidencia exacta (si el ancla no aparece exactamente 1 vez, aborta).
+--
+-- Estado al instalar: G34.10 PASS (0) | G34.11 PASS (0)
