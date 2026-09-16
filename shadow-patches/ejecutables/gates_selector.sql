@@ -505,3 +505,27 @@ begin
     raise exception 'GATE28 FALLO en % compuertas. Se esta publicando una probabilidad sin autoridad de release y sin etiqueta que lo diga.', v_fail;
   end if;
 end $$;
+
+-- =====================================================================
+-- GATE 29 (ISS131/ISS132): NFL Y FANTASY
+-- NFL: que ningun partido se quede sin contexto, que lo que se declara
+-- AVAILABLE tenga numeros reales con al menos 3 juegos, que no entre
+-- pretemporada, y que no haya precio ni EV ni Kelly en el calculo.
+-- FANTASY: que ninguna proyeccion READY venga vacia (leccion de ISS125),
+-- cero lookahead, identidad resuelta, muestra corta SIEMPRE marcada, y
+-- K/DST sin publicar numero mientras la autoridad los limite a identidad.
+-- =====================================================================
+do $$
+declare g record; v_fail int := 0;
+begin
+  for g in select * from public.gate_nfl_y_fantasy() loop
+    if g.estado = 'PASS' then raise notice 'GATE29 % : PASS % -> %', g.gate, g.cuenta, left(g.detalle,120);
+    elsif g.estado = 'INFO' then raise notice 'GATE29 % : INFO % -> %', g.gate, g.cuenta, left(g.detalle,200);
+    else v_fail := v_fail + 1;
+         raise warning 'GATE29 % : FAIL % -> %', g.gate, g.cuenta, left(g.detalle,300);
+    end if;
+  end loop;
+  if v_fail > 0 then
+    raise exception 'GATE29 FALLO en % compuertas de NFL/Fantasy.', v_fail;
+  end if;
+end $$;
