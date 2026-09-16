@@ -555,3 +555,29 @@ begin
     raise exception 'GATE30 FALLO en % compuertas. Los porcentajes de la tarjeta no son de fiar.', v_fail;
   end if;
 end $$;
+
+-- =====================================================================
+-- GATE 31 (ISS135): LA TARJETA DE MLB
+-- Cuatro mercados: moneyline, total de carreras en la linea REAL, NRFI/YRFI
+-- y F5. Lo que mas se vigila aqui es el PUSH: a diferencia de futbol, en MLB
+-- las lineas enteras son comunes y el empate exacto ocurre en 12-13% de los
+-- casos. Si la tarjeta muestra solo over/under en una linea entera, no suma
+-- 100 y el pick se califica mal. G31.2 y G31.3 lo vigilan en las dos
+-- direcciones: entera obliga push > 0, y .5 obliga push = 0.
+-- G31.7 protege lo que se arreglo en ISS128: que el moneyline de MLB siga
+-- declarando que la autoridad no lo autoriza para release.
+-- =====================================================================
+do $$
+declare g record; v_fail int := 0;
+begin
+  for g in select * from public.gate_tarjetas_mlb() loop
+    if g.estado = 'PASS' then raise notice 'GATE31 % : PASS %', g.gate, g.cuenta;
+    elsif g.estado = 'INFO' then raise notice 'GATE31 % : INFO % -> %', g.gate, g.cuenta, left(g.detalle,220);
+    else v_fail := v_fail + 1;
+         raise warning 'GATE31 % : FAIL % -> %', g.gate, g.cuenta, left(g.detalle,300);
+    end if;
+  end loop;
+  if v_fail > 0 then
+    raise exception 'GATE31 FALLO en % compuertas de la tarjeta de MLB.', v_fail;
+  end if;
+end $$;
