@@ -437,7 +437,8 @@ begin
     'movimiento_pp', round((v_cal*v_disp - p_over_crudo)::numeric,1),
     'encogimiento_aplicado', c.encogimiento,
     'intercepto', c.intercepto,
-    'medida_con', jsonb_build_object('fuente',c.fuente,'partidos_ajuste',c.n_train,'partidos_prueba',c.n_test,
+    'medida_con', jsonb_build_object('fuente',c.fuente,'n',c.n_test,'partidos_ajuste',c.n_train,'partidos_prueba',c.n_test,
+        'ic95_superior', round(c.mejora + 1.96*c.ee, 6),
         'brier_crudo',c.brier_crudo,'brier_calibrado',c.brier_calibrado,'brier_constante',c.brier_constante,
         'mejora_vs_constante',c.mejora,'t',c.t_stat,'ic95_inferior',c.ic95_inf,
         'correlacion',c.correlacion,'veredicto',c.veredicto),
@@ -510,6 +511,15 @@ select cron.schedule('calibracion-soccer-diaria','24 5 * * *',
 --          "UNDER 2.5" en un partido que iba 1-3 al medio tiempo.
 --   G33.11 equipos sin liga verificable ........ INFO  1  (Stenhousemuir)
 --   G33.12 replay de G32.2 con la calibracion .. INFO  243
+--
+-- NOTA POSTERIOR (ISS138b), tras revisar lo que construyo Lovable:
+--   Su adaptador lee medida_con->>'n' y ->>'ic95_superior'. Yo emitia
+--   partidos_prueba y solo el limite inferior, asi que el bloque "Como lo
+--   medimos" se habria quedado a medias en la app. Se agregaron las dos
+--   llaves (sin quitar ninguna) en public.soccer_ou_calibrado. El limite
+--   superior se calcula como mejora + 1.96*ee, que es el mismo intervalo
+--   que ya estaba guardado.
+--   Verificado: G30 9/9 y G33 9/9 siguen en PASS despues del cambio.
 --
 -- REVERSION:
 --   begin;
