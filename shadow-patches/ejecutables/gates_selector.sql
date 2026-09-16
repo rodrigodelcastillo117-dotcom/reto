@@ -653,3 +653,43 @@ begin
     raise exception 'GATE33 FALLO en % compuertas: o se publica una liga que es copa, o se aplica una calibracion sin evidencia.', v_fail;
   end if;
 end $$;
+
+-- =====================================================================
+-- GATE 34 (ISS139): LA COLA DE COBERTURA Y LA POLITICA DE COMPETENCIAS
+--
+-- Llevaba dos issues creyendo que las competencias que el dueno pidio
+-- estaban bloqueadas por la politica. Estaba mal: aprobarlas destraba 2
+-- partidos de 69. Los otros 67 esperaban DATOS, y los datos no llegaban
+-- porque seis trabajos muertos, con partidos ya jugados y hasta 102
+-- intentos, acaparaban la cola cada cinco minutos desde hacia dias.
+--
+-- G34.1 y G34.2 vigilan que eso no vuelva: espera exponencial, y un
+-- partido que ya se jugo no le gana el turno a uno que viene.
+--
+-- G34.9 es la prueba de identidad mas dura que se puede hacer con estos
+-- datos: si el api_team_id fuera de otro equipo, los goles que bajamos de
+-- API-Football no cuadrarian con el marcador de ESPN del mismo dia. Nacio
+-- de un error mio: resolvi 69 identidades desde la URL del escudo, las
+-- valide contra las que el worker ya habia resuelto por nombre, y discrepaban
+-- 9 de 45. Se revirtieron todas. Sin esa validacion se habria ido a
+-- produccion el historial de otro equipo metido como si fuera este.
+--
+-- G34.8 es INFO a proposito: 24 filas de ligas_master apuntan a otra
+-- competicion que la de su endpoint. NO se parchean, porque cambiarlas
+-- mueve de que competicion se descarga el historial. Se esquivan con
+-- v2.v_ligas_domesticas_confiables.
+-- =====================================================================
+do $$
+declare g record; v_fail int := 0;
+begin
+  for g in select * from public.gate_cobertura_y_competencias() loop
+    if g.estado = 'PASS' then raise notice 'GATE34 % : PASS %', g.gate, g.cuenta;
+    elsif g.estado = 'INFO' then raise notice 'GATE34 % : INFO % -> %', g.gate, g.cuenta, left(g.detalle,400);
+    else v_fail := v_fail + 1;
+         raise warning 'GATE34 % : FAIL % -> %', g.gate, g.cuenta, left(g.detalle,400);
+    end if;
+  end loop;
+  if v_fail > 0 then
+    raise exception 'GATE34 FALLO en % compuertas: o la cola se volvio a atascar, o se aprobo una competencia que el dueno no autorizo, o la identidad de un equipo no cuadra con el marcador.', v_fail;
+  end if;
+end $$;
