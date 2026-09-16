@@ -1,0 +1,96 @@
+-- =====================================================================
+-- ISS143 -- LA IDEA DEL DUENO YA ERA LA ARQUITECTURA, PERO ENCONTRE UN BUG
+--
+-- El dueno propuso: "para Europa League y Conference, agarrar los partidos
+-- locales y poner una ponderacion a las ligas de Europa". Y remato:
+-- "por que son equipos de 1era".
+--
+-- Tiene razon en las dos cosas, y eso ES el cerebro. La formula literal de
+-- fn_crossleague_predict_canonical:
+--
+--   lambda_local  = exp(a0 + batt*ln(GF_local) + bdef*ln(GC_visitante)
+--                       + localia + (phi_local - phi_visitante))
+--
+-- Partidos domesticos (GF/GC) + ponderacion de liga (phi). Es exactamente
+-- lo que describio. No habia nada que inventar: habia que ver por que no
+-- alcanzaba.
+--
+-- ============ EL BUG QUE APARECIO BUSCANDO ESO ============
+--
+-- Al listar las ligas domesticas de los equipos bloqueados salio esta:
+--
+--   liga 1041 = "Juniores U19" (Portugal), tipo "League"
+--
+-- Tres equipos SENIOR tenian asignada una liga SUB-19 como su liga
+-- domestica, con 108 observaciones entre los tres:
+--   Mafra 40 | Beira Mar 36 | CF Benfica 32
+--
+-- O sea: la forma de un equipo de adultos se estaba midiendo con partidos
+-- juveniles. Es el mismo error que Stenhousemuir (ISS138), por otra puerta:
+-- el catalogo de API-Football marca las ligas juveniles como tipo='League',
+-- asi que el filtro que puse en ISS138 no las detenia.
+--
+-- ARREGLADO:
+--   se borraron las 108 observaciones juveniles
+--   los 3 equipos quedaron BLOCKED con NO_DOMESTIC_LEAGUE_EVIDENCE
+--   el filtro de nombre se agrego en los tres lugares donde se decide que
+--   es "liga domestica": v2.v_ligas_domesticas_confiables,
+--   v2.ajustar_e_instalar_phi y el resolutor de la cola.
+--
+-- El patron: u1[5-9], u2[01], junior, juvenil, youth, sub-1X, reserve,
+-- women, femenin, feminin, y endpoints con '.w.'.
+--
+-- ============ POR QUE NO ALCANZA LA PHI DE ESAS LIGAS ============
+--
+-- Medido, con el ajuste corrido de verdad:
+--
+--   NB I (Hungria)          n_usable 16  (hacen falta 20)
+--   1. SNL (Eslovenia)      n_usable 16
+--   Ligat Ha'al (Israel)    n_usable 10
+--   First League (Bulgaria) n_usable  0
+--   First League (Armenia)  n_usable  0
+--
+-- El limite no es el metodo: es la MUESTRA. Para ajustar la fuerza de una
+-- liga se necesitan 20 partidos inter-liga donde AMBOS lados tengan 15
+-- partidos domesticos medidos. Y solo teniamos 1 equipo de Hungria, 1 de
+-- Bulgaria, 1 de Armenia, porque la cola SOLO encola a los equipos que
+-- juegan esta semana.
+--
+-- ============ LO QUE SE HIZO CON ESO ============
+--
+-- Cada observacion que bajamos guarda metadata.opponent_id y opponent_name:
+-- son los demas equipos de esa misma liga, con su id de API-Football, ya en
+-- nuestra base y sin gastar una llamada.
+--
+--   liga 40 Championship      28 rivales registrados
+--   liga 95 Segunda Liga      23
+--   liga 42 League Two        22
+--   liga 71 Serie A Brasil    19
+--   liga 383 Israel           17
+--   liga 271 Hungria          16
+--
+-- Para servir al ajuste de phi un equipo necesita id de ESPN (ahi estan sus
+-- partidos continentales). Se probo SOLO coincidencia EXACTA de nombre
+-- normalizado, y ademas unica: nada de parecidos, que es lo que el dueno
+-- prohibio y lo que ya me exploto una vez con los escudos (ISS139).
+--
+--   ligas inglesas: Championship 12, League Two 14  -> si se pueden
+--   Hungria 1 de 16, Armenia 1 de 15, Bulgaria 0 de 15, Israel 0, Eslovenia 0
+--
+-- HONESTO: esto NO desbloquea Hungria, Bulgaria, Armenia, Israel ni
+-- Eslovenia. Esas ligas no las cubre ESPN y sus equipos no estan en el
+-- diccionario con nombre coincidente. Su phi va a seguir sin ajustarse
+-- hasta que haya otra fuente.
+--
+-- LO QUE SI: se encolaron 141 equipos con identidad verificable por los dos
+-- lados (api_team_id del propio proveedor, espn_id por nombre exacto unico).
+-- Van en la prioridad MAS BAJA, detras de los equipos con partido proximo:
+-- verificado corriendo get_soccer_coverage_jobs(6), que sigue devolviendo
+-- equipos con kickoff del 20 de septiembre, no los nuevos.
+-- G34.9 los vigila: si un id fuera de otro equipo, sus goles no cuadrarian
+-- con el marcador de ESPN del mismo dia.
+--
+-- Cuota al momento de encolar: 4135 de 7500, con 1490 llamadas todavia
+-- disponibles para el backfill. 325 en cola a ~3 llamadas cada uno cabe,
+-- y los nuevos ceden el paso.
+-- =====================================================================
