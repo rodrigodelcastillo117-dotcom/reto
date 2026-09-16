@@ -479,16 +479,17 @@ begin
   end if;
 end $$;
 
+
 -- =====================================================================
--- GATE 28 (ISS128): UN P_RETO PUBLICADO SIN AUTORIDAD DE RELEASE
+-- GATE 28 (ISS128): UN NUMERO PUBLICADO SIN AUTORIDAD DE RELEASE
 -- El core de MLB pone official_probability_bar en
 -- HIDDEN_NOT_RELEASE_AUTHORIZED ("MLB Moneyline no tiene P_RETO oficial
--- validado") y el envoltorio mlb_terminal_v2 lo pisa con READY sin
--- consultar nunca la autoridad. La autoridad dice
--- product_release_authorized=false, n_oos=14, brier_delta_upper95=+0.0117.
--- ESTA COMPUERTA ESTA EN ROJO A PROPOSITO: el arreglo cambia lo que el
--- usuario ve y lo decide el dueno. NFL entra como control y sale PASS,
--- para que se vea que no es una compuerta que siempre falla.
+-- validado") y el envoltorio mlb_terminal_v2 lo pisaba con READY sin
+-- consultar nunca la autoridad.
+-- Decision del dueno: publicar el numero, pero ETIQUETADO.
+-- Esta compuerta ya no vigila "que no se muestre": vigila que si se
+-- muestra, venga con la verdad pegada. Un numero sin etiqueta es mentira.
+-- NFL entra como control negativo para que se vea que no siempre pasa.
 -- =====================================================================
 do $$
 declare g record; v_fail int := 0;
@@ -501,6 +502,6 @@ begin
     end if;
   end loop;
   if v_fail > 0 then
-    raise warning 'ABIERTO: % compuertas de GATE28. MLB publica un P_RETO que su propio core manda esconder. Arreglarlo quita o reetiqueta un numero en pantalla: decision del dueno, no parche mio.', v_fail;
+    raise exception 'GATE28 FALLO en % compuertas. Se esta publicando una probabilidad sin autoridad de release y sin etiqueta que lo diga.', v_fail;
   end if;
 end $$;
