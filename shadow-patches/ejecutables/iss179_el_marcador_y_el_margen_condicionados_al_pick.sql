@@ -1,0 +1,90 @@
+-- ISS179: el marcador y el margen, condicionados al pick
+--
+-- PREGUNTA DEL DUENO
+--   "no es mejor que en las tarjetas pongamos los goles esperados redondeados?
+--    en vez del Marcador mas probable: Real Betis 1-0 Getafe . 16.5%"
+--
+-- ===========================================================================
+-- LO MEDI ANTES DE OPINAR. 381 partidos ya jugados con lambda y resultado.
+-- ===========================================================================
+--
+--   opcion                                acierta marcador   CONTRADICE al pick
+--   ------------------------------------  ----------------   ------------------
+--   A. moda de la distribucion (lo de hoy)     12.34%              48.03%
+--   B. goles esperados redondeados (su idea)   10.24%              27.30%
+--   C. marcador condicionado al pick            9.19%               0.00%
+--   D. margen mas probable (tambien en tarjeta) 25.20%             47.51%
+--
+-- VEREDICTO SOBRE SU IDEA: buena, 7/10. Diagnostica bien el problema y corta
+-- la contradiccion casi a la mitad. Pero no lo resuelve: 1 de cada 4 tarjetas
+-- seguiria peleandose consigo misma, porque redondear dos numeros por separado
+-- rompe la distribucion conjunta. Ejemplo real: lambda 1.4 contra 0.6 redondea
+-- a "1-1" y borra una ventaja local clara. Otro: Manchester City lambda 2.037
+-- contra 0.688; redondeado da "2-1", pero P(visita=0)=0.50 contra P(visita=1)=0.35,
+-- asi que el 2-0 es sustancialmente mas probable que el 2-1.
+--
+-- Y de paso aparecio algo que yo mismo habia vendido mal: el MARGEN, del que
+-- escribi en nota_total que "si distingue un partido de otro", contradice al
+-- pick el 47.51% de las veces. Comprobado en la tarjeta viva: 46 de 150
+-- decian "Margen mas probable: Empate" con el pick en Local (29) o Visita (16).
+-- Cero de esas 46 tenian pick de empate.
+--
+-- ===========================================================================
+-- LA RAIZ
+-- ===========================================================================
+-- No es QUE numero se muestra. Es que cada linea de la tarjeta tomaba su
+-- propia moda por separado, de una marginal distinta de la misma distribucion.
+-- Las modas de marginales distintas no tienen por que coincidir, y no coinciden.
+-- El usuario ve el desacuerdo y concluye, con razon, que el analisis no cuadra.
+--
+-- ===========================================================================
+-- LO QUE SE HIZO
+-- ===========================================================================
+--
+-- public.fn_marcador_condicionado(lambda_local, lambda_visita, pick)
+--   De todos los marcadores compatibles con el pick, devuelve el mas probable,
+--   su probabilidad absoluta y su probabilidad DENTRO del escenario.
+--   Contradiccion 0.00% por construccion.
+--   Cuesta 3.15 pp de acierto exacto (9.19% contra 12.34%). Precio nulo:
+--   ninguna de las dos sirve como afirmacion, las dos rondan el 10%, y la
+--   tarjeta ya lo decia en nota_total.
+--
+-- margen_mas_probable / margen_mas_probable_pct
+--   Ahora el bucket se elige SOLO entre los compatibles con el pick, y el
+--   porcentaje es dentro del escenario, la misma convencion que el marcador.
+--   Antes: "Empate" con pick ganador en 46 de 150. Ahora: 0.
+--
+-- POR QUE "DENTRO DEL ESCENARIO" Y NO ABSOLUTO
+--   Un 16.5% absoluto sobre un marcador exacto no se puede leer: compite con
+--   otros 80 marcadores. "25% de los escenarios en que gana el Betis" si se
+--   lee, y es la respuesta a la pregunta que la gente hace de verdad:
+--   si pasa lo que dices, como se ve.
+--
+-- EJEMPLO REAL, TARJETA SERVIDA
+--   Manchester City vs Sunderland
+--     pick    Manchester City 69.6%   (69.6 / 18.2 / 12.2)
+--     goles   2.037 - 0.688  (total 2.72)
+--     marcador 2-0  . 19.7% del escenario
+--     margen  Gana Manchester City por 2 o mas . 61.8% del escenario
+--     total   linea 2.5, Over 47.0%
+--   Todo apunta al mismo lado. Antes el margen habria podido decir "Empate".
+--
+-- GATES NUEVOS
+--   G40.3  el marcador mostrado no implica otro ganador que el pick. 0.
+--   G40.4  el margen mostrado no implica otro ganador que el pick. 0.
+--
+-- ===========================================================================
+-- ESTADO VERIFICADO (2026-09-17, sobre la tarjeta SERVIDA)
+-- ===========================================================================
+--   148 tarjetas con marcador, 0 contradicen al pick
+--   147 tarjetas con margen,   0 contradicen al pick
+--   pct medio del marcador dentro del escenario   22.4%
+--   pct medio del margen  dentro del escenario    55.3%
+--   G40.3 PASS (0) | G40.4 PASS (0) | G40.2 PASS (0)
+--   G40.1 sigue en FAIL (70): las dos lambdas de futbol. Sin tapar.
+--
+-- LO QUE NO SE HIZO Y POR QUE
+--   No se agrego ADEMAS la version redondeada como segunda linea. Poner dos
+--   marcadores en la misma tarjeta es volver al problema de origen: dos
+--   numeros que dicen cosas distintas. Si el dueno prefiere su version, se
+--   cambia la que hay, no se suman las dos.

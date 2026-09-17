@@ -10,3 +10,4 @@ select * from public.gate_mlb_one_brain_medible();
 select * from public.gate_tarjeta_no_se_contradice();
 --- G41: contrato de tarjeta unica, ninguna tarjeta muda (ISS178) ---
 select * from public.gate_tarjeta_universal();
+--- G40.3 / G40.4: marcador y margen condicionados al pick (ISS179), dentro del mismo gate ---
