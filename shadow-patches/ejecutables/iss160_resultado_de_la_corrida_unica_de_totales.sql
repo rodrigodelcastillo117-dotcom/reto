@@ -1,0 +1,63 @@
+-- ISS160: resultado de la corrida unica de totales. PASA.
+--
+-- Diseno fijado de antemano en ISS158 (commit a601217), sin tocar nada.
+-- Backfill de tiros terminado: 7235 de 7249, cola vacia.
+--
+-- PARAMETROS, AJUSTADOS SOLO CON EL ENTRENAMIENTO (fecha < 2026-08-01)
+--   tasa de conversion  0.3191   sobre 11230 equipo-partido
+--   constante over 2.5  0.5411   sobre 31563 partidos
+--   Ninguno de los dos vio un solo partido del tramo de prueba.
+--
+-- PRUEBA (fecha >= 2026-08-01, linea 2.5 fija, n=1080)
+--   over 2.5 real                0.5907
+--   p_over medio del modelo      0.5560
+--   Brier modelo                 0.238456
+--   Brier constante              0.244230
+--   mejora                      +0.005774
+--   IC95                         +0.001589  a  +0.009960   <- NO CRUZA CERO
+--   correlacion                  0.1370
+--
+-- PRUEBA DE CONVICCION (la misma con la que se mato al NRFI en ISS159)
+--   rango emitido        0.3175 - 0.7433     (NRFI: 0.4869 - 0.5440)
+--   desviacion           0.0720              (NRFI: 0.0088)
+--   veces sobre 65%      113                 (NRFI: 0)
+--   veces bajo 40%       19                  (NRFI: 0)
+--   real en su decil alto  0.7407 sobre n=108
+--   real en su decil bajo  0.4661
+--   Cuando dice alto, entra el 74% de las veces. Eso si es una afirmacion.
+--
+-- CALIBRACION AFIN, AJUSTADA SOLO EN EL ENTRENAMIENTO
+--   sobre 4648 partidos previos al 2026-08-01:
+--     intercepto 0.09618   pendiente 0.84296   corr 0.1223
+--   La corr del entrenamiento (0.1223) y la de la prueba (0.1370) casi
+--   coinciden: la senal es estable entre periodos, no un artefacto de tramo.
+--
+--   Aplicada al tramo de prueba, que nunca la vio:
+--     Brier crudo       0.238456
+--     Brier calibrado   0.237944
+--     Brier constante   0.244230
+--     mejora calibrado vs constante  +0.006287  IC95 +/- 0.003697
+--       o sea  +0.002590 a +0.009984             <- TAMPOCO CRUZA CERO
+--     rango calibrado   0.3638 - 0.7228   desviacion 0.0607
+--
+--   Sigue subestimando: dice 0.5649 de media contra 0.5907 real, 2.6 puntos.
+--   Mejor que los 3.5 del crudo, pero no esta perfecto.
+--
+-- COMPARACION CON LO QUE HOY SE PUBLICA
+--   Lo publicado (crossleague) quedo medido como PEOR_QUE_ADIVINAR_CONCLUYENTE:
+--     delta_brier +0.02199, IC95 +0.00438 a +0.03959, correlacion -0.1337.
+--   Este cerebro le gana a adivinar con el intervalo del lado bueno y con
+--   correlacion positiva. No es que sea mejor que lo publicado: es que lo
+--   publicado apunta al reves y este no.
+--
+-- QUE AUTORIZA ESTO Y QUE NO
+--   AUTORIZA: proponer el reemplazo del cerebro de totales.
+--   NO AUTORIZA: encenderlo solo. El cambio de lo que ve el usuario lo decide
+--   el dueno, y ademas hay que cablearlo a v_tarjeta_soccer_v1, lo que exige
+--   su propio parche y su propia comparacion antes/despues de tarjeta a tarjeta.
+--
+-- LO QUE SIGUE ABIERTO
+--   La correccion de Dixon-Coles sobre los marcadores bajos esta medida
+--   (0-0 y 1-1 real 17.5% contra 15.0% del Poisson independiente; 1-0 y 0-1
+--   real 10.3% contra 14.0%) pero NO esta implementada. Va aparte y con su
+--   propio preregistro: no se toca este resultado para meterla.
