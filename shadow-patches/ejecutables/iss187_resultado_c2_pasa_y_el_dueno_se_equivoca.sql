@@ -1,0 +1,80 @@
+-- ISS187: resultado de ISS186. C2 PASA. Y el dueno se equivoca con Montgomery.
+--
+-- ===========================================================================
+-- LA CORRIDA, UNA SOLA, SEGUN EL PREREGISTRO
+-- ===========================================================================
+--   n decisiones pareadas          113,604   (minimo exigido: 5,000)
+--   BASE  puntos ganados/decision   4.3408
+--   C2    puntos ganados/decision   4.3733
+--   diferencia                     +0.0325
+--   IC95                    [+0.0047, +0.0602]   ENTERO del lado bueno
+--
+--   REGLA CUMPLIDA: se adopta C2.
+--
+-- SECUNDARIOS, reportados, NO deciden (asi se preregistro):
+--   C1 recencia H=8              +0.0483   IC95 inf +0.0281
+--   C3 oportunidad + recencia    +0.0986   IC95 inf +0.0690
+--
+--   C3 es TRES VECES mejor que el primario. No se adopta hoy: el preregistro
+--   dice, con esas palabras, que elegir el ganador despues de ver resultados es
+--   trampa. C3 queda como candidato a confirmar con su propio preregistro sobre
+--   datos de 2026 conforme se acumulen. Es la tercera vez que me niego a
+--   quedarme con el mejor post hoc (ISS161, ISS183, y aqui).
+--
+-- HONESTIDAD SOBRE EL TAMANO: +0.0325 puntos por decision es PEQUENO. Es real
+-- y paso la barra, pero nadie debe esperar que esto le gane la liga. Su valor
+-- esta en los casos concretos donde cambia la decision.
+--
+-- ===========================================================================
+-- Y AHORA LO INCOMODO: EL CASO MONTGOMERY
+-- ===========================================================================
+-- El dueno dijo: "a mi no me hace sentido dowdle por montgomery" y "david
+-- montgomery es el titular de Houston".
+--
+-- Se aplico C2 (el modelo que acaba de GANAR la prueba) al roster real:
+--
+--   jugador             base hoy   toques/juego   TD/juego   C2      cambio
+--   Rico Dowdle           12.36        16.6         0.39    13.26    +0.91
+--   David Montgomery      10.88        11.7         0.61     9.49    -1.39
+--
+-- EL MODELO MEJOR LO BAJA, NO LO SUBE. Y sube a Dowdle. La brecha pasa de
+-- 1.48 puntos a 3.77. El modelo mejor esta MAS seguro de Dowdle.
+--
+-- POR QUE, con datos:
+--   1. NO es el titular. Snaps de la semana 1 en Houston:
+--        Woody Marks       40 snaps   51%
+--        David Montgomery  39 snaps   49%
+--      Es reparto mitad y mitad, no titularidad.
+--   2. Volumen bajo: 11.7 toques por juego contra 16.6 de Dowdle,
+--      19.2 de Achane, 17.9 de Kyren.
+--   3. Vive del touchdown: 0.61 TD por juego con 11.7 toques. Dowdle anota
+--      0.39 con 16.6 toques. Montgomery anota MAS con MENOS oportunidades.
+--   4. Sus 28.90 de la semana 1 son 18 puntos de TD sobre 23 toques. El TD es
+--      la estadistica menos repetible que existe en fantasy.
+--
+-- O sea: el defecto que encontre (que la temporada actual pesa 5%) ES REAL y
+-- esta medido, pero en ESTE caso no es lo que produce la recomendacion. La
+-- recomendacion de sentar a Montgomery se sostiene por volumen y por reparto de
+-- jugadas, y el modelo mejor la refuerza.
+--
+-- Lo que SI era cierto de la queja: el modelo llegaba a la conclusion correcta
+-- por el camino equivocado (promediar 17 juegos viejos), y no explicaba nada de
+-- esto en la tarjeta. Un usuario no puede confiar en un numero que no razona.
+--
+-- ===========================================================================
+-- INTENTO DE CONTRASTE EXTERNO, FALLIDO
+-- ===========================================================================
+-- El dueno paso dos articulos de start/sit de la semana 2 (ESPN y NFL.com).
+-- NO se pudieron leer: el proxy de salida de este entorno bloquea www.nfl.com
+-- y www.espn.com.mx (EGRESS_BLOCKED). No se finge haberlos leido ni se infiere
+-- que dicen. Si se pega el texto, se compara.
+--
+-- ===========================================================================
+-- QUE SIGUE
+-- ===========================================================================
+--   1. Implementar C2 como model_version NUEVO. El historial del viejo no se
+--      reescribe.
+--   2. La tarjeta debe MOSTRAR toques por juego, TD por juego y % de jugadas.
+--      Con esos tres numeros a la vista, el caso Montgomery se entiende solo y
+--      nadie tiene que preguntar por que.
+--   3. C3 a preregistro propio cuando 2026 acumule muestra.
