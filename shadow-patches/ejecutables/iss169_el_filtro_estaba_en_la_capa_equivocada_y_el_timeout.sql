@@ -1,0 +1,74 @@
+-- ISS169: el filtro estaba en la capa equivocada, y el timeout del rol publico
+--
+-- ================================================================
+-- 1. UN ERROR MIO QUE ADEMAS DOCUMENTE MAL
+-- ================================================================
+-- En ISS162 escribi, con estas palabras: "El filtro se aplica en la capa de
+-- publicacion (el CTE ev de v_tarjeta_soccer_v1, que lee de agenda_espn)".
+--
+-- Esa frase se contradice a si misma y no me di cuenta. El CTE ev de la vista
+-- de TARJETA no es la capa de publicacion. La capa de publicacion es
+-- v_futpro_publication_v3, que es de donde sale la LISTA de partidos.
+--
+-- Resultado medido:
+--     v_tarjeta_soccer_v1        150 tarjetas   0 CONMEBOL
+--     v_futpro_publication_v3    211 tarjetas   2 CONMEBOL
+--
+-- O sea: la tarjeta no pintaba Libertadores ni Sudamericana, pero la LISTA
+-- seguia enseniandolas. El dueno habia dicho "NO ME INTERESA NADA DE CONMEBOL,
+-- NADA" y ahi seguian. Lo vio Lovable mirando la pantalla, no yo midiendo.
+--
+-- Y peor: me creí mi propio commit. Verifique el numero en la vista donde
+-- habia puesto el filtro, vi 150, y di por cerrado el asunto sin comprobar la
+-- otra punta.
+--
+-- ARREGLO: el mismo NOT EXISTS contra competencia_excluida_de_cartelera, ahora
+-- en el SELECT final de v_futpro_publication_v3, cruzando por competition_name.
+--
+--   antes:   publication 211 (2 CONMEBOL, 59 copas amateur) | tarjeta 150
+--   despues: publication 150 (0 y 0)                        | tarjeta 150
+--
+-- ================================================================
+-- 2. EL TIMEOUT QUE DEJABA LA PANTALLA EN "CARGANDO PARTIDOS..."
+-- ================================================================
+-- Lovable lo reporto: en la primera carga del navegador, la vista devolvia
+-- 57014 "canceling statement due to statement timeout" con el rol publico, y
+-- en la segunda iba bien.
+--
+-- Causa: el rol anon tiene statement_timeout = 3s (authenticated 8s). La vista
+-- tardaba 602 ms en caliente, pero en frio y con tres consultas a la vez se
+-- pasaba. Y el plan hacia un ordenamiento externo A DISCO de 5.8 MB, mas dos
+-- escaneos de 22308 filas cada uno sobre historico_partidos_espn.
+--
+-- NO se subio el timeout de anon. Eso taparia el problema y afectaria a todo lo
+-- demas. Se precalcula:
+--     public.tarjeta_soccer_cache          tabla, una fila por partido
+--     public.refrescar_tarjeta_soccer_cache()  la llena desde el calculo
+--     cron 'tarjeta-soccer-cache' cada 3 minutos
+--     la vista antigua pasa a llamarse v_tarjeta_soccer_v1_calculo
+--     v_tarjeta_soccer_v1 ahora es un select sobre la tabla
+--
+-- El frontend NO cambia una linea: mismo nombre, mismas columnas, mismo orden.
+--
+-- MEDIDO DESDE EL ROL anon, no desde el mio:
+--     antes    602 ms en caliente, 57014 en frio
+--     despues  0.273 ms   (Seq Scan sobre 150 filas)
+--
+-- Es el mismo patron que ISS165: una funcion cara ejecutandose por fila dentro
+-- de una vista publicada. Ahi fue ou_por_tiros_tarjeta, aqui es la vista
+-- entera. Lo que se sirve al publico se precalcula; lo que se calcula no se
+-- sirve al publico.
+--
+-- ================================================================
+-- VERIFICADO DESPUES, DESDE anon
+-- ================================================================
+--   tarjetas 150 | altas/bajas 134 | btts 146 | margen 146
+--   motivo real 4 | competencias excluidas 0
+--   sin pick por empate 1 (Besiktas, correcto)
+--   empate con dos numeros 0
+--
+-- PENDIENTE DECLARADO
+--   La cache se refresca cada 3 minutos. Un partido que cambie de estado en
+--   ese hueco se ve viejo hasta el siguiente refresco. Para tarjetas de
+--   prepartido es aceptable; si algun dia se publica algo en vivo, esto hay
+--   que repensarlo.
