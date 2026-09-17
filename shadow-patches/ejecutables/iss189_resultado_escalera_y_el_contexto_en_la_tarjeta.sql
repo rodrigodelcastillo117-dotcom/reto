@@ -1,0 +1,80 @@
+-- ISS189: resultado de la escalera ISS188, e implementacion.
+--
+-- ===========================================================================
+-- LA CORRIDA, UNA SOLA. n = 113,604 decisiones pareadas.
+-- ===========================================================================
+--   peldano              pts ganados   paso sobre el anterior   IC95 inf
+--   L0 base simple          4.3408            -                    -
+--   L1 oportunidad          4.3733         +0.0325             +0.0047   PASA
+--   L2 + rival              4.3982         +0.0249             +0.0046   PASA
+--   L3 + cambio de equipo   4.3996         +0.0014             -0.0067   FALLA
+--
+--   Se adopta el prefijo L2. Por la regla preregistrada, L4 (snaps) NO se mira:
+--   la escalera se para en el primer peldano que falla.
+--   Ganancia total L0 -> L2: +0.0574 puntos por decision.
+--
+--   L5 (clima) NO SE PUDO PROBAR: nfl_partidos tiene 0 de 272 partidos de 2025
+--   con temperatura, viento o precipitacion. No hay dato. No se finge.
+--
+-- POR QUE FALLO L3, con honestidad: solo 80 de 3269 filas tenian cambio de
+-- equipo. La prueba no tenia con que aprender esa variable. Eso es FALTA DE
+-- MUESTRA, no prueba de que la idea sea mala. Y es una lastima, porque el caso
+-- que disparo todo esto (Montgomery: 16 de 17 juegos con otro equipo) es justo
+-- el que la prueba no pudo evaluar. Se para ahi porque la regla lo dice, y se
+-- deja escrito para volver cuando 2026 acumule cambios de equipo.
+--
+-- ===========================================================================
+-- EL CASO MONTGOMERY, CON EL MODELO NUEVO
+-- ===========================================================================
+--   jugador       hoy     L1 oportunidad   factor rival   L2 final
+--   Rico Dowdle   12.36       13.65         0.881 (NE 29/32)  12.03
+--   D. Montgomery 10.88        9.14         1.234 (CIN 1/32)  11.29
+--
+--   La brecha pasa de 4.51 (con L1) a 0.74. Casi un volado.
+--   PERO NO VOLTEA. El factor de rival hizo su trabajo (subio a Montgomery
+--   2.15 y bajo a Dowdle 1.62), y aun asi Dowdle queda arriba por 0.74 porque
+--   su volumen es genuinamente mayor: 16.6 toques por juego contra 11.0.
+--
+--   Lo que faltaria para voltearlo es exactamente L3, que no se pudo probar.
+--   Con 1 solo juego en Houston no hay forma de saber si sus 23 toques son su
+--   nuevo normal o un partido suelto. Eso no se resuelve con un modelo: se
+--   resuelve con mas semanas.
+--
+--   OTRO HALLAZGO del mismo cambio: Khalil Shakir, que hoy esta en BANCA, sube
+--   a 12.28 con el factor de rival (DET permite 4/32 contra WR) y queda ARRIBA
+--   de Dowdle y de Montgomery. Ese si es un cambio de alineacion accionable.
+--
+-- ===========================================================================
+-- LO IMPLEMENTADO
+-- ===========================================================================
+-- v2.fantasy_factor_rival_v1 + v2.refrescar_factor_rival_v1(temporada, semana)
+--   Que tan blanda es cada defensa contra cada posicion, contando SOLO semanas
+--   anteriores. Encogido hacia la media de liga con k=40 jugador-juegos.
+--   NUNCA usa nfl_defensa_vs_posicion_ppr agregada por temporada completa: para
+--   un partido de esa misma temporada eso es fuga y el backtest saldria
+--   falsamente bueno. 128 filas para 2026 semana 2.
+--
+-- public.fantasy_contexto_jugador(nombre, pos, rival, temporada, semana)
+--   Los numeros que hacen creible o increible una recomendacion:
+--     toques por juego, TD por juego, % de jugadas de esta temporada contra la
+--     anterior, equipo actual, cuantos juegos lleva con el, aviso explicito de
+--     cambio de equipo, y que tan blanda es la defensa rival con su lectura.
+--
+--   Para Montgomery devuelve, todo cierto y todo verificable:
+--     toques por juego 11.0 | TD por juego 0.47
+--     equipo actual HOU, 1 de 17 juegos
+--     "CAMBIO DE EQUIPO: 16 de sus 17 juegos son con otro equipo..."
+--     % de jugadas 49 esta temporada contra 37 la anterior
+--     rival CIN, 3 de 32, "EMPAREJAMIENTO A FAVOR"
+--
+--   Con esos numeros en pantalla, la pregunta del dueno ("por que sientas a
+--   Montgomery") se contesta sola, y el usuario puede estar en desacuerdo con
+--   fundamento. Un numero que no razona no se puede creer, y tenia razon en
+--   desconfiar.
+--
+-- ===========================================================================
+-- LO QUE NO SE USO, A PROPOSITO
+-- ===========================================================================
+--   Momios de Vegas. nfl_partidos los tiene (spread, total_linea, ml_home) y el
+--   total implicado es de los mejores predictores que existen en fantasy.
+--   Excluido por regla del dueno: el precio es dato informativo, no decide.
