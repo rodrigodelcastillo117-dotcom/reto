@@ -1,0 +1,101 @@
+-- ISS196 · Habia TRES cerebros de futbol corriendo, no uno
+--
+-- ===========================================================================
+-- EL HALLAZGO
+-- ===========================================================================
+-- La regla del dueno es literal: "ACUERDATE 1 CEREBRO ATERRIZADO PARA CADA
+-- DEPORTE, SOLO 1 CEREBRO. NO QUIERO 2... NO PUEDEN HABER 2 ANALISIS".
+-- Habia tres, todos vivos y escribiendo hoy mismo:
+--
+--   1. v2.soccer_prediction_v2 (crossleague)  <- el canonico, el de la tarjeta
+--   2. analisis_partidos.analisis_json.probabilidades, con _fuente_1x2 =
+--      'dixon_coles_determinista', escrito por el trigger
+--      trg_override_over_under -> public.fn_override_over_under_analisis.
+--      Ultima escritura: hoy 11:30. 114 filas en 48 horas.
+--   3. fut_predicciones.mercados, escrito por public.agente_analizar_futuros
+--      via mercados_con_confianza(). Ultima escritura: hoy 22:00. 163 filas en
+--      48 horas, 146 prospectivas.
+--
+-- El 2 y el 3 discrepaban entre si hasta 50.6 puntos porcentuales en el mismo
+-- partido. Y el 2 tambien escribia un TERCER estimador de totales de futbol
+-- ('poisson_determinista') que nunca se midio contra nada.
+--
+-- ===========================================================================
+-- CUAL ES EL BUENO: MEDIDO, NO ASUMIDO
+-- ===========================================================================
+-- No se elige por gusto ni por antiguedad. Sobre resultados reales ya
+-- calificados, mercado 1X2, baseline de adivinar = 0.6667:
+--
+--   crossleague_v1  n=161  Brier 0.6084  diff -0.0582  IC95 [-0.1036, -0.0128]
+--   dc-2026.09.1    n=113  Brier 0.6689  diff +0.0022  IC95 [-0.0804, +0.0848]
+--
+-- El canonico es CONCLUYENTEMENTE mejor que adivinar: su intervalo del 95%
+-- queda entero por debajo de cero. El Dixon-Coles es indistinguible de una
+-- moneda y su estimador puntual es incluso peor que adivinar. No hay caso.
+--
+-- NOTA HONESTA SOBRE BTTS, que no se toca aqui:
+--   crossleague_v1  n=161  diff +0.0038  IC95 [-0.0164, +0.0240]
+--   dc-2026.09.1    n=113  diff -0.0239  IC95 [-0.0543, +0.0065]
+-- Los dos cruzan cero. El Dixon-Coles se ve mejor de punta, pero cambiar el
+-- BTTS al que se ve mejor DESPUES de ver los numeros es exactamente la
+-- seleccion post-hoc que este proyecto ya rechazo tres veces. No se cambia.
+-- Lo que si queda dicho: el BTTS del canonico NO esta probado mejor que
+-- adivinar, y su tarjeta no puede decir que lo esta.
+--
+-- ===========================================================================
+-- LO QUE SE HIZO
+-- ===========================================================================
+-- public.fn_override_over_under_analisis (el trigger de analisis_partidos):
+--
+--   a) El 1X2 ya no se calcula aqui. Se TOMA de v2.soccer_prediction_v2, fila
+--      READY mas reciente del evento puenteado. Se etiqueta
+--      _fuente_1x2 = 'crossleague_canonico' y se escribe _procedencia_1x2 con
+--      el cerebro, la regla y la evidencia. Si el canonico no tiene fila, NO se
+--      inventa: se declara _no_1x2_available con el motivo. Fail closed.
+--   b) Los goles esperados pasan a salir de las MISMAS lambdas del canonico,
+--      conservando la forma {local, visitante, total} que ya consumia el front.
+--   c) El tercer estimador de totales de futbol se elimina. Se declara el
+--      mercado retirado (ISS194) con su motivo.
+--   d) Se borran tambien las ETIQUETAS de procedencia viejas. Sin esto, una fila
+--      a la que ya se le habia quitado el numero se quedaba diciendo
+--      _fuente_1x2 = 'dixon_coles_determinista': procedencia de un numero que ya
+--      no existe. Ese detalle se encontro verificando, no antes.
+--
+-- Luego se re-disparo el trigger sobre las 867 filas existentes con un UPDATE
+-- que no cambia datos (set reanalizado_at = coalesce(reanalizado_at, created_at)),
+-- para que el stock viejo quede tambien bajo la regla nueva. No se editaron
+-- valores a mano en ningun momento.
+--
+-- ===========================================================================
+-- RESULTADO VERIFICADO (2026-09-17)
+-- ===========================================================================
+--   analisis_partidos, filas con probabilidades:      867
+--     con 1X2 del canonico:                            43  (_fuente_1x2 = crossleague_canonico)
+--     sin 1X2, con motivo declarado:                  824
+--     con 1X2 de dixon_coles:                           0  (antes 466)
+--     con total de futbol:                              0  (antes: todas las que cruzaban)
+--     con etiqueta de procedencia huerfana:              0
+--
+--   gate_coherencia_soccer_v2:
+--     MODEL_MATRIX_INCOHERENT        24 eventos, max 50.6 pp  ->  13 eventos, max 26.8 pp
+--     MODELO_SIN_EVENTO_EN_AGENDA    415 con matriz 1x2       ->  19 con matriz 1x2
+--
+-- Que 824 analisis se queden SIN 1X2 no es una perdida: es la diferencia entre
+-- 43 numeros que se sostienen y 466 que salian de un motor que empata con una
+-- moneda. El canonico no cubre esos eventos y eso ahora se dice, no se rellena.
+--
+-- ===========================================================================
+-- LO QUE FALTA, DICHO CLARO
+-- ===========================================================================
+-- El TERCER cerebro sigue vivo: fut_predicciones.mercados, que escribe
+-- public.agente_analizar_futuros con mercados_con_confianza(). Los 13 eventos
+-- que siguen discrepando son canonico contra ese. No se toco todavia por dos
+-- razones concretas:
+--   1. Alimenta mejor_pick, o sea la superficie de picks vieja. Cortarlo sin
+--      saber quien lo lee rompe la app, que es lo contrario del encargo.
+--   2. Su 'mercados' incluye mercados que el canonico no cubre. Sustituirlo no
+--      es copiar un numero, es decidir que pasa con cada mercado.
+-- Y ademas anon puede leer fut_predicciones directo, sin pasar por
+-- v_pick_canonico (eso ya lo grita CUARENTENA_ESQUIVADA_POR_TABLA_CRUDA).
+-- Siguiente paso: confirmar con el front quien lee esa tabla, y recien ahi
+-- cortarla o migrarla. Preguntado a Lovable en esta misma sesion.

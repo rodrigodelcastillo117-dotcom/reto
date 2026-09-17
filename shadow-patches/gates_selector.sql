@@ -23,3 +23,6 @@ select * from public.gate_fantasy_ve_la_temporada_en_curso();
 select * from v2.mercado_retirado;
 --- Patas que nunca se pudieron calificar, declaradas en vez de eternas (ISS195) ---
 select * from public.marcar_patas_no_calificables(7, false);
+--- Un solo cerebro de futbol: el 1X2 del analisis sale del canonico (ISS196) ---
+select coalesce(analisis_json#>>'{probabilidades,_fuente_1x2}','(sin 1X2)') fuente, count(*)
+from public.analisis_partidos where analisis_json ? 'probabilidades' group by 1;
