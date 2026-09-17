@@ -1,0 +1,98 @@
+-- ISS173: la tabla de fuerza de liga del dueno, medida contra lo que ya sabemos
+--
+-- QUE PROPUSO EL DUENO
+--   Una tabla de 55 ligas con Inglaterra=100, basada en la temporada CERRADA
+--   2025/26 (no la parcial 2026/27, y en eso tiene razon: usar una temporada a
+--   medias es dejar que el numero se mueva con cada jornada).
+--   Mas la idea de anadir coeficiente de club UEFA aparte del de liga.
+--
+-- POR QUE NO SE ACEPTA UNA TABLA ASI SIN MAS
+--   RETO ya tiene phi MEDIDO para 21 ligas, ajustado contra resultados reales
+--   y con holdout propio. Aceptar una tabla afirmada por encima de una medicion
+--   es sustituir evidencia por opinion, que es justo lo que se le nego al NRFI
+--   (que pasaba el umbral) y a las lineas 1.5 y 4.5.
+--
+-- PERO LA TABLA ES COMPROBABLE, ASI QUE SE COMPROBO
+--   Si captura la fuerza real, tiene que predecir los 21 phi que ya medimos.
+--
+--     correlacion de Pearson            0.8504   (n=21, margen +/-0.4277)
+--     correlacion contra log(fuerza)    0.8446
+--
+--   Y dejando una liga fuera cada vez (ajustar con 20, predecir la excluida):
+--     error medio absoluto     0.0750
+--     peor error               0.2121
+--     rango real de phi        0.5740
+--     error como % del rango   13.1%
+--
+--   O sea: predice la fuerza de una liga que nunca vio con un 13% de error.
+--   NO ES UNA TABLA INVENTADA. Es informacion real.
+--
+--   Mapeo ajustado sobre las 21:  phi = -0.613864 + 0.006202 * fuerza
+--   (Comprobacion: Inglaterra 100 -> +0.0063, y el phi medido es 0.0000.)
+--
+-- DONDE FALLA, QUE ES LO QUE IMPORTA
+--     Chipre       tabla 29.9   medido -0.2320   predice -0.4441   dif +0.2121
+--     Chequia      tabla 40.6   medido -0.5120   predice -0.3539   dif -0.1581
+--     Austria      tabla 28.3   medido -0.5740   predice -0.4267   dif -0.1473
+--     Eredivisie   tabla 56.8   medido -0.3837   predice -0.2543   dif -0.1294
+--
+--   Chipre y Chequia se midieron con 20 y 21 partidos, o sea que ahi la
+--   medicion propia tambien es floja y no esta claro quien tiene razon.
+--   Eredivisie se midio con 91 partidos: ahi la medicion manda, y la tabla es
+--   claramente demasiado generosa con Holanda.
+--
+-- QUE DESBLOQUEARIA DE VERDAD, Y QUE NO
+--   De las 4 tarjetas sin pronostico de hoy, la tabla solo cubre 2:
+--     Levski Sofia vs RB Salzburg   Bulgaria First League 17.6   SI
+--     Celtic vs Ferencvaros         NB I Hungria          22.7   SI
+--     Lillestrom vs Torreense       Segunda Liga Portugal        NO
+--     Man City vs Norwich           EFL Championship             NO
+--   Las dos que no cubre son SEGUNDAS DIVISIONES, y la tabla solo tiene
+--   primeras. El problema del Championship sigue exactamente igual.
+--
+--   Ademas, Bulgaria (17.6) queda por DEBAJO del rango donde se ajusto el
+--   mapeo (la mas baja medida es Azerbaiyan, 19.2). Extrapolar es mas
+--   arriesgado que interpolar, y el 13% de error medido no cubre ese caso.
+--
+-- POR QUE NO SE ENCHUFA SOLO, Y ESTO ES UNA DECISION DEL DUENO
+--   v2.crossleague_league_strength esta SELLADA:
+--   fn_crossleague_strength_integrity compara un md5 de
+--   (league_id, phi, n_cross, servable, config_hash) de TODA la tabla contra
+--   v2.crossleague_strength_seal. Meter filas estimadas rompe el sello, y con
+--   el sello roto el ajuste automatico devuelve BASE_SNAPSHOT_NOT_INTACT para
+--   todo. Ese sello existe exactamente para impedir que entren valores no
+--   medidos.
+--
+--   Hay dos caminos y ninguno es gratis:
+--     A) Volver a sellar con las filas estimadas dentro. El sello deja de
+--        certificar "todo esto se midio". Barato y peligroso.
+--     B) Una via aparte que resuelva phi: medido si existe, estimado si no,
+--        con una bandera que llegue hasta la tarjeta para que diga "fuerza de
+--        liga estimada, no medida". Mas trabajo y honesto.
+--
+--   Se recomienda B. Y en los dos casos, las predicciones servidas con phi
+--   estimado tienen que contarse APARTE en el gate de aprendizaje, para que si
+--   salen peores se vea y se apaguen solas.
+--
+-- LO QUE SI QUEDA HECHO AQUI
+--   v2.fuerza_liga_propuesta_dueno, con las 23 ligas de la tabla que cruzan
+--   con ids conocidos, marcadas en su columna origen como entrada del dueno y
+--   NO como medicion de RETO. El mapeo queda documentado arriba. Nada de esto
+--   toca todavia lo que se publica.
+--
+-- SOBRE EL COEFICIENTE DE CLUB (la otra idea del dueno)
+--   Es mejor idea que la de liga y hay que decirlo: Qarabag no es el promedio
+--   de Azerbaiyan, Olympiakos no es el promedio de Grecia, Salzburg no es el
+--   promedio de Austria. Los desvios de arriba (Austria -0.147, Chequia -0.158)
+--   son consistentes con eso: en esas ligas hay uno o dos clubes que arrastran
+--   el resultado europeo y el promedio de liga los aplana.
+--   PERO no hay coeficientes de club UEFA ingeridos en la base. Eso es una
+--   fuente nueva que hay que bajar y versionar antes de poder usarla, y no se
+--   inventa de memoria. Va aparte.
+
+create table if not exists v2.fuerza_liga_propuesta_dueno (
+  league_id int primary key,
+  liga text not null,
+  fuerza_dueno numeric not null,
+  origen text not null default 'Tabla propuesta por el dueno 2026-09-17, base Inglaterra=100, temporada cerrada 2025/26. NO es una medicion de RETO: es una entrada a comprobar.'
+);
