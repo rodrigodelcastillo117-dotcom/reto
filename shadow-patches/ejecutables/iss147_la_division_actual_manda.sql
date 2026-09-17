@@ -1,0 +1,95 @@
+-- ISS147: la seleccion de liga en las funciones de rasgos, y una correccion mia.
+--
+-- QUE SE ARREGLO
+-- Las dos funciones que eligen "de que liga son los partidos de este equipo"
+-- ordenaban por cantidad de partidos:
+--
+--   v2.fn_crossleague_features_canonical    -> order by n desc
+--   v2.fn_crossleague_features_training_asof-> order by (n>=15), pref, n desc
+--
+-- Para un equipo que ascendio o descendio eso da SIEMPRE la division vieja: es
+-- donde acumulo mas partidos. Coventry City, jugando Premier League desde
+-- agosto, salia con 31 partidos del Championship y datos hasta el 2 de mayo.
+--
+-- El arreglo es minimo y deliberado: NO se cambio de donde se leen los datos
+-- (mismas ramas ESPN y API_FOOTBALL, mismos filtros, misma seguridad temporal).
+-- Lo unico que cambio es QUE LIGA GANA: ahora manda la division en la que el
+-- equipo juega HOY, que mantiene al dia v2.reasignar_division_actual (ISS146).
+--
+-- MEDIDO ANTES DE SUSTITUIR, comparando funcion vieja contra candidata sobre
+-- los 338 equipos con liga asignada:
+--
+--   fn_crossleague_features_training_asof
+--     cambian de liga ............... 38
+--     de esos, a datos mas frescos .. 38   (a datos mas viejos: 0)
+--     frescura ganada promedio ...... 127 dias
+--     efecto colateral .............. 0
+--
+--   fn_crossleague_features_canonical
+--     cambian de liga ............... 36
+--     de esos, a datos mas frescos .. 36   (a datos mas viejos: 0)
+--     frescura ganada promedio ...... 127 dias
+--     efecto colateral .............. 1  (Willem II, y a favor: pasa de 6 a 14
+--                                          partidos de la MISMA liga, porque la
+--                                          rama de API-Football ahora apunta a
+--                                          la liga correcta)
+--
+-- UN ERROR QUE COMETI EN EL CAMINO, Y COMO SALIO
+-- La primera version de la candidata metia la liga asignada tambien en el WHERE
+-- de la rama ESPN. Eso disparo la muestra de Fleetwood Town de 29 a 120 partidos
+-- y la de Chesterfield de 54 a 130, que es imposible en 540 dias. La causa:
+-- public.ligas_master tiene FILAS DUPLICADAS para la misma api_sports_id
+--   41 -> "EFL League One" y "League One"  (mismo endpoint soccer/eng.3)
+--   42 -> "EFL League Two" y "League Two"  (mismo endpoint soccer/eng.4)
+-- y el JOIN contaba cada partido dos veces. Se corrigio volviendo al alcance
+-- original: solo se toco el ORDER BY, no el WHERE. Lo cacho la comparacion,
+-- no la lectura del codigo.
+--
+-- ============================================================================
+-- CORRECCION IMPORTANTE DE LO QUE SE DIJO EN ISS146
+-- ============================================================================
+-- En ISS146 se afirmo que "el cerebro le aplicaba a Coventry City la fuerza de
+-- liga del Championship jugando en Premier". ESO ES FALSO PARA LOS PARTIDOS
+-- DOMESTICOS, que son la gran mayoria de la cartelera.
+--
+-- La cadena real de produccion es:
+--   build_soccer_prediction_v2
+--     -> v2.fn_soccer_predict_canonical_v2
+--        -> v2.fn_soccer_sameleague_form_v2   (partidos de la MISMA liga)
+--           -> v2.fn_soccer_team_form_context_v2(equipo, LIGA_DEL_PARTIDO, t)
+--        -> v2.fn_crossleague_predict_canonical  (partidos ENTRE ligas)
+--           -> v2.fn_crossleague_features_canonical
+--
+-- fn_soccer_team_form_context_v2 recibe la liga DEL PARTIDO como parametro y
+-- filtra liga_id = p_league_id leyendo historico_partidos_espn. O sea: en un
+-- partido de Premier League, la forma de Coventry siempre se calculo con sus
+-- partidos de Premier League. Nunca estuvo mal. Y en un partido de la misma
+-- liga la diferencia de phi es CERO, porque los dos equipos estan en la misma
+-- liga y se cancela.
+--
+-- El error de liga solo afecta a los partidos ENTRE LIGAS DISTINTAS (UEFA,
+-- Libertadores, copas internacionales). Ahi si se usaba la division vieja.
+--
+-- IMPACTO MEDIDO DE ISS146 + ISS147 EN LA CARTELERA DE HOY: CERO.
+--   tarjetas con P_RETO antes .. 146     despues .. 146
+--   perdieron P_RETO ........... 0
+--   ganaron P_RETO ............. 0
+--   cambio el pick ............. 0
+--   movieron 3pp o mas ......... 0
+--   cambio la muestra .......... 0
+-- Porque los 36 equipos que cambiaron de division juegan hoy partidos
+-- domesticos, y ese camino ya estaba bien.
+--
+-- LO QUE SI MOVIO LA CARTELERA DE HOY FUE ISS145, la ingesta caida:
+--   fn_soccer_team_form_context_v2 lee historico_partidos_espn, y ISS145
+--   devolvio 115 partidos que faltaban, 23 de ellos del 16 de septiembre.
+--   35 de las 146 tarjetas con P_RETO (24%) tienen al menos un equipo que jugo
+--   el 15 o el 16 y cuyo resultado NO estaba en el calculo.
+--
+-- ISS146 y ISS147 siguen siendo correctos y necesarios: arreglan los partidos
+-- entre ligas, el ajuste de phi y la tabla de forma que alimenta la cobertura.
+-- Pero no eran la causa de lo que el dueno estaba viendo en la app.
+
+-- (cuerpos completos instalados en produccion; ver el commit)
+-- La version anterior de fn_crossleague_features_training_asof quedo en
+-- v2.fn_crossleague_features_asof_iss147_respaldo por si hay que volver.
