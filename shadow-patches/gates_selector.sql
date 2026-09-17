@@ -21,3 +21,5 @@ select * from public.gate_fantasy_un_solo_modelo();
 select * from public.gate_fantasy_ve_la_temporada_en_curso();
 --- G30.11 / G32.6 / G33.9: totales de futbol retirado por evidencia (ISS194) ---
 select * from v2.mercado_retirado;
+--- Patas que nunca se pudieron calificar, declaradas en vez de eternas (ISS195) ---
+select * from public.marcar_patas_no_calificables(7, false);
