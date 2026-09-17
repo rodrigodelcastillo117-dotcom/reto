@@ -1,0 +1,82 @@
+-- ISS185: STABLE en una funcion que escribe, y kickoffs de otra semana
+--
+-- ===========================================================================
+-- ERROR 1. MIO, Y DE LIBRO.
+-- ===========================================================================
+-- En pantalla:  "cannot execute INSERT in a read-only transaction"
+--
+-- En ISS180 declare los seis envoltorios public.fantasy_* como STABLE.
+-- PostgREST corre las funciones STABLE en una transaccion de SOLO LECTURA.
+-- Pero v2.fantasy_start_sit_auto_v2 es VOLATILE porque ESCRIBE el snapshot de
+-- recomendacion (v2.fantasy_recommendation_snapshot_v3). Al llamarla desde un
+-- envoltorio STABLE, el INSERT truena.
+--
+-- POR QUE NO LO VI: desde el editor SQL la transaccion es de escritura, asi
+-- que la funcion corria perfecta. Solo falla por el camino real de la app.
+-- Probar una RPC desde el editor NO prueba que funcione desde el front. Lo
+-- intente por HTTP con la llave anon y el proxy de salida me dio 403, y en vez
+-- de buscar otra forma de probar el camino real, di por buena la prueba facil.
+--
+-- ARREGLADO: fantasy_reporte_semana y fantasy_waivers_semana pasan a VOLATILE
+-- (son las dos que escriben). Las otras cuatro solo leen y siguen STABLE, que
+-- es lo correcto y ademas les permite cachearse.
+--
+-- ===========================================================================
+-- ERROR 2. DEL FRONT, PERO CON UNA TRAMPA DE DATOS DETRAS.
+-- ===========================================================================
+-- Los 15 jugadores salian "YA JUGO . BLOQUEADO / El partido ya empezo".
+-- Ese texto SI es del backend (fantasy_start_sit_auto_v2) pero solo dispara con
+-- kickoff <= asof. Y los kickoffs que pintaba la app eran de la SEMANA 1:
+--
+--   jugador              pintado            backend (semana 2 real)
+--   Patrick Mahomes      vs DEN lun         vs IND  2026-09-21 00:20
+--   Courtland Sutton     vs KC  lun         vs JAX  2026-09-20 20:05
+--   Kyren Williams       vs SF  jue         vs NYG  2026-09-22 00:15
+--   De'Von Achane        vs LV  dom         vs SF   2026-09-20 20:25
+--   Jaxon Smith-Njigba   vs NE  mie         vs ARI  2026-09-20 20:25
+--
+-- Los 15 kickoffs del backend son del 20 al 22 de septiembre. Todos futuros.
+--
+-- LA TRAMPA DE DATOS, que conviene conocer: public.nfl_partidos tiene
+-- PRETEMPORADA con numeros de semana de temporada regular.
+--   temporada 2026, semana 2, tipo_temporada 1 (pretemporada): 16 juegos,
+--       13 al 16 de agosto, los 16 finalizados
+--   temporada 2026, semana 2, tipo_temporada 2 (regular):      16 juegos,
+--       18 al 22 de septiembre, cero finalizados
+--   igual en semana 4: 12 de pretemporada del 28-29 de agosto.
+--
+-- O sea: cualquier consulta que filtre solo por (temporada, semana) y no por
+-- tipo_temporada se trae juegos de agosto ya jugados. public.nfl_calendario_equipo
+-- SI filtra bien (comprobado: KC semana 2 devuelve solo el de IND), y el
+-- catalogo de fantasy lo usa. El que no filtra es quien sea que alimente la
+-- pantalla por otro camino.
+--
+-- ===========================================================================
+-- GATE NUEVO
+-- ===========================================================================
+--   G42.6  los_kickoffs_son_de_la_semana_pedida
+--          FAIL si algun jugador del reporte trae un kickoff que NO corresponde
+--          a un partido de esa semana en nfl_calendario_equipo. Debe ser 0.
+--          Un kickoff de otra semana dispara el guardia de "ya empezo" y
+--          bloquea la alineacion entera sin razon.
+--
+-- ===========================================================================
+-- ESTADO VERIFICADO (2026-09-17)
+-- ===========================================================================
+--   fantasy_reporte_semana('rodelcast',2026,2) devuelve 15 jugadores,
+--   los 15 con kickoff FUTURO, rivales correctos, y acciones reales:
+--     START     Rico Dowdle 12.36, Courtland Sutton 12.27
+--     SIT       David Montgomery 10.88, Emeka Egbuka 11.39
+--     MANTENER  Smith-Njigba 21.56, Mahomes 20.91, Achane 19.61,
+--               Kyren 15.71, Warren 11.04
+--     BANCA     Keenan Allen 10.66, Kamara 9.52, MarShawn Lloyd 3.70
+--     OUT       Josh Jacobs (RESERVE-CEL)
+--     sin modelo  Cameron Dicker (K), JAX DST
+--
+--   G42.1 a G42.6: los seis en PASS.
+--
+-- LECCION QUE ME APUNTO
+--   Una RPC probada desde el editor SQL no esta probada. El editor corre en
+--   transaccion de escritura y con rol de servicio; el front no. Cuando no se
+--   puede ejecutar el camino real, hay que al menos reproducir sus condiciones
+--   (transaccion de solo lectura, rol anon) antes de decir que quedo.
