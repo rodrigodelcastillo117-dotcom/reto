@@ -1,0 +1,82 @@
+-- ISS184: el front invento una razon que el backend nunca dijo
+--
+-- LO QUE VEIA EL DUENO, DESPUES DE ARREGLAR LA IDENTIDAD (ISS180)
+--   Los 15 jugadores, uno por uno:
+--     "Identidad confirmada . Su juego ya empezo y no hay numero previo
+--      publicado: queda bloqueado y RETO no recalcula proyecciones del pasado."
+--
+-- ===========================================================================
+-- ES FALSO, Y ESE TEXTO NO EXISTE EN EL BACKEND
+-- ===========================================================================
+-- Verificado al momento (2026-09-17 16:44 UTC):
+--   Mahomes juega el 2026-09-21, o sea en CUATRO DIAS.
+--   Achane el 09-20. Kyren el 09-22. Ninguno ha empezado.
+--   12 de 15 jugadores tienen proyeccion con model_status READY y
+--   decision_time de HOY.
+--
+--   Proyecciones reales, semana 2:
+--     Jaxon Smith-Njigba 21.56 | Mahomes 20.91 | Achane 19.61 | Kyren 15.71
+--     Dowdle 12.36 | Sutton 12.27 | Egbuka 11.39 | Warren 11.04
+--     Montgomery 10.88 | Allen 10.66 | Kamara 9.52 | MarShawn Lloyd 3.70
+--
+-- El unico guardia del backend que habla de partidos empezados vive en
+-- v2.fantasy_start_sit_auto_v2 y solo dispara con kickoff <= p_asof. No aplica.
+-- O sea: la app compuso su propia explicacion en vez de leer la que venia.
+--
+-- Es la MISMA falla de ISS180 con otra cara: alli pinto un error de permiso
+-- como estado del jugador; aqui pinta una hipotesis suya como estado del
+-- jugador. En los dos casos el dato correcto estaba en el JSON.
+--
+-- ===========================================================================
+-- Y LAS RAZONES DE VERDAD ERAN TRES, DISTINTAS
+-- ===========================================================================
+-- Solo 3 de 15 no tienen numero, y por motivos que no se parecen en nada:
+--
+--   Josh Jacobs      LESIONADO. availability RESERVE-CEL, accion OUT.
+--                    Hay que SUSTITUIRLO hoy. Es el unico que esta costando
+--                    puntos ahora mismo.
+--   Cameron Dicker   K. El modelo B1 validado no cubre pateadores.
+--   JAX DST          Defensa. Igual.
+--
+-- Pintar las tres como "su juego ya empezo" no es solo incorrecto: borra la
+-- unica accion urgente de la semana.
+--
+-- ===========================================================================
+-- QUE SE HIZO DEL LADO BACKEND
+-- ===========================================================================
+-- 1) El texto de Jacobs tambien era generico y eso es culpa mia, no del front:
+--    v2.fantasy_start_sit_auto_v2 devolvia para CUALQUIER model_status
+--    distinto de READY la misma frase ("B1 no tiene una proyeccion publicable").
+--    Ahora distingue:
+--      UNAVAILABLE_OUT        -> "NO va a jugar: el reporte de lesionados lo
+--                                marca fuera (<estado>). No se proyecta a
+--                                alguien que no juega. Sustituyelo."
+--      COLD_START_UNVALIDATED -> "Sin historial suficiente... el modelo NO
+--                                inventa un numero a partir del promedio de
+--                                su posicion."
+--      UNSUPPORTED_POSITION   -> "El modelo B1 validado no cubre esta posicion."
+--      resto                  -> el generico, pero ahora nombrando el estado.
+--
+--    Si el backend explica bien, la app no tiene excusa para adivinar.
+--
+-- 2) G42.5 cada_jugador_trae_su_razon
+--    FAIL si algun jugador del reporte llega sin proyeccion y con por_que
+--    vacio. Debe ser 0. Es el contrato que le permite al front confiar.
+--
+-- 3) Se le paso a Lovable el JSON literal de un jugador y las tres razones
+--    exactas, con la regla: NUNCA componer el texto de por que falta un numero.
+--
+-- ===========================================================================
+-- NOTA DE ENTORNO
+-- ===========================================================================
+-- No se pudo probar el RPC por HTTP con la llave anon desde este entorno: el
+-- proxy de salida responde 403 al CONNECT. La verificacion se hizo contra la
+-- base directamente. Tambien se recargo la cache de esquema de PostgREST
+-- (notify pgrst, 'reload schema') porque las funciones public.fantasy_* eran
+-- nuevas y PostgREST no las ve hasta recargar.
+--
+-- ===========================================================================
+-- ESTADO VERIFICADO (2026-09-17)
+-- ===========================================================================
+--   G42.1 PASS | G42.2 PASS (1038) | G42.3 PASS (6) | G42.4 PASS | G42.5 PASS (0)
+--   15 jugadores en el reporte, 12 con proyeccion READY, 3 con razon especifica
