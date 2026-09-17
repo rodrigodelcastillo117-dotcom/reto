@@ -1,0 +1,32 @@
+-- ISS198 · Que el front no tenga de donde sacarlo
+--
+-- EL PROBLEMA
+-- Al pedirle al front que dejara de pintar totales de futbol, choco con seis
+-- regresiones de su selector canonico y empezo a revertir el cambio. Eso es
+-- senal de que el problema era mio: si el BACKEND todavia puede emitir un pick
+-- de goles para futbol, el front no tiene forma de no pintarlo sin adivinar.
+--
+-- LO VERIFICADO
+-- public.v_futpro_publication_v3 emite hoy 138 filas de futbol y las 138 son
+-- 'Moneyline'. O sea el backend ya no emite totales. Lo que quedaba vivo eran
+-- candidatos que el front armaba por su cuenta leyendo p_over/p_under, columnas
+-- que desde ISS194 vienen siempre nulas.
+--
+-- LO QUE SE HIZO
+-- G30.12, nuevo: mientras el mercado de totales este registrado como retirado
+-- sin reemplazo, ninguna fila publicada de futbol puede traer un mercado ni un
+-- pick canonico de goles. FAIL si aparece una. La garantia deja de depender del
+-- frontend: si la base no lo emite, ninguna pantalla lo puede pintar.
+--
+-- UN ERROR MIO, ENCONTRADO POR EL PROPIO GATE AL PRIMER DISPARO
+-- La primera version del regex era '(over|under|mas de|menos de|total)' sin
+-- limites de palabra, asi que encontro "under" DENTRO de "Seattle Sounders FC"
+-- y marco un pick de ganador como si fuera un total. Corregido a
+-- '\m(over|under|total)\M|\m(mas|menos) de \d'. Queda anotado porque es
+-- exactamente la clase de falso positivo que hace que alguien deje de confiar
+-- en los gates y empiece a ignorarlos.
+--
+-- VERIFICACION EJECUTADA (2026-09-17)
+--   G30.11 PASS  0 tarjetas publicando altas y bajas
+--   G30.12 PASS  0 filas publicadas con mercado o pick de goles
+--   G30.10 INFO  138 tarjetas | 138 con ganador y BTTS | 126 con linea real

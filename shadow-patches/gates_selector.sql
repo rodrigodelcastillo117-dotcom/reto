@@ -26,3 +26,5 @@ select * from public.marcar_patas_no_calificables(7, false);
 --- Un solo cerebro de futbol: el 1X2 del analisis sale del canonico (ISS196) ---
 select coalesce(analisis_json#>>'{probabilidades,_fuente_1x2}','(sin 1X2)') fuente, count(*)
 from public.analisis_partidos where analisis_json ? 'probabilidades' group by 1;
+--- G30.12: el backend no emite totales de futbol, asi el front no puede pintarlos (ISS198) ---
+select * from public.gate_tarjetas_soccer() where gate like 'G30.1%';
