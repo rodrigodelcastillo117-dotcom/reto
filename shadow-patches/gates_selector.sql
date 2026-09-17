@@ -11,3 +11,5 @@ select * from public.gate_tarjeta_no_se_contradice();
 --- G41: contrato de tarjeta unica, ninguna tarjeta muda (ISS178) ---
 select * from public.gate_tarjeta_universal();
 --- G40.3 / G40.4: marcador y margen condicionados al pick (ISS179), dentro del mismo gate ---
+--- G42: Fantasy alcanzable desde el front y honesto sobre el peso de la temporada (ISS180) ---
+select * from public.gate_fantasy_alcanzable();

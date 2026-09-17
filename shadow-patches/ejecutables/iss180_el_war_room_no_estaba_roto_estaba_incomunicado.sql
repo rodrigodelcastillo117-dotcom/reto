@@ -1,0 +1,123 @@
+-- ISS180: el War Room de Fantasy no estaba roto, estaba incomunicado
+--
+-- LO QUE VEIA EL DUENO (captura de pantalla)
+--   "WAR ROOM . SEMANA 2 -> Invalid schema: v2"
+--   "TU SEMANA, JUGADOR POR JUGADOR -> Invalid schema: v2"
+--   Y los 10 jugadores del roster, uno por uno:
+--     "Identidad pendiente . el catalogo de la semana todavia no lo reconoce."
+--   Mahomes, De'Von Achane, Kyren Williams, Jaxon Smith-Njigba... todos.
+--
+-- ===========================================================================
+-- LO QUE PASABA DE VERDAD: EL BACKEND FUNCIONA. NO SE PODIA LLEGAR A EL.
+-- ===========================================================================
+-- Comprobado uno por uno:
+--   v2.fantasy_player_catalog_v1(2026,2)          1038 jugadores
+--   v2.fn_fantasy_match_player_v1('Patrick Mahomes','QB','KC',2026,2)
+--       resolved: true, espn_player_id 3139477, availability active,
+--       rival IND, depth_order 1, canonical NFL:3139477
+--   fantasy_roster_semanal, semana 2, primer jugador:
+--       estado_identidad CONFIRMADO, canonical_player_id NFL:3139477
+--   v2.fantasy_start_sit_auto_v2('rodelcast',2026,2)
+--       ok, 15 jugadores, engine fantasy_b1_exact_optimizer_v1,
+--       proyeccion 111.10 -> 113.46, 2 cambios start y 2 sit, +2.36 pts,
+--       cada jugador con piso, techo, confianza, accion y por_que.
+--
+-- O sea: la identidad estaba resuelta, el catalogo lleno y el optimizador
+-- entregando una recomendacion completa. "Identidad pendiente" era la app
+-- interpretando un error de acceso como si fuera un dato.
+--
+-- LA CAUSA: el front llamaba a v2.* directo y PostgREST devuelve
+-- "Invalid schema: v2" porque v2 NO esta expuesto. Y esta bien que no lo este:
+-- v2 tiene todas las tablas crudas, los snapshots y los laboratorios.
+-- Exponerlo para arreglar una pantalla seria abrir la casa entera.
+--
+-- ===========================================================================
+-- LA SOLUCION: ENVOLTORIOS EN public, NO ABRIR v2
+-- ===========================================================================
+-- Seis funciones SECURITY DEFINER con search_path fijo, mismo patron que la ya
+-- existente public.fantasy_start_sit:
+--
+--   public.fantasy_reporte_semana(apodo, season, week, mode)
+--       -> v2.fantasy_start_sit_auto_v2      el reporte completo del War Room
+--   public.fantasy_catalogo_semana(season, week)
+--       -> v2.fantasy_player_catalog_v1      devuelto como jsonb, no setof record
+--   public.fantasy_buscar_jugador(nombre, pos, equipo, season, week)
+--       -> v2.fn_fantasy_match_player_v1     resolver identidad de un nombre
+--   public.fantasy_evaluar_alineacion(players, season, week)
+--       -> v2.fantasy_lineup_eval_v3
+--   public.fantasy_evaluar_cambio(players, season, week)
+--       -> v2.fantasy_trade_side_eval_v1     la herramienta COMPARAR 2
+--   public.fantasy_waivers_semana(apodo, league_id, season, week)
+--       -> v2.fantasy_waiver_board_v3
+--
+-- NOTA: se nombro fantasy_waivers_semana y no fantasy_waivers porque ya existia
+-- public.fantasy_waivers(p_temporada, p_tope). Dos funciones del mismo nombre
+-- dejan la RPC ambigua en PostgREST y rompe distinto.
+--
+-- ===========================================================================
+-- DE PASO, DOS MENTIRAS EN EL REPORTE DE START/SIT
+-- ===========================================================================
+--
+-- 1) "No hay conteo de snaps". FALSO.
+--    public.fantasy_limitaciones contaba nfl_uso_avanzado (0 filas) en una
+--    variable llamada n_snaps. La tabla con los snaps es nfl_snaps: 7887 filas,
+--    7591 con espn_player_id, todas con pct_ofensiva entre 0 y 1.
+--    Ahora cuenta la tabla correcta y, como esos snaps son de 2025, lo dice:
+--    "Los snaps que hay son de 2025, no de 2026. Sirven para saber quien era
+--     titular el ano pasado, NO para detectar que a alguien le estan quitando
+--     jugadas AHORA."
+--
+-- 2) El reporte no mencionaba la temporada en curso.
+--    Solo declaraba "5050 actuaciones de la temporada 2025" aunque ya hay 1535
+--    de 2026. Ahora la nombra primero.
+--
+-- ===========================================================================
+-- Y UNA MENTIRA QUE ESCRIBI YO, CORREGIDA EN EL ACTO
+-- ===========================================================================
+-- Al agregar la linea de temporada en curso escribi "Esto pesa mas que el ano
+-- pasado y el peso sube solo conforme avanza la temporada". Fui a comprobarlo
+-- antes de darlo por bueno y ERA FALSO.
+--
+-- v2.fn_fantasy_project_b1_rq80_v2, lineas 26-38: la proyeccion es
+--     avg(h.pts) sobre un UNION de
+--       - TODO el historial del jugador en lab_ff_playerweek (2025, sin filtro)
+--       - las semanas ya calificadas de la temporada actual
+--     projected_mean := round(v_mean,2);
+-- Un promedio simple. Cada juego de 2025 pesa exactamente lo mismo que uno
+-- de 2026.
+--
+-- MEDIDO sobre el roster real de rodelcast en la semana 2:
+--     192 juegos de 2025 contra 10 de 2026
+--     la temporada actual pesa 5.0%
+--
+-- Eso choca de frente con la regla del dueno: "ESTA TEMPORADA VALE MAS QUE LA
+-- PASADA... MAS PESO A LA FORMA". Cambiar el ponderado es cambiar un modelo
+-- liberado (fantasy-b1-rq80-2026.09.1) y eso necesita prueba preregistrada,
+-- no una corazonada. Mientras tanto la tarjeta lo CONFIESA:
+--     "La proyeccion promedia 2025 y 2026 SIN darle mas peso a lo reciente.
+--      En la semana 2 eso significa que el ano pasado manda: un jugador con
+--      temporada completa de 2025 tiene ~17 juegos viejos contra 1 o 2 nuevos.
+--      Si alguien cambio de equipo o de rol, el numero tarda en reaccionar."
+--
+-- ===========================================================================
+-- G42
+-- ===========================================================================
+--   G42.1  el front alcanza el reporte (si falla, vuelve "Invalid schema: v2")
+--   G42.2  el catalogo de la semana no esta vacio (si baja de 200, todos salen
+--          como "identidad pendiente")
+--   G42.3  los 6 envoltorios existen
+--   G42.4  la tarjeta sigue confesando el peso de la temporada. FALLA si
+--          alguien borra esa confesion sin haber arreglado el modelo.
+--
+-- ===========================================================================
+-- ESTADO VERIFICADO (2026-09-17)
+-- ===========================================================================
+--   G42.1 PASS | G42.2 PASS (1038) | G42.3 PASS (6) | G42.4 PASS
+--   public.fantasy_reporte_semana('rodelcast',2026,2) devuelve
+--     proyeccion_actual 111.10, recomendada 113.46, 4 cambios, 15 jugadores
+--   v2 SIGUE sin exponerse a PostgREST, como debe ser.
+--
+-- PENDIENTE, NOMBRADO, NO ESCONDIDO
+--   - ponderar la temporada actual en la proyeccion: necesita preregistro.
+--   - snaps de 2026: no hay fuente cargada. Sin eso no se detecta perdida de
+--     participacion en vivo, que es la senal mas util de todo fantasy.
