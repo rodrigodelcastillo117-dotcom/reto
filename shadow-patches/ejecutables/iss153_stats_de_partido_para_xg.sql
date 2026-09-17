@@ -1,0 +1,62 @@
+-- ISS153: se baja tiros, posesion y corners por partido. Es el insumo que
+-- faltaba para el Plan B del dueno (xG propio desde tiros a puerta).
+--
+-- LA PREGUNTA DEL DUENO: "que cobertura les arrojo el query de los tiros?"
+-- RESPUESTA MEDIDA, y es mala:
+--   public.ligamx_team_form: 35183 filas
+--     con goles ............... 35066  (99.7%)
+--     con tiros ...............  1024  ( 2.9%)
+--     con tiros a puerta ......  1072  ( 3.0%)
+--     con xG real .............   803  ( 2.3%)
+--     esta temporada: 456 de 28391 filas con tiros
+-- Su Plan B pide 70-80% de cobertura. Teniamos 3%.
+--
+-- EL CUELLO DE BOTELLA NO ERA EL MODELO, ERA LA INGESTA.
+-- Nunca se bajaron estadisticas de partido, solo marcadores.
+--
+-- LO QUE SI HAY, Y SE COMPROBO
+-- El resumen de ESPN trae todo, por equipo y por partido:
+--   totalShots, shotsOnTarget, blockedShots, possessionPct, wonCorners,
+--   saves, penaltyKickShots, accuratePasses, offsides, foulsCommitted...
+-- Pesa 384 KB por partido (menos que el de MLB) y responde 200.
+--
+-- Comprobado con Barcelona 83 contra Racing Santander 87 (16-sep, 7 goles):
+--   Barcelona ....... 30 tiros, 9 a puerta, 69.3% posesion, 18 corners
+--   Racing Santander . 5 tiros, 3 a puerta, 30.7% posesion,  0 corners
+-- Eso es justo la senal que los goles solos no capturan.
+--
+-- TAMANO Y ALCANCE
+--   equipos en la cartelera ....... 401
+--   partidos a bajar (400 dias) ... 7249
+--   ritmo a 50 por minuto ......... ~145 minutos
+-- NO se baja todo el historial: la ventana del modelo son 10 partidos por
+-- equipo, bajar mas es gastar por gastar.
+--
+-- QUE SE INSTALO
+--   v2.soccer_stats_partido(espn_event_id, team_espn_id, lado, tiros,
+--       tiros_a_puerta, tiros_bloqueados, posesion_pct, corners, atajadas, fecha)
+--   v2._carga_stats           cola en vuelo
+--   v2.stats_sin_datos        partidos que contestan 200 sin estadisticas,
+--                             para no volver a pedirlos eternamente (muchas
+--                             ligas chicas no publican tiros)
+--   v2.pedir_stats_soccer(n) / v2.absorber_stats_soccer() / v2.ciclo_stats_soccer(n)
+--   cron 'soccer-stats-backfill' cada minuto, lote de 50
+-- El absorbedor BORRA la fila de net._http_response, no solo la de la cola,
+-- para que pg_net no acumule gigabytes.
+--
+-- PRIMERA VALIDACION DEL PLAN B (n=20 filas equipo-partido, muestra chica)
+--   tasa de conversion (goles / tiros a puerta) ... 0.3077
+--   el dueno estimo 30-33% de memoria. Acerto.
+--   correlacion tiros a puerta contra goles ....... 0.6317
+--
+-- LO QUE FALTA, Y NO SE DA POR HECHO
+-- Cuando el backfill avance hay que:
+--   1. recalcular la tasa de conversion sobre la muestra completa,
+--   2. construir lambda_ofensivo = SoT_equipo * tasa_conversion_liga,
+--      y lambda_defensivo con SoT concedidos,
+--   3. correr Poisson con ESE lambda sobre los mismos gemelos pareados
+--      (v2.model_learning_observation, model_version 'ou_gfga_v1' ya existe
+--       como gemelo de la version por goles),
+--   4. comparar contra la constante con prueba pareada e IC95.
+-- REGLA: si el intervalo toca el cero, NO se publica. Que la idea sea buena y
+-- que el dueno la haya pedido no es evidencia.
