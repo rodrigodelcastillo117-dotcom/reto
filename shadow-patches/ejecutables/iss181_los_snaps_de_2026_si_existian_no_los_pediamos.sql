@@ -1,0 +1,94 @@
+-- ISS181: los snaps de 2026 si existian. No los estabamos pidiendo.
+--
+-- PEDIDO DEL DUENO: "revisar por que no tenemos snaps de 2026, es clave tener
+--                    mas info de esta temporada"
+--
+-- ===========================================================================
+-- LA CAUSA, EN UNA LINEA
+-- ===========================================================================
+-- supabase/functions/nfl-datos-sync/index.ts:
+--     const tempSnaps: number = body?.temporada_snaps ?? anio - 1;
+--                                                        ^^^^^^^^
+--     // comentario original: "la que ya se jugo completa"
+--
+-- Estaba pidiendo 2025 A PROPOSITO. Quien lo escribio asumio que solo servia
+-- una temporada terminada. Por eso nfl_snaps tenia 7887 filas TODAS de 2025 y
+-- CERO de 2026, aunque la ultima carga fue el 15 de septiembre de 2026.
+--
+-- ===========================================================================
+-- SE COMPROBO ANTES DE TOCAR NADA
+-- ===========================================================================
+--   curl snap_counts_2026.csv  ->  HTTP 200, 134005 bytes, 1493 lineas
+--                                  1492 filas de temporada regular, semana 1
+--   curl snap_counts_2025.csv  ->  HTTP 200, 26613 lineas, semanas 1 a 22
+--   Mahomes, semana 1 de 2026: 69 snaps de ofensiva, 100% de participacion
+--
+-- O sea: nflverse SI publica el archivo de la temporada en curso y lo va
+-- llenando semana a semana. El dato estaba disponible desde el primer partido.
+--
+-- ===========================================================================
+-- QUE SE HIZO
+-- ===========================================================================
+-- nfl-datos-sync v2 (desplegada, version 7, verify_jwt false como estaba):
+--   si piden temporada explicita se respeta; si no, se cargan [anio, anio-1].
+--   Devuelve por temporada: guardados, descartados_no_fantasy y las semanas
+--   que trajo, para que se vea que llego y que no.
+--
+--   CORRIDA REAL: 2026 -> 455 guardados, semanas [1]
+--                 2025 -> 7887 guardados, semanas [1..22]
+--
+-- cron 'nfl-snaps-semanal' ('40 13 * * 2,3,4'). Martes, miercoles y jueves:
+--   nflverse publica con retraso de dias y no siempre el mismo. El upsert es
+--   idempotente, pedirlo de mas no cuesta nada, quedarse sin el dato si.
+--
+-- public.fantasy_participacion(jugador, temporada)
+--   La senal que fantasy no tenia: % de jugadas de la temporada EN CURSO
+--   contra la base del ano anterior.
+--     LE_ESTAN_QUITANDO_JUGADAS    caida >= 15 puntos
+--     LE_ESTAN_DANDO_MAS_JUGADAS   subida >= 15 puntos
+--     PARTICIPACION_ESTABLE
+--     SIN_DATO_TEMPORADA_ACTUAL / SIN_BASE_ANTERIOR
+--   Siempre devuelve 'muestra' en texto ("UN partido de la temporada actual") y
+--   si la senal es mala con una sola semana, lo advierte explicitamente: puede
+--   ser un juego raro y no una tendencia. Con 1 semana NO se puede hablar de
+--   tendencia y la funcion no finge que si.
+--
+-- MEDIDO sobre el roster real de rodelcast, semana 2:
+--   Courtland Sutton     76.0% contra 85.7%   -9.7 pp
+--   Kyren Williams       64.0% contra 66.9%   -2.9 pp
+--   Patrick Mahomes     100.0% contra 97.4%   +2.6 pp
+--   Rico Dowdle          58.0% contra 54.9%   +3.1 pp
+--   Emeka Egbuka         86.0% contra 77.6%   +8.4 pp
+--   Tyler Warren         93.0% contra 83.8%   +9.2 pp
+--   De'Von Achane        86.0% contra 75.4%  +10.6 pp
+--   Keenan Allen         67.0% contra 55.7%  +11.3 pp
+--   David Montgomery     49.0% contra 37.1%  +11.9 pp
+--   Jaxon Smith-Njigba   90.0% contra 77.0%  +13.1 pp
+--   Josh Jacobs, Alvin Kamara, JAX DST: sin dato de 2026 todavia
+--   MarShawn Lloyd: 44.0% en 2026, sin base de 2025 (novato)
+--   Ninguno cruza el umbral de 15 pp. Con una sola semana, correcto.
+--
+-- fantasy_limitaciones actualizado: ya no dice que faltan snaps (era cierto
+-- hace una hora, ya no). Ahora declara "Snaps de 2026: 455 registros, 1
+-- semana(s)" en lo que tiene, y pone en lo que falta que una sola semana no
+-- hace tendencia.
+--
+-- ===========================================================================
+-- UN ERROR MIO, PARA EL REGISTRO
+-- ===========================================================================
+-- Al desplegar mande primero un archivo con el texto "PLACEHOLDER" como
+-- contenido. Eso dejo la funcion rota durante ~45 segundos y ademas cambio
+-- verify_jwt a true. Se redesplego de inmediato con el contenido real y
+-- verify_jwt false. No hubo corrida de cron en esa ventana.
+--
+-- ===========================================================================
+-- ESTADO VERIFICADO (2026-09-17)
+-- ===========================================================================
+--   nfl_snaps: 2026 -> 455 filas, 1 semana | 2025 -> 7887 filas, 22 semanas
+--   cron nfl-snaps-semanal activo
+--   fantasy_participacion responde con muestra declarada
+--
+-- SIGUE ABIERTO, NOMBRADO
+--   La proyeccion (fn_fantasy_project_b1_rq80_v2) SIGUE siendo un promedio
+--   simple: la temporada actual pesa 5.0%. Tener snaps de 2026 no lo arregla
+--   solo; hay que ponderar, y eso va con preregistro. Es la tarea #29.
