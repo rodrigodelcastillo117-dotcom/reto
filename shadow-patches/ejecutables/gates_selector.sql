@@ -739,3 +739,21 @@ end $$;
 -- otra vez el endpoint, la llave o la red, se pone rojo igual.
 --
 -- Estado al instalar: G35.1 PASS (3h) | G35.2 PASS (0) | G35.3 PASS (0)
+
+-- ===========================================================================
+-- NOTA (ISS146) -- por que G34.x no atrapo los ascensos y descensos
+-- ===========================================================================
+-- Ningun gate media si la liga asignada a un equipo seguia siendo la liga
+-- donde ese equipo JUEGA HOY. G34.5 comprueba que la liga exista y sea de tipo
+-- League; G34.10/11 que no sea juvenil ni femenil. Las tres cosas eran ciertas
+-- para Coventry City con "EFL Championship" asignado, y aun asi estaba mal:
+-- Coventry juega Premier League desde agosto.
+--
+-- El dano no era solo forma vieja. El cerebro le aplicaba la FUERZA DE LIGA
+-- del Championship a un equipo de Premier, que envenena el calculo entero.
+-- 36 de 142 equipos evaluados (25%) estaban asi.
+--
+-- La deteccion vive en v2.reasignar_division_actual (cron diario 06:09) y deja
+-- rastro en v2.cambio_de_division. Queda pendiente convertirlo en gate duro
+-- una vez que se confirme que no genera falsos positivos en cambio de
+-- temporada, cuando un equipo puede tener pocos partidos en su division nueva.
