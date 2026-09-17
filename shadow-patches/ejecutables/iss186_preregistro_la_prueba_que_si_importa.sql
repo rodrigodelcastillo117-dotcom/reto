@@ -1,0 +1,105 @@
+-- ISS186: PREREGISTRO. La prueba que SI importa: alineaciones, no error medio.
+--
+-- SE ESCRIBE Y SE COMMITEA ANTES DE CORRER. El resultado manda.
+--
+-- ===========================================================================
+-- POR QUE ESTA PRUEBA EXISTE
+-- ===========================================================================
+-- El dueno: "a mi no me hace sentido dowdle por montgomery".
+--
+-- Tiene razon y el caso es demoledor:
+--   David Montgomery, semana 1 de 2026: 20 acarreos, 60 yds, 2 TD terrestres,
+--     3 recepciones, 19 yds, 1 TD aereo = 28.90 puntos.
+--   Promedio 2025 (17 juegos): 9.82.
+--   Proyeccion que publica el modelo: 10.88.
+--   Comprobado a mano: (17*9.82 + 28.90)/18 = 10.88 EXACTO.
+--   Un juego de TRES touchdowns movio la proyeccion 1.06 puntos.
+--
+--   Y lo que produce en la alineacion:
+--     Montgomery  28.90 la semana pasada  ->  proyeccion 10.88  ->  SIT
+--     Rico Dowdle  4.10 la semana pasada  ->  proyeccion 12.36  ->  START
+--     C. Sutton    3.10 la semana pasada  ->  proyeccion 12.27  ->  START
+--
+-- EN ISS183 MEDI LO EQUIVOCADO. Medi error absoluto medio (MAE) de la
+-- proyeccion y salio que ponderar por recencia no ayuda de forma concluyente.
+-- Pero al dueno no le importa el MAE: le importa si la alineacion recomendada
+-- ANOTA MAS PUNTOS. Dos modelos pueden tener el mismo MAE y tomar decisiones de
+-- alineacion opuestas. Aquella prueba no medio la decision.
+--
+-- ===========================================================================
+-- LA DECISION QUE SE MIDE
+-- ===========================================================================
+-- Start/sit por parejas de la MISMA posicion. Para cada semana y posicion, se
+-- toman todas las parejas de jugadores con al menos 4 partidos previos. El
+-- modelo "alinea" al que proyecta mas alto. Se mide lo que de verdad importa:
+--
+--   puntos_ganados = puntos_reales(alineado) - puntos_reales(sentado)
+--
+-- Positivo = el modelo eligio bien. Es la metrica del producto, no del paper.
+--
+-- ===========================================================================
+-- DATOS Y WALK-FORWARD ESTRICTO
+-- ===========================================================================
+--   public.lab_ff_playerweek (2025, puntos ya calculados con las reglas de la
+--   liga) unida a public.nfl_player_game_logs (volumen: acarreos, targets,
+--   recepciones, yardas, TD). Comprobado: los 6400 registros con puntos tienen
+--   log de volumen.
+--
+--   Sistema de puntos verificado contra un caso real (Montgomery sem 1 2026):
+--     0.1 por yarda, 1 por recepcion, 6 por TD.
+--     60*0.1 + 19*0.1 + 3*1 + 3*6 = 28.9  EXACTO.
+--
+--   Semanas 5 a 18. Para la semana w SOLO se usan partidos de semana < w.
+--   Minimo 4 partidos previos por jugador. Cero lookahead.
+--
+-- ===========================================================================
+-- LOS COMPETIDORES
+-- ===========================================================================
+--   BASE  promedio simple de los puntos previos. Es lo que hace produccion hoy.
+--
+--   C2 (PRIMARIO)  PROYECCION POR OPORTUNIDAD, "sin suerte de touchdown".
+--       Para cada juego previo se separa el punto en dos:
+--         produccion   = puntos - 6*(TD terrestres + TD aereos)
+--         oportunidad  = acarreos + targets
+--       Se proyecta:
+--         media(produccion)  +  media(oportunidad) * tasa_TD_de_la_posicion * 6
+--       donde tasa_TD_de_la_posicion se calcula con SOLO semanas anteriores,
+--       a nivel liga y por posicion.
+--
+--       POR QUE ES EL PRIMARIO, y se dice ANTES de ver resultados: el
+--       diagnostico de Montgomery apunta al touchdown, no a la antiguedad. Sus
+--       28.9 son 18 puntos de TD sobre 23 toques, con 49% de las jugadas
+--       (Woody Marks tuvo 51%: es reparto, no titularidad). El TD es la
+--       estadistica menos repetible del futbol americano; el volumen es la mas
+--       estable. Un modelo que confunde suerte con nivel se equivoca en las dos
+--       direcciones: infla al que anoto tres veces y hunde al que no anoto.
+--
+--   SECUNDARIOS, se reportan y NO pueden decidir:
+--     C1  promedio ponderado por recencia, vida media 8 semanas
+--     C3  C2 + recencia 8
+--
+-- ===========================================================================
+-- REGLA DE DECISION. UNA, DURA, FIJADA AHORA.
+-- ===========================================================================
+--   d_i = puntos_ganados(C2)_i - puntos_ganados(BASE)_i   (pareado, misma pareja)
+--   Se adopta C2 SOLO SI
+--       media(d) - 1.96 * ee(d)  >  0
+--   o sea el intervalo del 95% ENTERO del lado bueno. Si cruza cero, NO se
+--   cambia el modelo, por mucho que el caso de Montgomery duela.
+--
+--   MUESTRA MINIMA: 5000 decisiones pareadas.
+--   UNA SOLA CORRIDA.
+--   Elegir C1 o C3 despues de ver cual gano seria trampa. Ya me negue dos veces
+--   en este proyecto (calibracion de O/U por linea en ISS161, y H=8 en ISS183)
+--   y me niego aqui tambien.
+--
+-- ===========================================================================
+-- QUE PASA SEGUN EL RESULTADO
+-- ===========================================================================
+--   PASA    -> nuevo model_version, la proyeccion pasa a oportunidad, y la
+--              tarjeta explica que separa volumen de suerte de anotacion.
+--              El historial del modelo viejo NO se reescribe.
+--   NO PASA -> no se toca el modelo. Se registra el caso de Montgomery como
+--              defecto conocido y medido, la tarjeta lo sigue confesando, y se
+--              busca otra hipotesis. Nunca se cambia el cerebro porque un caso
+--              se vea feo.
