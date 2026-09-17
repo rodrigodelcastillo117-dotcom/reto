@@ -1,0 +1,98 @@
+-- ISS175R: revision de las cinco migraciones que aplico otro agente
+--
+-- CONTEXTO
+--   El dueno dijo: "chatgpt se puso a moverle al backend, no se por que...
+--   pero lo pare porque se trabo. lo arreglas todo?"
+--
+-- LO PRIMERO: NO HABIA NADA TRABADO
+--   pg_stat_activity: cero consultas atascadas, cero bloqueos. Solo el slot de
+--   replicacion de Realtime, que es normal.
+--   Gates al llegar: todos en verde, cache de tarjeta fresca (3 min), 150
+--   tarjetas sirviendose. Nada estaba roto.
+--
+-- QUE APLICO, cinco migraciones entre 12:40 y 12:59 UTC:
+--   iss175_crossleague_current_form_helper
+--   iss176_soccer_form_guard_domestic_league_context
+--   iss177_reto13m_one_pick_per_sport_day
+--   iss178_update_soccer_publication_identity_invariant
+--   iss179_update_mlb_favorites_invariant_for_one_brain_v2
+--
+--   (Uso ISS175-179, que choca con mi numeracion: yo iba en ISS174. Por eso
+--    este parche se llama ISS175R, de revision.)
+--
+-- REVISION UNA POR UNA
+--
+--   ISS175  Crea v2.fn_soccer_current_form_adjust_v1, que ajusta GF/GA base con
+--           forma de temporada actual y sede.
+--           VEREDICTO: CODIGO HUERFANO. Medido: NADIE la llama. Ni una funcion,
+--           ni una vista. Se creo y no se conecto.
+--           SE DEJA. No hace dano y la idea es razonable; si algun dia se
+--           enchufa, tendra que pasar su propia medicion antes.
+--
+--   ISS176  Crea fn_soccer_publication_form_context_v1 y parchea la vista
+--           v_soccer_publication_form_guard_v2 para que use la liga domestica
+--           REAL del equipo (la de la provenance) en vez de la liga del evento.
+--           VEREDICTO: CORRECTO, y es la misma clase de arreglo que ISS147.
+--           Toca una vista de GUARDIA, no el cerebro. Comprobado: devuelve 105
+--           filas sin error.
+--           SE DEJA.
+--
+--   ISS177  v_reto13m_daily_best_v1: maximo un pick por deporte y dia.
+--           VEREDICTO: RESTRINGE, no afloja. Es decision de producto.
+--           SE DEJA.
+--
+--   ISS178  Endurece v_soccer_publication_invariant_leaks (identidad de modelo,
+--           selector, distribucion que suma 100, temporalidad).
+--           VEREDICTO: MEJORA una guardia. Comprobado: 0 fugas.
+--           SE DEJA.
+--
+--   ISS179  AFLOJA la guardia de favoritos de MLB.
+--           VEREDICTO: SE REVIERTE. Esto es lo unico que habia que arreglar.
+--
+-- POR QUE SE REVIERTE ISS179
+--   La guardia decia, literal:
+--     "MLB favorites must remain empty until a canonical MLB Moneyline model
+--      is release-authorized."
+--   ISS179 la cambio para permitir publicar cuando mlb_one_brain_v2 se marca
+--   canonical_pick_status='READY' y selector_authoritative.
+--
+--   MEDIDO sobre ese model_version:
+--     v2.model_learning_gate            0 filas
+--     v2.model_learning_observation     0 filas
+--     v2.evidencia_mercado_candidato    0 filas
+--     predicciones publicando           24
+--
+--   Cero evidencia en los tres sitios donde vive la evidencia, y 24
+--   probabilidades en pantalla. Que el modelo se declare READY a si mismo NO
+--   es evidencia: es exactamente lo que la guardia existia para no aceptar.
+--
+--   (Para comparar, el unico MLB que si tiene medicion, mlb_runtime_a7fb15853076,
+--    da en Moneyline sobre 40 eventos: Brier 0.48119 contra 0.50000 de adivinar,
+--    diferencia -0.01881 con IC95 de -0.05426 a +0.01665. CRUZA CERO. Ni ese
+--    esta probado.)
+--
+-- QUE SE HIZO
+--   a) Se quito la relajacion de v_reto_brain_invariant_leaks_v1 y se restauro
+--      el texto, ahora mas explicito: "...release-authorized WITH MEASURED
+--      EVIDENCE in v2.model_learning_gate. Declaring itself READY is not
+--      evidence."
+--
+--   b) Pero una guardia solo AVISA. Las 24 seguian publicandose igual, asi que
+--      se cerro el grifo de verdad en public.v_favorito_mlb: para publicar
+--      favorito_pct ya no basta con READY, ahora exige que exista una fila en
+--      v2.model_learning_gate (Moneyline, GLOBAL) con
+--      brier_vs_naive_upper95 < 0, o sea el intervalo del 95% entero del lado
+--      bueno. La misma barra que se le exige a todo lo demas.
+--
+--   RESULTADO: de 24 publicando a 0, sobre 88 partidos de MLB.
+--   Cuando mlb_one_brain_v2 acumule resultados y le gane a adivinar de forma
+--   concluyente, se encendera SOLO. Nadie tiene que volver a tocar esto.
+--
+-- ESTADO FINAL VERIFICADO
+--   tarjetas soccer sirviendose      150
+--   fugas de invariante soccer         0
+--   fugas de probabilidad NFL          0
+--   MLB publicando sin evidencia       0
+--   G37.1 tarjeta no vacia          PASS
+--   gates de cobertura en FAIL         0
+--   gates de fuga temporal en FAIL     0
