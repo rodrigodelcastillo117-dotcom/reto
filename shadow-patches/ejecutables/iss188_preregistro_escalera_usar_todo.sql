@@ -1,0 +1,101 @@
+-- ISS188: PREREGISTRO. Escalera de features: "hay que usar todo", con orden
+--         fijado ANTES de ver un solo resultado.
+--
+-- SE COMMITEA ANTES DE CORRER.
+--
+-- ===========================================================================
+-- POR QUE
+-- ===========================================================================
+-- El caso Montgomery dejo al descubierto que el modelo ignora al RIVAL:
+--   David Montgomery (HOU) vs CIN -> CIN es la defensa 1 de 32 mas permisiva
+--       contra RB: 28.56 puntos PPR por juego, 119.7 yardas terrestres, 1.18 TD.
+--   Rico Dowdle (PIT) vs NE      -> NE es 29 de 32: 19.3 PPR por juego.
+--   El modelo sienta al primero y alinea al segundo. 9.3 puntos de diferencia
+--   de emparejamiento, ignorados.
+--
+-- Y que ignora el CAMBIO DE EQUIPO:
+--   Montgomery tiene 17 juegos con DET en 2025 y 1 con HOU en 2026. Todo su
+--   promedio viene de otra ofensiva y otro reparto.
+--
+-- El dueno: "hay que usar todo". De acuerdo. Pero "todo" con una escalera de
+-- orden fijo, no metiendo variables hasta que salga el numero que gusta.
+--
+-- ===========================================================================
+-- LA ESCALERA. ORDEN FIJADO AHORA.
+-- ===========================================================================
+--   L0  BASE      promedio simple de puntos previos. Lo que corre hoy.
+--   L1  C2        oportunidad sin suerte de TD. Ya gano en ISS187
+--                 (+0.0325, IC95 [+0.0047, +0.0602], n=113,604).
+--   L2  + RIVAL   L1 multiplicado por el factor del rival: puntos PPR que esa
+--                 defensa permite a esa posicion, dividido por la media de la
+--                 liga, encogido hacia 1 segun muestra.
+--   L3  + EQUIPO  manejo de cambio de equipo: si el jugador tiene >=3 juegos
+--                 con su equipo ACTUAL, se usan solo esos; si tiene menos, los
+--                 juegos con el equipo anterior pesan la mitad.
+--   L4  + SNAPS   la oportunidad se escala por el cambio de participacion
+--                 (% de jugadas reciente contra su base).
+--   L5  + CLIMA   penalizacion a QB/WR/TE por viento y precipitacion en
+--                 estadio descubierto.
+--
+-- POR QUE ESE ORDEN, dicho antes de correr:
+--   RIVAL primero porque es la variable omitida mas grande y el caso Montgomery
+--   lo demuestra. EQUIPO segundo porque es integridad de datos, no modelado:
+--   promediar a un jugador en dos ofensivas distintas es comparar peras con
+--   manzanas. SNAPS tercero porque mide rol, que es lo que cambia cuando cambia
+--   el equipo. CLIMA al final porque afecta sobre todo al juego aereo y su
+--   efecto es el mas chico de los cuatro.
+--
+-- ===========================================================================
+-- LO QUE NO SE USA, Y POR QUE
+-- ===========================================================================
+--   MOMIOS DE VEGAS. nfl_partidos tiene spread, total_linea, ml_home. El total
+--   implicado del equipo es de los mejores predictores que existen en fantasy.
+--   NO SE USA. Regla del dueno, literal: "SIN EV. SIN KELLY. SIN EDGE CONTRA EL
+--   MERCADO PARA DECIDIR" y "el cerebro decide a partir de datos deportivos +
+--   modelo + calibracion + incertidumbre". Meter el total implicado seria dejar
+--   que el mercado decida la alineacion con otro nombre. Se excluye a proposito
+--   y se deja escrito para que nadie lo agregue sin discutirlo.
+--
+--   DEPTH CHART. Redundante con snaps y mas viejo (carga del 2026-08-31).
+--
+-- ===========================================================================
+-- FUGA TEMPORAL: EL PUNTO MAS DELICADO
+-- ===========================================================================
+-- public.nfl_defensa_vs_posicion_ppr esta agregada por TEMPORADA COMPLETA. Si
+-- se usa tal cual para predecir un partido de 2025, incluye ese mismo partido:
+-- es fuga y el backtest saldria falsamente bueno.
+--
+-- POR ESO NO SE USA en la prueba. El factor de rival se reconstruye semana a
+-- semana desde public.nfl_player_game_logs unido a public.nfl_partidos (los
+-- 5373 registros de 2025 tienen partido con local y visitante, comprobado),
+-- contando SOLO semanas anteriores a la que se predice.
+--
+-- Igual para snaps y clima: solo semanas < w.
+--
+-- ===========================================================================
+-- METRICA Y REGLA. LA MISMA DE ISS186.
+-- ===========================================================================
+-- Parejas de la misma posicion, misma semana, ambos con >=4 partidos previos.
+-- El modelo alinea al que proyecta mas alto.
+--   puntos_ganados = puntos_reales(alineado) - puntos_reales(sentado)
+--
+-- REGLA DE ADOPCION, fijada ahora:
+--   Se adopta el PREFIJO MAS LARGO de la escalera en el que CADA peldano le
+--   gana al anterior con el IC95 de la diferencia pareada ENTERO por encima de
+--   cero. Se para en el primer peldano que falle. Los peldanos posteriores a
+--   una falla NO se consideran aunque se vean bien: si L2 falla, no se mira L3.
+--
+--   Esto permite "usar todo" sin caer en lo de siempre: probar variantes y
+--   quedarse con la mejor despues de verlas. El orden ya esta escrito arriba.
+--
+--   MUESTRA MINIMA por peldano: 5000 decisiones pareadas.
+--   UNA SOLA CORRIDA.
+--
+-- ===========================================================================
+-- QUE PASA DESPUES
+-- ===========================================================================
+--   El prefijo que sobreviva se implementa como model_version NUEVO. El
+--   historial del modelo viejo no se reescribe. La tarjeta pasa a mostrar, por
+--   jugador: toques por juego, TD por juego, % de jugadas, y que tan blanda es
+--   la defensa rival contra su posicion. Sin esos numeros a la vista, una
+--   recomendacion como "sienta a Montgomery" es imposible de creer, y con razon.
