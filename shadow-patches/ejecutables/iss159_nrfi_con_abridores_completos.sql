@@ -1,0 +1,73 @@
+-- ISS159: NRFI remedido con los abridores completos. VEREDICTO: NO SE PUBLICA.
+--
+-- COBERTURA
+--   El backfill 'mlb-abridores-backfill' termino: 7063 de 7063 juegos de
+--   v2.lab_mlb_inning_features_v1 tienen abridor identificado. El cron quedo
+--   desactivado (cron.unschedule). net._http_response en 229 filas, sano.
+--
+-- UN BUG MIO, CORREGIDO, QUE INVALIDO LA PRIMERA CORRIDA
+--   v2.mlb_abridor_juego.lado viene en MAYUSCULAS ('HOME'/'AWAY'). La primera
+--   construccion comparaba contra 'home' en minusculas, asi que el CASE caia
+--   siempre al ELSE y le asignaba h1 a LOS DOS abridores. Ni error ni aviso:
+--   salian numeros plausibles y falsos (blanqueo 0.6956 para ambos lados,
+--   correlacion 0.0111). Todos esos numeros quedaron invalidados.
+--   Es la tercera vez en la sesion con el mismo bug de mayusculas (ver la nota
+--   al pie de iss156). Ahora la tabla se construye con upper(lado) y un DO que
+--   REVIENTA si el case deja algun nulo.
+--
+-- LOS NUMEROS BUENOS
+--   blanqueo en 1a entrada del abridor LOCAL    0.7328
+--   blanqueo en 1a entrada del abridor VISITA   0.6956
+--   NRFI real                                   0.5130
+--   0.7328 * 0.6956 = 0.5097 contra 0.5130 observado
+--     => separados por lado, los dos abridores son practicamente independientes.
+--
+--   corr(tasa previa del propio pitcher, blanqueo de hoy) sobre 9787 salidas
+--   con 5+ previas:  0.0478 +/- 0.0198.  Excluye cero, pero es 13 veces mas
+--   debil que la de tiros a puerta contra goles en futbol (0.63).
+--
+-- DISENO DE LA PRUEBA
+--   Ventana as-of por pitcher: solo salidas ANTERIORES, misma temporada,
+--   frame 'rows between unbounded preceding and 1 preceding'.
+--   Encogimiento hacia la base de liga por lado:
+--     p = (n*tasa_previa + k*base_lado) / (n + k)
+--   P(NRFI) = p_local * p_visita
+--   k, bases por lado y constante: ajustados SOLO con 2024-2025.
+--   2026 no se toco hasta la corrida final.
+--
+--   k optimo = 200. Con ~15 salidas previas eso da 7% de peso al historial del
+--   pitcher y 93% a la base de liga: EL PROPIO AJUSTE PIDE TIRAR LA SENAL.
+--   (k=0 da Brier 0.267396; la base sola da 0.249734; k=200 da 0.249621.)
+--
+-- RESULTADO EN 2026 (holdout, n=1219)
+--   NRFI real 2026               0.5094
+--   constante del entrenamiento  0.5164
+--   Brier modelo                 0.249309
+--   Brier constante              0.249960
+--   mejora                      +0.000651   IC95 +0.000158 a +0.001144
+--   correlacion                  0.0816
+--
+--   LA REGLA DURA SE CUMPLE: el intervalo no cruza cero.
+--
+-- Y AUN ASI NO SE PUBLICA
+--   En los 1219 partidos el modelo NUNCA emite una probabilidad fuera de
+--   0.4869 - 0.5440. Desviacion 0.0088. Cero veces pasa de 60% o baja de 40%.
+--   Publicar un mercado cuya conviccion maxima es 54% es publicar ruido con
+--   cara de analisis. Significancia estadistica no es utilidad, y la regla de
+--   la casa es no ensenarle al usuario un numero que no le sirve para decidir.
+--
+--   Registrado en v2.evidencia_mercado_candidato:
+--     mercado MLB_NRFI, variante nrfi_abridores_k200,
+--     veredicto NO_PUBLICAR, bloqueo RANGO_DE_CONVICCION_NULO.
+--
+-- LO UNICO QUE VALE LA PENA PERSEGUIR DESPUES
+--   En su 5% mas alto el NRFI real fue 0.6230; en su 5% mas bajo, 0.3934.
+--   Ordena mejor de lo que calibra: esta subconfiado, no ciego. Estirar la
+--   calibracion podria servir. Pero son ~61 partidos por cola (margen +/-0.125)
+--   y exige su propia prueba preregistrada, no un ajuste a ojo sobre estos
+--   mismos datos.
+
+-- Tablas de laboratorio que deja este parche (no entran a produccion):
+--   v2.lab_nrfi_pitcher  una fila por abridor y juego, con lado normalizado
+--   v2.lab_nrfi_asof     lo anterior mas la ventana as-of por pitcher
+--   v2.lab_nrfi_juego    una fila por juego con los dos abridores
