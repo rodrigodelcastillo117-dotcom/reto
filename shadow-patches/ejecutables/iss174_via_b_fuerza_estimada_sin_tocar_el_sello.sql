@@ -1,0 +1,82 @@
+-- ISS174: via B. Fuerza de liga estimada, sin tocar la tabla sellada.
+--
+-- DECISION DEL DUENO, textual:
+--   "B. Sin duda. No voy a contaminar la tabla sellada de fuerza medida.
+--    La arquitectura correcta queda: medido si existe; estimado solo si falta;
+--    fuente y muestra visibles; aprendizaje separado; apagado automatico si la
+--    via estimada se comporta peor. Y el coeficiente de club va por otra capa
+--    distinta, tambien versionada, para no disfrazar Salzburg = Austria promedio."
+--
+-- IMPLEMENTADO PUNTO POR PUNTO
+--
+-- 1. MEDIDO SI EXISTE, ESTIMADO SOLO SI FALTA
+--    v2.fn_phi_resolver(model_version, cutoff, league_id) -> (phi, servable, fuente, n_muestra)
+--      a) busca en v2.crossleague_league_strength. Si hay y es servable: MEDIDO.
+--      b) si no hay, y la via estimada esta habilitada, aplica el mapeo
+--         validado en ISS173 sobre v2.fuerza_liga_propuesta_dueno:
+--         phi = -0.613864 + 0.006202 * fuerza  -> ESTIMADO_TABLA_LIGAS
+--      c) si tampoco esta ahi, no devuelve nada y el partido sigue cerrado.
+--
+--    LA TABLA SELLADA NO SE TOCA. Ni una fila, ni el sello, ni el hash.
+--    Comprobado: Premier -> MEDIDO 0.0000 con n=186. Bulgaria -> ESTIMADO
+--    -0.5047. Hungria -> ESTIMADO -0.4731. Championship y Segunda portuguesa ->
+--    nada, porque la tabla del dueno solo tiene primeras divisiones.
+--
+-- 2. SIGUE HABIENDO UN SOLO CEREBRO
+--    No se duplico fn_crossleague_predict_canonical. Lo unico que cambio es de
+--    donde sale phi: los dos SELECT directos a la tabla sellada pasan a ser dos
+--    llamadas al resolver. La matematica es identica.
+--
+-- 3. FUENTE Y MUESTRA VISIBLES
+--    El motivo del modelo deja de mentir. Antes decia siempre
+--    "phi sellado AS-OF"; ahora, cuando alguna es estimada, dice:
+--      "Cross-league con forma domestica real, pero la fuerza de liga de la
+--       division del local esta ESTIMADA, no medida."
+--    Y la provenance lleva phi_home_fuente, phi_away_fuente, phi_home_n,
+--    phi_away_n y phi_estimada.
+--    En la tarjeta: fuerza_de_liga_estimada, fuerza_liga_local_fuente,
+--    fuerza_liga_visita_fuente. Lovable ya puede etiquetarlo.
+--
+-- 4. APRENDIZAJE SEPARADO Y APAGADO AUTOMATICO
+--    Gate G38, tres partes:
+--      G38.1  cuantas predicciones se sirven con fuerza estimada
+--      G38.2  Brier de la via estimada contra la medida, sobre partidos ya
+--             jugados. Con menos de 30 resultados no juzga; si la estimada se
+--             pasa por mas de 0.05, FAIL.
+--      G38.3  el interruptor v2.phi_estimado_config.habilitado
+--    Apagar el interruptor NO manda esas tarjetas a un cerebro peor: las deja
+--    sin pronostico, que es el estado honesto.
+--
+-- ESTADO AL INSTALAR
+--    De 4848 predicciones listas, 2 usan fuerza estimada.
+--    Resultados ya jugados con fuerza estimada: 0 todavia, asi que G38.2 no
+--    juzga aun. Brier de la via medida: 0.5148 sobre 173 partidos.
+--
+-- EFECTO EN LA CARTELERA
+--    Levski Sofia vs RB Salzburg   sin pick -> 62.4%   local ESTIMADO
+--    Celtic vs Ferencvaros         sin pick -> 48.2%   visita ESTIMADO
+--    Lillestrom vs Torreense       sigue sin pick      Segunda portuguesa no esta
+--    Man City vs Norwich           sigue sin pick      Championship no esta
+--    Celtic vs Rangers             misma liga -> NO_APLICA, phi se cancela
+--
+--    2 desbloqueadas, 2 correctamente cerradas. Es lo que ISS173 predijo.
+--
+-- UN ERROR MIO EN EL CAMINO, PARA QUE QUEDE
+--    La primera version referenciaba ph.fuente dentro del CASE del resultado.
+--    En partidos de MISMA LIGA phi se cancela y no hay lookup, asi que el record
+--    nunca se asigna y build_soccer_prediction_v2() reventaba entero con
+--    "record ph is not assigned yet". Habria tumbado el cron de las :15.
+--    Arreglado con variables (v_fuente_h, v_fuente_a) inicializadas a
+--    'NO_APLICA'. Reconstruido: 211 eventos.
+--
+--    Y la guardia que puse para comprobar que no quedaran referencias al record
+--    salto contra mi propia linea de asignacion, que obviamente contiene
+--    ph.fuente. Reordene: primero sustituir, luego comprobar, luego anadir.
+--    La guardia hizo su trabajo.
+--
+-- LO QUE NO SE HIZO, Y ES DELIBERADO
+--    El coeficiente de club UEFA. El dueno tiene razon en que es mejor idea que
+--    la de liga (Salzburg no es el promedio de Austria, y los desvios medidos en
+--    ISS173 lo respaldan), pero NO hay coeficientes de club ingeridos en la
+--    base. Es una fuente nueva que hay que bajar y versionar. No se inventa de
+--    memoria.
