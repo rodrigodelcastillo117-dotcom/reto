@@ -1,0 +1,63 @@
+-- ISS152: el dueno pregunto como meter su logica de Over/Under, y dijo la regla
+-- de siempre: "no pueden haber 2, solo debe de haber 1, el mas exacto".
+--
+-- SU LOGICA, TEXTUAL:
+--   "si un equipo mete 3 goles por partido, y recibe 1, son 4, y si el rival
+--    mete 1 y recibe 2, probablemente sea altas de 3.5"
+--
+-- PRIMER HALLAZGO: ESA LOGICA YA ESTABA IMPLEMENTADA, DOS VECES.
+--   1. v2.medir_calibracion_over_under() la usa para ajustar la calibracion:
+--        lam = (gf_local + ga_visita)/2 + (gf_visita + ga_local)/2
+--      sobre ventana de 10 partidos previos por equipo, sin fuga temporal
+--      ('rows between 10 preceding and 1 preceding'), y luego Poisson sobre la
+--      linea. Es EXACTAMENTE su aritmetica.
+--   2. El goal_expectation de las tarjetas SIN_P_RETO usa la misma media.
+--   Pero el numero que SE PUBLICA en la tarjeta sale del cerebro crossleague,
+--   que es otro calculo. O sea: ya habia dos, que es justo lo que el prohibio.
+--
+-- ENFRENTAMIENTO SOBRE LOS MISMOS 139 PARTIDOS (10 al 16 de septiembre)
+--
+--   modelo                                  Brier     vs adivinar   IC95
+--   cerebro crossleague (el publicado)      0.27166   +0.02199      [+0.0044, +0.0396]
+--   GF/GA ventana 10 (la logica del dueno)  0.27767   +0.02800      [+0.0066, +0.0494]
+--   adivinar con la tasa base               0.24968   --            --
+--
+--   LOS DOS PIERDEN contra el volado, con el intervalo entero por encima de
+--   cero. La del dueno sale incluso un poco peor.
+--
+-- LA DESCOMPOSICION, QUE ES LO QUE IMPORTA
+--   tasa real de over .................. 48.2%
+--   predijo el publicado ............... 42.9%   (5.3 puntos corto, sistematico)
+--   predijo la logica del dueno ........ 47.9%   (casi exacto)
+--
+--   correlacion con el resultado:
+--     publicado ... -0.1337     logica del dueno ... -0.1049
+--
+--   O sea: la logica del dueno GANA EN CALIBRACION y las dos FALLAN EN
+--   DISCRIMINACION. El Brier es calibracion mas discriminacion, y como ninguna
+--   de las dos sabe CUALES partidos van a ser altos, ninguna le gana a la
+--   constante. No es cuestion de elegir entre ellas: es que ninguna discrimina.
+--
+-- LA CONTRADICCION QUE NO SE PUEDE IGNORAR
+-- El MISMO modelo GF/GA, medido sobre 26777 partidos historicos en
+-- v2.calibracion_over_under, SI le gana a la constante:
+--     linea 3.5: brier calibrado 0.212846 contra constante 0.215713,
+--                t = 5.08, IC95 inferior +0.001762, correlacion +0.1153
+-- Ahi la correlacion es POSITIVA (+0.1153) y aqui sale NEGATIVA (-0.1049).
+--
+-- LA EXPLICACION MAS PROBABLE, Y ES COMPROBABLE:
+-- la ventana del 10 al 16 de septiembre es EXACTAMENTE cuando la ingesta de
+-- resultados estaba caida (ISS145: ESPN dejo de aceptar rangos de fecha y
+-- llevaba dias devolviendo 400) y cuando la forma de 36 equipos estaba
+-- congelada en la division anterior (ISS146). Esas 139 predicciones se hicieron
+-- con insumos rotos.
+--
+-- QUE SE HIZO
+-- NADA que cambie lo que se publica. Se registraron las dos mediciones en
+-- v2.evidencia_mercado_candidato para que la decision quede auditable.
+--
+-- QUE FALTA, Y ES LO UNICO HONESTO
+-- RE-MEDIR HACIA ADELANTE, ahora que la ingesta esta arreglada y la forma al
+-- dia. Hasta que una de las dos variantes le gane a la constante con el
+-- intervalo entero por debajo de cero, NINGUNA se gana el lugar. Cuando una
+-- gane, esa se vuelve LA unica y la otra se retira: un solo cerebro.
