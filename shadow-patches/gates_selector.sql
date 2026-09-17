@@ -15,3 +15,5 @@ select * from public.gate_tarjeta_universal();
 select * from public.gate_fantasy_alcanzable();
 --- Fantasy: participacion de la temporada actual (ISS181) ---
 select public.fantasy_participacion('Courtland Sutton',2026);
+--- G43: un solo modelo manda en fantasy, el resumen es la suma de las tarjetas (ISS192) ---
+select * from public.gate_fantasy_un_solo_modelo();
