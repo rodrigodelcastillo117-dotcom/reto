@@ -1,0 +1,99 @@
+-- ISS182: PREREGISTRO de la prueba de ponderado por recencia en fantasy
+--
+-- ESTE ARCHIVO SE ESCRIBE Y SE COMMITEA ANTES DE CORRER LA PRUEBA.
+-- Si despues el resultado no gusta, el resultado manda. No este archivo.
+--
+-- ===========================================================================
+-- EL PROBLEMA QUE SE QUIERE ARREGLAR
+-- ===========================================================================
+-- v2.fn_fantasy_project_b1_rq80_v2 proyecta con avg() SIMPLE sobre la union de
+-- todo el historial del jugador (2025) y las semanas ya calificadas de 2026.
+-- Cada juego pesa igual sin importar cuando fue.
+--
+-- MEDIDO en el roster de rodelcast, semana 2 de 2026:
+--   192 juegos de 2025 contra 10 de 2026 -> la temporada actual pesa 5.0%.
+--
+-- Choca con la regla del dueno: "ESTA TEMPORADA VALE MAS QUE LA PASADA...
+-- MAS PESO A LA FORMA, A LAS LESIONES, VIAJES, TODO."
+--
+-- ===========================================================================
+-- LA HIPOTESIS, EN UNA FRASE
+-- ===========================================================================
+-- Ponderar los juegos por RECENCIA (no por etiqueta de temporada) predice mejor
+-- los puntos de fantasy que el promedio simple.
+--
+-- Se pondera por recencia y NO por "es 2025 o 2026" a proposito: un juego de la
+-- semana 18 del ano pasado y uno de la semana 1 de este ano estan a 3 semanas de
+-- distancia, no a un ano. La etiqueta de temporada es un corte arbitrario; la
+-- distancia en partidos no lo es. Y resuelve el problema cross-temporada solo,
+-- porque los juegos viejos son viejos aunque sean del mismo ano.
+--
+-- ===========================================================================
+-- DATOS
+-- ===========================================================================
+--   public.lab_ff_playerweek, temporada 2025
+--   8444 filas, 609 jugadores, 6400 con actual_points
+--   Se usan status IN ('PLAYED','ACTIVE_ZERO_USAGE') con actual_points NOT NULL.
+--   Se excluyen BYE e INACTIVE_OR_DNP: no son actuaciones, son ausencias.
+--
+-- WALK-FORWARD ESTRICTO
+--   Para cada (jugador, semana w) con w >= 5, la prediccion usa UNICAMENTE
+--   partidos de semana < w del mismo jugador. Cero lookahead.
+--   Se exige un minimo de 4 partidos previos para que el promedio signifique
+--   algo; con menos, el jugador no entra en esa semana.
+--
+-- ===========================================================================
+-- LOS DOS COMPETIDORES
+-- ===========================================================================
+--   BASE       promedio simple de los partidos previos.
+--              Es EXACTAMENTE lo que hace produccion hoy.
+--
+--   CANDIDATO  promedio ponderado con decaimiento exponencial.
+--              peso(partido) = 0.5 ^ ((w - semana_del_partido) / H)
+--              H = vida media en semanas.
+--
+-- H PRIMARIO PREESPECIFICADO: H = 4 semanas.
+--   Se elige 4 ANTES de ver un solo resultado. Razon: en una temporada de 17
+--   semanas, 4 deja que el ultimo mes pese aproximadamente la mitad y el resto
+--   la otra mitad. No se elige mirando cual gana.
+--
+-- ===========================================================================
+-- METRICA Y REGLA DE DECISION. UNA SOLA, DURA.
+-- ===========================================================================
+-- METRICA PRIMARIA: error absoluto medio (MAE) contra los puntos reales.
+--   Se usa MAE y no Brier porque esto NO es una probabilidad: es un numero de
+--   puntos. El modelo de produccion devuelve una media, asi que se le juzga
+--   como media.
+--
+-- REGLA DE DECISION, decidida ahora:
+--   d_i = |error_candidato_i| - |error_base_i|   (pareado, mismo jugador-semana)
+--   Se adopta el candidato SOLO SI
+--       media(d) + 1.96 * ee(d)  <  0
+--   o sea el intervalo del 95% ENTERO del lado bueno. Si cruza cero, NO SE
+--   PUBLICA, por bonito que se vea el promedio.
+--
+-- MUESTRA MINIMA: 1000 observaciones pareadas. Con menos, la prueba se declara
+--   SIN VEREDICTO y no se publica nada.
+--
+-- UNA SOLA CORRIDA. Los H secundarios (2, 8, 12) se REPORTAN por transparencia
+--   pero NO pueden cambiar la decision. Elegir el H ganador despues de ver los
+--   resultados seria hacer trampa y ya me ha pasado una vez en este proyecto
+--   (calibracion de O/U por linea, ISS161): ahi me negue y aqui tambien.
+--
+-- SECUNDARIO, SOLO INFORMATIVO, NO DECIDE:
+--   La misma comparacion sobre las 257 actuaciones ya calificadas de 2026.
+--   Es muestra chica y es la temporada que se quiere mejorar, asi que mirarla
+--   para decidir seria elegir sobre el mismo dato que se quiere arreglar.
+--
+-- ===========================================================================
+-- QUE PASA SEGUN EL RESULTADO
+-- ===========================================================================
+--   PASA   -> se cambia fn_fantasy_project_b1_rq80_v2 a ponderado H=4, con
+--             model_version NUEVO (no se reescribe el historial del viejo),
+--             y la confesion de fantasy_limitaciones se reemplaza por la
+--             descripcion real del ponderado.
+--   NO PASA-> NO se cambia el modelo. La tarjeta SIGUE confesando que promedia
+--             sin peso, y se registra que se probo y no alcanzo. El gate G42.4
+--             se queda tal cual.
+--
+-- No hay tercera opcion. No se va a "ajustar un poco" el umbral.
