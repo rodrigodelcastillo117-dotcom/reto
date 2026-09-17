@@ -757,3 +757,17 @@ end $$;
 -- rastro en v2.cambio_de_division. Queda pendiente convertirlo en gate duro
 -- una vez que se confirme que no genera falsos positivos en cambio de
 -- temporada, cuando un equipo puede tener pocos partidos en su division nueva.
+
+-- ===========================================================================
+-- G35.5 (ISS148) -- partidos aplazados o cancelados, a la vista
+-- ===========================================================================
+-- INFO. Se llena desde la respuesta de ESPN (completed=false con estado
+-- POSTPONED/CANCEL/ABANDON/SUSPEND/FORFEIT) en public.evento_no_jugado.
+-- Existe para que G35.2 pueda excluirlos SIN esconderlos: un partido aplazado
+-- nunca va a tener marcador, pero tiene que poder auditarse por que se excluyo.
+--
+-- Tambien en ISS148: G34.2 ahora exige que el trabajo futuro contra el que
+-- compara sea ELEGIBLE ahorita (misma formula de espera exponencial que usa
+-- get_soccer_coverage_jobs). Antes se ponia rojo cada vez que se drenaba la
+-- cola a mano, porque todos los futuros quedaban en espera y subian los ya
+-- jugados, que es justo lo correcto cuando no hay nada mejor que hacer.

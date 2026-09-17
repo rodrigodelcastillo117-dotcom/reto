@@ -1,0 +1,52 @@
+-- ISS148: dos gates que se pusieron rojos, y ninguno era un defecto de datos.
+-- Se arreglan para que MIDAN BIEN, no para que se pongan verdes.
+--
+-- ============================================================================
+-- G35.2 -- un partido APLAZADO nunca va a tener marcador
+-- ============================================================================
+-- El gate contaba como falla todo partido de liga mapeada cuya hora de inicio
+-- ya paso y no tiene marcador. Levante vs Athletic Club del 16-sep lo dejo rojo
+-- de forma permanente. Se consulto a ESPN directo:
+--
+--   401882875 Osasuna at Atletico Madrid ..... STATUS_FULL_TIME   completed=true
+--   401882873 Sevilla at Deportivo ........... STATUS_FULL_TIME   completed=true
+--   401882871 Racing Santander at Barcelona .. STATUS_FULL_TIME   completed=true
+--   401882870 Athletic Club at Levante ....... STATUS_POSTPONED   completed=false
+--
+-- El partido se APLAZO. Nunca va a tener marcador, asi que contarlo como falta
+-- de ingesta es medir mal. agenda_espn.estado no sirve para distinguirlo: solo
+-- tiene 'post' e 'in'.
+--
+-- Arreglo: public.evento_no_jugado, que se llena desde la propia respuesta de
+-- ESPN (completed=false y estado POSTPONED/CANCEL/ABANDON/SUSPEND/FORFEIT) via
+-- public.registrar_eventos_no_jugados(), llamada al inicio del ciclo horario
+-- (antes del absorbedor, que purga la cola). G35.2 los excluye y se agrega
+-- G35.5 como INFO para que queden a la vista, no escondidos.
+--
+-- ============================================================================
+-- G34.2 -- "haya partidos por venir" tiene que significar "que puedan correr"
+-- ============================================================================
+-- El gate exigia que ningun trabajo con partido ya jugado tomara turno mientras
+-- existiera algun PENDING/RETRY con partido futuro. Se puso rojo con Esteghlal
+-- y Pakhtakor Tashkent (kickoff 14-sep).
+--
+-- Medido: habia 55 pendientes con partido futuro y CERO elegibles, porque yo
+-- mismo drene la cola a mano disparando kick_soccer_global_backfill varias
+-- veces seguidas y los deje a todos en espera exponencial. Con nada elegible,
+-- que suban los ya jugados es lo CORRECTO: no hay nada mejor que hacer en ese
+-- tick.
+--
+-- Arreglo: el EXISTS ahora exige que el trabajo futuro sea elegible ahorita
+-- (misma formula de espera que usa get_soccer_coverage_jobs). El gate sigue
+-- siendo duro; lo que se corrigio es que estaba comparando contra trabajos que
+-- no podian correr.
+--
+-- ============================================================================
+-- NOTA SOBRE G34.9 (no es regresion, es lo contrario)
+-- ============================================================================
+-- Paso de 1 discrepancia sobre 556 partidos de 26 equipos, a 29 sobre 5597 de
+-- 149 equipos. La tasa bajo de contexto: 0.18% -> 0.52%, pero la MUESTRA crecio
+-- 10x porque ISS145 devolvio el historial que faltaba. El gate ahora vigila
+-- mucho mas superficie con la misma tolerancia.
+--
+-- ESTADO FINAL: 21 gates duros en PASS, 0 en FAIL, 7 INFO.
