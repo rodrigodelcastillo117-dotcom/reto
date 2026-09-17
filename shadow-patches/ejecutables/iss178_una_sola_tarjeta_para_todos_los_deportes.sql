@@ -138,3 +138,46 @@
 -- select deporte, count(*), count(ganador_pick),
 --        count(*) filter (where ganador_pick is null and motivo_sin_pick is null) mudas
 --   from public.v_tarjeta_universal_v1 group by 1;   -- mudas debe ser 0
+
+
+-- ===========================================================================
+-- ADENDA ISS178-b: LA TARJETA DE BEISBOL CALLABA EL DATO MAS IMPORTANTE
+-- ===========================================================================
+-- Al revisar por que MLB da picks sin abridores confirmados, medi esto:
+--   de 12 partidos con pick, 9 NO tenian NINGUN abridor confirmado
+--   y la tarjeta no lo decia por ningun lado
+--   (la vista mv_tarjeta_mlb_v1 no menciona 'pitcher' ni una sola vez)
+--
+-- En beisbol el abridor es el dato que mas pesa. Publicar un pronostico sin
+-- saber quien lanza y no advertirlo es enganar, aunque el numero salga del
+-- modelo correcto. El modelo cae a fuerza de equipo, que es una decision
+-- razonable, pero el usuario tiene que saberlo.
+--
+-- AGREGADO a la tarjeta universal (rama beisbol):
+--   confianza_por_muestra:
+--     ABRIDORES_CONFIRMADOS | SOLO_UN_ABRIDOR_CONFIRMADO | SIN_ABRIDORES_CONFIRMADOS
+--   aviso_de_muestra: texto explicito nombrando al abridor que SI se conoce y
+--     advirtiendo que el pronostico se afinara cuando MLB anuncie el otro.
+--     NULL solo cuando se conocen los dos.
+--   mercados_extra.abridores: {local, visita} con los nombres reales.
+--
+--   G41.5  FAIL si una tarjeta de beisbol da pick con abridores incompletos y
+--          no lleva aviso. Debe ser 0.
+--
+-- MEDIDO al instalar: 19 con los dos abridores, 24 con uno, 45 con ninguno.
+-- Las 69 incompletas llevan aviso. G41.5 PASS (0).
+--
+-- TAMBIEN: ventana de datos de 120h a 168h, para que los 88 partidos de la
+-- agenda tengan al menos fila de cache. La extension de 72h a 120h ya se
+-- justifico con datos (18 partidos nuevos cacheados en esa franja, 9 con
+-- abridor: la fuente SI cubre 5 dias). 168h cubre la agenda completa.
+--
+-- COMPROBADO que NO se cuela el mercado: mv_tarjeta_mlb_v1 no usa
+-- 'edge_vs_mercado' ni 'aviso_modelo' (0 apariciones). El texto del cerebro
+-- "el modelo y el mercado coinciden razonablemente" NO llega a pantalla, que
+-- es lo correcto: el precio no valida al modelo.
+--
+-- ESTADO VERIFICADO (2026-09-17, segunda pasada)
+--   beisbol  altas y bajas 9 -> 79 de 88   marcador probable 0 -> 79
+--   G41.1 PASS | G41.2 PASS (0) | G41.3 PASS (0) | G41.5 PASS (0)
+--   tarjetas mudas en los tres deportes: 0
