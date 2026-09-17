@@ -8,3 +8,5 @@ select * from public.gate_phi_estimado();
 select * from public.gate_mlb_one_brain_medible();
 --- G40: la tarjeta no se contradice a si misma (ISS177). G40.1 en FAIL a proposito ---
 select * from public.gate_tarjeta_no_se_contradice();
+--- G41: contrato de tarjeta unica, ninguna tarjeta muda (ISS178) ---
+select * from public.gate_tarjeta_universal();

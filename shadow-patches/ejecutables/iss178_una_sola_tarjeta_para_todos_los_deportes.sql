@@ -1,0 +1,140 @@
+-- ISS178: una sola forma de tarjeta para todos los deportes, y cerrar los
+--         huecos de picks que quedaban
+--
+-- PEDIDO DEL DUENO: "quiero picks y analisis para todos, mismas tarjetas, etc"
+--
+-- ===========================================================================
+-- COMO ESTABA
+-- ===========================================================================
+--   futbol   v_tarjeta_soccer_v1      62 columnas, forma completa
+--   beisbol  mv_tarjeta_mlb_v1        32 columnas, otra forma
+--   nfl      v_nfl_publication_v1     38 columnas, otra forma mas
+--   Tres contratos distintos. Imposible pintar un solo componente.
+--
+-- Y con huecos:
+--   beisbol  39 de 88 partidos con pick, 9 con altas y bajas
+--   futbol  147 de 150
+--   nfl      32 de 32
+--
+-- ===========================================================================
+-- UNA CORRECCION A MI MISMO, PRIMERO
+-- ===========================================================================
+-- Sospeche que NFL publicaba 32 picks sin evidencia, igual que el MLB que
+-- bloquee en ISS175R, porque nfl_hybrid_ml_v1 no tiene NI UNA fila en
+-- v2.model_learning_gate. ESTABA EQUIVOCADO y lo digo claro.
+--
+-- NFL tiene autoridad SELLADA en v_nfl_release_authority_v1, sellada el
+-- 2026-09-15, con holdout real fuera de muestra:
+--   rama temprana  n=143  Brier 0.22986 contra 0.25 de referencia
+--                         (2024 n=64, 2025 n=63, 2026 sem1 n=16)
+--   rama madura    n=123  Brier 0.21033, accuracy 69.92%
+--   seleccion hecha solo con 2021-2023, el mercado nunca fue objetivo
+--   alcance MONEYLINE_ONLY, spread y total NO autorizados, dinero NO autorizado
+--
+-- MLB, en cambio: v_mlb_canonical_release_authority_v1 dice n_oos_events=0,
+-- product_release_authorized=false, y ni siquiera cubre a mlb_one_brain_v2.
+-- O sea: mi bloqueo de MLB estaba bien y mi sospecha de NFL estaba mal.
+-- Son casos distintos y ahora la tarjeta lo dice, deporte por deporte.
+--
+-- ===========================================================================
+-- 1. EL CONTRATO: public.v_tarjeta_universal_v1
+-- ===========================================================================
+-- 40 columnas iguales para los tres deportes. Lo que un deporte no tiene, lo
+-- deja en NULL y lo explica; no se rellena para que se vea bonito.
+--
+--   identidad      deporte, liga_nombre, espn_event_id, kickoff, equipos, estado
+--   ganador        ganador_pick, ganador_pct, local_pct, empate_pct, visita_pct
+--   anotacion      unidad ('goles'/'carreras'/'puntos'), esperado_local/visita/total,
+--                  marcador_esperado, marcador_esperado_pct
+--   altas y bajas  linea_total, over_pct, under_pct, push_pct, linea_fuente, linea_estado
+--   margen         margen_mas_probable, margen_mas_probable_pct
+--   por deporte    mercados_extra jsonb (btts / nrfi+primeras5 / spread)
+--   honestidad     model_version, probado, autoridad_de_publicacion,
+--                  evidencia_por_mercado, muestras, motivo_sin_pick,
+--                  temporal_safe, data_asof, calculado_at, politica
+--
+-- public.fn_evidencia_mercado(deporte, modelo, mercado) construye el expediente
+-- con la MISMA forma en los tres deportes. Antes cada uno lo contaba distinto
+-- o no lo contaba.
+--
+-- 'probado' es una bandera dura: solo es true si hay evidencia concluyente,
+-- venga del aprendizaje forward (IC95 entero del lado bueno) o de una
+-- autoridad sellada. Hoy: nfl 32 de 32, futbol 0 de 150, beisbol 0 de 88.
+-- Eso es la verdad, y la tarjeta la dice en vez de esconderla.
+--
+-- ===========================================================================
+-- 2. BEISBOL: DE 39 PICKS A 57, Y DE 9 TOTALES A 57
+-- ===========================================================================
+-- a) La ventana de datos era de 72 horas
+--    public.mlb_cache_refrescar solo pedia abridores a 72h. Medido: los 49
+--    partidos del 21 al 24 de septiembre NO tenian NI UNA fila de cache.
+--    Nunca se pedian. Sin datos no hay analisis. MLB anuncia abridores
+--    probables ~5 dias antes, asi que 72h dejaba fuera dos dias que la fuente
+--    SI cubre. Subido a 120 horas.
+--    RESULTADO MEDIDO: picks de MLB 39 -> 57.
+--
+-- b) Los totales dependian de que una casa pusiera linea
+--    Medido: los momios solo cubren 9 de 88 partidos. Pero el cerebro YA
+--    calcula over/under para una rejilla fija (6.5 a 11.5) y el marcador mas
+--    probable; la tarjeta simplemente no los sacaba sin linea de casa.
+--    v2.mlb_totales_grid + v2.refrescar_mlb_totales_grid + cron
+--    'mlb-totales-grid' (9,39) cachean esa salida. La tarjeta usa la linea de
+--    la casa si existe, y si no la linea estandar 8.5, DECLARANDOLO:
+--    linea_fuente='LINEA_ESTANDAR_DEL_MODELO',
+--    linea_estado='LINEA_ESTANDAR_8_5_NO_ES_DE_UNA_CASA'.
+--    RESULTADO MEDIDO: totales de MLB 9 -> 57. Marcador probable 0 -> 57.
+--
+--    NO es un modelo nuevo: es la misma salida de predecir_mlb.
+--    Y NO se uso Poisson: el propio cerebro ya lo habia descartado midiendo
+--    1056 juegos de 2026 con 2100 casos fuera de muestra (desviacion real 4.61
+--    contra 3.02 que asume Poisson; Brier 0.22420 contra 0.23199). Si yo
+--    hubiera calculado el 8.5 con Poisson por mi cuenta habria publicado una
+--    distribucion que ya estaba medida como equivocada.
+--
+-- ===========================================================================
+-- 3. EL BUG DE LA TARJETA MUDA
+-- ===========================================================================
+-- Besiktas vs Marseille salia con estado CON_P_RETO, goles esperados 3.09,
+-- muestras 49 y 46... y sin ganador. Causa: local 38.8% y visita 38.8%,
+-- EXACTAMENTE iguales. La regla deja ganador_pick en NULL a proposito, y eso
+-- esta BIEN (promover uno de dos numeros identicos seria una moneda al aire
+-- disfrazada de analisis). El bug es que NADIE lo explicaba: la tarjeta
+-- mostraba un porcentaje sin nombre.
+-- Ahora dice EMPATE TECNICO con las tres cifras y aclara que el resto de la
+-- tarjeta si es valido.
+--
+-- ===========================================================================
+-- 4. G41
+-- ===========================================================================
+--   G41.1  los tres deportes sirven tarjeta
+--   G41.2  NINGUNA tarjeta sin pick y sin motivo. Debe ser 0.
+--          Es la traduccion a gate de "estos siguen sin analisis, sin picks,
+--          sin nada".
+--   G41.3  nadie se declara probado si su expediente no lo dice
+--   G41.4  cobertura por deporte (INFO)
+--
+-- ===========================================================================
+-- ESTADO VERIFICADO (2026-09-17)
+-- ===========================================================================
+--   270 tarjetas en un solo contrato
+--   236 con pick;  34 sin pick, LOS 34 con motivo escrito
+--   beisbol 57/88 | futbol 147/150 | nfl 32/32
+--   G41.1 PASS | G41.2 PASS (0) | G41.3 PASS (0) | G41.4 INFO
+--   G37.1 PASS 150 (la tarjeta de futbol sigue servida)
+--
+--   Sigue abierto y a la vista: G40.1 FAIL, las dos lambdas de futbol.
+--   Los 31 partidos de MLB sin pick son del 22 al 24 de septiembre: la fuente
+--   todavia no anuncia esos abridores. Se llenaran solos al acercarse.
+
+
+-- (Las sentencias aplicadas van en el mismo orden que el texto de arriba:
+--  fn_evidencia_mercado, v_tarjeta_universal_v1, parche de 72h a 120h en
+--  mlb_cache_refrescar, v2.mlb_totales_grid + refresco + cron, parche del
+--  empate tecnico en v_tarjeta_soccer_v1_calculo, y gate_tarjeta_universal.
+--  Se reproducen integras en la base; este archivo es el registro razonado.)
+
+-- VERIFICACION
+-- select * from public.gate_tarjeta_universal();
+-- select deporte, count(*), count(ganador_pick),
+--        count(*) filter (where ganador_pick is null and motivo_sin_pick is null) mudas
+--   from public.v_tarjeta_universal_v1 group by 1;   -- mudas debe ser 0
