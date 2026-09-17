@@ -1,0 +1,76 @@
+-- ISS183: resultado de la prueba preregistrada ISS182. NO PASA.
+--         El modelo de fantasy NO se toca.
+--
+-- ===========================================================================
+-- LA CORRIDA, UNA SOLA, SEGUN ISS182
+-- ===========================================================================
+--   n pareadas            4180   (minimo exigido: 1000)
+--   MAE base (promedio simple, lo de produccion)   4.40415
+--   MAE candidato H=4                              4.39138
+--   diferencia pareada                            -0.01276
+--   IC95                              [-0.04401, +0.01848]
+--
+--   EL INTERVALO CRUZA CERO. Regla preregistrada: se adopta SOLO si el IC95
+--   superior queda por debajo de cero. Es +0.01848. NO PASA.
+--
+-- ===========================================================================
+-- LA TRAMPA QUE SE PRESENTO, Y POR QUE NO SE CAE EN ELLA
+-- ===========================================================================
+-- Los H secundarios, reportados por transparencia:
+--      H=2    dif +0.06503   IC95 sup +0.11937   PEOR, concluyente
+--      H=8    dif -0.02206   IC95 sup -0.00553   pasaria
+--      H=12   dif -0.01879   IC95 sup -0.00761   pasaria
+--
+-- H=8 y H=12 cruzan la barra. La tentacion es obvia: "pues usamos H=8".
+-- ESO ES HACER TRAMPA y el preregistro lo dice con esas palabras. Razones:
+--
+--   1. El H primario se fijo en 4 ANTES de ver un numero. Cambiarlo despues es
+--      elegir la hipotesis en funcion del resultado.
+--   2. Se probaron 4 variantes. Que una o dos crucen 0.05 por poco es lo que
+--      pasa cuando pruebas varias cosas, no evidencia de nada.
+--   3. El tamano del efecto es RIDICULO: 0.022 puntos de fantasy sobre un MAE
+--      de 4.404. Medio por ciento. Nadie gana una liga con eso.
+--
+-- ===========================================================================
+-- LO QUE SI ENSENA EL RESULTADO, Y VA CONTRA MI PROPIA INTUICION
+-- ===========================================================================
+-- Mirando la forma completa: H=2 (peso fuerte a lo reciente) es PEOR de forma
+-- concluyente. H=8 y H=12 (peso suave, casi identico al promedio simple) salen
+-- marginalmente mejor. O sea: los datos prefieren algo MUY parecido al promedio
+-- simple, y castigan el peso agresivo a lo reciente.
+--
+-- Eso contradice la intuicion del dueno ("MAS PESO A LA FORMA") y tambien la
+-- mia. En fantasy semanal, el rendimiento de un jugador semana a semana es
+-- ruidoso: las ultimas dos semanas dicen menos que el promedio largo. Hay que
+-- decirlo aunque incomode.
+--
+-- PERO OJO, Y ESTO IMPORTA: lo que el dueno quiere resolver de verdad NO es
+-- "que pesen mas las ultimas semanas". Es "que el modelo se entere cuando un
+-- jugador cambio de equipo o perdio la titularidad". Un decaimiento exponencial
+-- es un instrumento pesimo para eso: no distingue entre un mal partido y una
+-- perdida de rol.
+--
+-- El instrumento correcto para ESE problema ya existe desde hace una hora:
+-- public.fantasy_participacion (ISS181), que compara el % de jugadas de la
+-- temporada en curso contra la base del ano anterior. Eso SI detecta el cambio
+-- de rol, y lo detecta directo en vez de por proxy.
+--
+-- ===========================================================================
+-- QUE SE HACE
+-- ===========================================================================
+--   NO se cambia v2.fn_fantasy_project_b1_rq80_v2.
+--   NO se crea model_version nuevo.
+--   fantasy_limitaciones SIGUE confesando que promedia sin peso. G42.4 intacto.
+--
+-- SE REGISTRA que se probo y no alcanzo, para que nadie lo vuelva a proponer
+-- como si fuera obvio.
+--
+-- ===========================================================================
+-- LA SIGUIENTE PRUEBA, QUE TODAVIA NO SE HA CORRIDO
+-- ===========================================================================
+-- Hipotesis mejor planteada: ajustar la proyeccion por CAMBIO DE PARTICIPACION
+-- medido en snaps, no por antiguedad del partido.
+-- No se corre hoy porque solo hay 1 semana de snaps de 2026 (455 registros).
+-- Con una semana no se distingue un cambio de rol de un juego raro, y la propia
+-- fantasy_participacion lo advierte. Se corre cuando haya al menos 4 semanas,
+-- y se preregistra igual que esta, antes de mirar nada.
