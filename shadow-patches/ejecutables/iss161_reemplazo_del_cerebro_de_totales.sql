@@ -102,3 +102,42 @@ $$;
 --   idem para under_pct
 -- Si cualquiera de las dos no aparecia exactamente una vez, el DO revienta y
 -- no aplica nada.
+
+-- ------------------------------------------------------------------
+-- CIERRE DEL CHECK-IN (06:07)
+--
+-- El check-in que yo mismo programe decia "apaga el cron soccer-stats-backfill
+-- si ya termino". NO LO APAGUE, y a proposito.
+--
+-- Cuando escribi esa instruccion, los tiros eran datos de laboratorio. Ahora
+-- son el insumo de un cerebro EN PRODUCCION. Cada dia se juegan partidos
+-- nuevos; si mato el cron, la ventana de 10 partidos de cada equipo envejece y
+-- el bloque de altas/bajas se va apagando solo en unos dias. Dejo de ser un
+-- backfill y paso a ser mantenimiento.
+--
+-- Lo que se hizo: renombrarlo y bajarle el ritmo, porque a 50 por minuto con
+-- 0 pendientes es desperdicio.
+--     cron.unschedule('soccer-stats-backfill')
+--     cron.schedule('soccer-stats-mantenimiento', '*/10 * * * *',
+--                   'select v2.ciclo_stats_soccer(50);')
+--
+-- El de MLB si se apago (ISS159): ese si era un backfill de una sola vez y
+-- su medicion ya esta cerrada con veredicto NO_PUBLICAR.
+--
+-- ESTADO FINAL DEL BACKFILL
+--   tiros bajados            6569
+--   marcados sin datos        666   (Taca de Portugal y KNVB Beker: ESPN no
+--                                    publica boxscore de esas rondas)
+--   pendientes por bajar        0
+--   en vuelo                    0
+--
+-- EVIDENCIA REGISTRADA en v2.evidencia_mercado_candidato, las cuatro lineas:
+--   ou_tiros_v1_linea_1.5   +0.001474  [-0.000982, +0.003930]  NO_PUBLICAR
+--   ou_tiros_v1_linea_2.5   +0.004506  [+0.000377, +0.008635]  PASA_Y_SE_PUBLICA
+--   ou_tiros_v1_linea_3.5   +0.005341  [+0.001156, +0.009526]  PASA_Y_SE_PUBLICA
+--   ou_tiros_v1_linea_4.5   +0.002390  [-0.000197, +0.004977]  NO_PUBLICAR
+--
+--   Quedan al lado, sin borrar, los dos negativos previos del mismo mercado:
+--   CEREBRO_CROSSLEAGUE_PUBLICADO y GF_GA_VENTANA10_ARITMETICA_DEL_DUENO,
+--   los dos con veredicto PEOR_QUE_ADIVINAR_CONCLUYENTE. El historial de lo
+--   que no funciono no se borra.
