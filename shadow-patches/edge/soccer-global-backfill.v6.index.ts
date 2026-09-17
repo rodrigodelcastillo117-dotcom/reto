@@ -9,6 +9,14 @@ const U=Deno.env.get("SUPABASE_URL")!; const K=Deno.env.get("SUPABASE_SERVICE_RO
 const API_KEY=Deno.env.get("API_FOOTBALL_KEY")||""; const API_BASE="https://v3.football.api-sports.io";
 const sb=createClient(U,K);
 function norm(s:string){return String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().replace(/[^a-z0-9]+/g," ").trim()}
+// API-Football RECHAZA la busqueda si el nombre trae acentos o apostrofes:
+// contesta {"search":"The Search field may only contain alphanumeric..."}.
+// Medido el 2026-09-17: 6 equipos llevaban 6 intentos fallidos por esto y no
+// iban a salir nunca (Academica Calheta, Anca, Atletico CP, CD Cinfaes,
+// Ginasio Figueirense, Zwaluwen '30). Se BUSCA con el nombre saneado, pero la
+// comparacion exacta sigue siendo contra el nombre ORIGINAL via norm(), asi
+// que no se afloja la identidad: solo se deja de romper la peticion.
+function paraBuscar(s:string){return String(s||"").normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^A-Za-z0-9 ]+/g," ").replace(/\s+/g," ").trim()}
 function finished(s:string){return ["FT","AET","PEN"].includes(String(s||""))}
 function logoId(url?:string|null){const m=String(url||"").match(/\/teams\/(\d+)\.png/i);return m?Number(m[1]):null}
 async function af(path:string,params:Record<string,string|number>){const {data:puede}=await sb.rpc("apifootball_puede_llamar",{p_costo:1,p_prioridad:"medio"});if(!puede)throw new Error("API_FOOTBALL_QUOTA_BLOCKED");const url=new URL(API_BASE+path);for(const [k,v] of Object.entries(params))url.searchParams.set(k,String(v));const r=await fetch(url,{headers:{"x-apisports-key":API_KEY}});const rem=r.headers.get("x-ratelimit-requests-remaining");if(rem&&Number.isFinite(Number(rem)))try{await sb.rpc("apifootball_conciliar",{p_restantes:Number(rem)})}catch{};if(r.status===429){try{await sb.rpc("apifootball_marcar_agotada",{p_msg:`soccer-global-backfill ${path} 429`})}catch{};throw new Error("API_FOOTBALL_429")}if(!r.ok)throw new Error(`AF ${path} ${r.status}`);const j=await r.json();if(j?.errors&&Object.keys(j.errors||{}).length)throw new Error(`AF ${path}: ${JSON.stringify(j.errors).slice(0,220)}`);return Array.isArray(j?.response)?j.response:[]}
@@ -18,7 +26,7 @@ async function resolveApiTeam(job:any){
  if(mapped?.api_football_id)return Number(mapped.api_football_id);
  const {data:ags}=await sb.from("agenda_espn").select("espn_event_id,home_espn_id,away_espn_id,fecha").or(`home_espn_id.eq.${job.team_espn_id},away_espn_id.eq.${job.team_espn_id}`).gt("fecha",new Date(Date.now()-86400000).toISOString()).order("fecha",{ascending:true}).limit(5);
  for(const ag of ags||[]){const {data:e}=await sb.from("escudos_evento").select("escudo_local,escudo_visitante").eq("espn_event_id",ag.espn_event_id).maybeSingle();const id=ag.home_espn_id===job.team_espn_id?logoId(e?.escudo_local):logoId(e?.escudo_visitante);if(id)return id}
- const ts=await af("/teams",{search:job.team_name});const exact=ts.find((x:any)=>norm(x?.team?.name)===norm(job.team_name));const pick=exact||(ts.length===1?ts[0]:null);return pick?.team?.id?Number(pick.team.id):null
+ const ts=await af("/teams",{search:paraBuscar(job.team_name)});const exact=ts.find((x:any)=>norm(x?.team?.name)===norm(job.team_name));const pick=exact||(ts.length===1?ts[0]:null);return pick?.team?.id?Number(pick.team.id):null
 }
 // LA REGLA LA DECIDE LA BASE. Aqui solo se pregunta, en UNA llamada.
 // Si la base no responde, se falla cerrado: no se asigna ninguna liga.

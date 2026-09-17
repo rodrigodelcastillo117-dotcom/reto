@@ -1,0 +1,55 @@
+-- ISS154: los acentos rompian la busqueda de equipos en API-Football.
+--
+-- COMO APARECIO
+-- Revisando por que 55 equipos llevaban 6 intentos fallidos en la cola, salio
+-- este grupo con un error que no se parecia a los demas:
+--
+--   AF /teams: {"search":"The Search field may only contain alphanumeric..."}
+--
+-- Los seis nombres: Academica Calheta, Anca, Atletico CP, CD Cinfaes,
+-- Ginasio Figueirense, Zwaluwen '30. TODOS traen acento (c-cedilla, a-tilde,
+-- e-aguda) o apostrofe. API-Football rechaza la peticion completa.
+--
+-- No era falta de datos: la peticion ni siquiera llegaba. Iban a fallar para
+-- siempre, y la espera exponencial solo hacia que fallaran mas despacio.
+--
+-- EL ARREGLO (edge function soccer-global-backfill v7)
+-- Se anade paraBuscar(), que quita acentos y deja solo alfanumericos y
+-- espacios, y se usa SOLO en la llamada a /teams:
+--
+--   const ts = await af("/teams", {search: paraBuscar(job.team_name)});
+--
+-- La comparacion exacta posterior NO se toca: sigue siendo
+--   ts.find(x => norm(x.team.name) === norm(job.team_name))
+-- o sea se busca con el nombre saneado pero se exige coincidencia exacta
+-- contra el nombre ORIGINAL. No se afloja la identidad, solo se deja de
+-- romper la peticion. Eso importa porque en ISS139 la resolucion difusa por
+-- escudo discrepo en 20% y hubo que revertir 69 asignaciones.
+--
+-- VERIFICADO ANTES DE DESPLEGAR, contra los seis nombres reales:
+--   'Academica Calheta'   -> 'Academica Calheta'    alfanumerico
+--   'Anca'                -> 'Anca'                 alfanumerico
+--   'Atletico CP'         -> 'Atletico CP'          alfanumerico
+--   'CD Cinfaes'          -> 'CD Cinfaes'           alfanumerico
+--   'GINASIO FIGUEIRENSE' -> 'GINASIO FIGUEIRENSE'  alfanumerico
+--   "Zwaluwen '30"        -> 'Zwaluwen 30'          alfanumerico
+--   'Real Sport Clube'    -> 'Real Sport Clube'     (no cambia el que ya servia)
+--
+-- RESULTADO REAL DESPUES DE DESPLEGAR
+--   equipos que siguen con el error de busqueda ... 0  (eran 6)
+--   Atletico CP ........... api_team_id 4872, Liga 3, 34 observaciones
+--   GINASIO FIGUEIRENSE ... api_team_id 10122, Campeonato de Portugal Prio
+--                           Group B, 25 observaciones
+--   Academica Calheta, Anca, CD Cinfaes, Zwaluwen '30: ahora fallan por
+--   TEAM_IDENTITY_NOT_RESOLVED o DOMESTIC_LEAGUE_NOT_RESOLVED, que es la razon
+--   VERDADERA. No estan en API-Football.
+--
+-- O sea: 2 de 6 se recuperaron con datos reales y 4 resultaron genuinamente
+-- inexistentes. El bug estaba tapando cual era cual.
+--
+-- EL RESTO DE LA COLA, PARA QUE QUEDE ESCRITO
+--   24 equipos TEAM_IDENTITY_NOT_RESOLVED ... clubes regionales portugueses y
+--       holandeses de aficionados. UNAVAILABLE de verdad.
+--   16 equipos sin error, muestra bajo objetivo .. reintento legitimo.
+--   10 equipos DOMESTIC_LEAGUE_NOT_RESOLVED ...... mismo caso que Mafra y
+--       Beira Mar en ISS144: su unica liga era juvenil y el guardia la rechaza.
