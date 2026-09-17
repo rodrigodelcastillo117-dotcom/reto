@@ -17,3 +17,5 @@ select * from public.gate_fantasy_alcanzable();
 select public.fantasy_participacion('Courtland Sutton',2026);
 --- G43: un solo modelo manda en fantasy, el resumen es la suma de las tarjetas (ISS192) ---
 select * from public.gate_fantasy_un_solo_modelo();
+--- G44: el modelo de fantasy ve la temporada en curso, no solo la pasada (ISS193) ---
+select * from public.gate_fantasy_ve_la_temporada_en_curso();

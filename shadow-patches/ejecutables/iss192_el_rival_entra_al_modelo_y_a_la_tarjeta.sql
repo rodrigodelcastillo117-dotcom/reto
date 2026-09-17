@@ -339,12 +339,13 @@ notify pgrst, 'reload schema';
 --
 -- Patrick Mahomes: cambio_de_equipo = false, equipo_actual = KC. Correcto.
 --
--- LIMITACION QUE ESTE PARCHE NO ARREGLA Y QUE QUEDA DECLARADA:
--- public.lab_ff_playerweek, que es la unica fuente de historial del modelo,
--- cubre SOLO la temporada 2025 (2025-09-05 a 2026-01-05). Los juegos de la
--- semana 1 de 2026 existen en public.nfl_player_game_logs pero NO entran al
--- historial. Por eso Montgomery aparece con "0 de sus 17 juegos con HOU": su
--- juego de la semana 1 con Houston esta en la base y el modelo no lo ve.
--- Eso contradice la regla del dueno de que esta temporada pesa mas que la
--- pasada. Se abre como ISS193 y NO se parcha a mano aqui.
+-- CORRECCION A ESTA MISMA NOTA (ver ISS193):
+-- La nota original que quedo aqui decia que lab_ff_playerweek era "la unica
+-- fuente de historial del modelo" y que por eso todo el sistema contradecia la
+-- regla del dueno. ESO ERA FALSO y lo escribi yo sin verificarlo.
+-- B1 (v2.fn_fantasy_project_b1_rq80_v2) SI incorpora la temporada en curso
+-- desde siempre, via public.v_lab_ff_official_snapshot con guarda
+-- graded_at <= momento de decision. El que no la veia era B2, o sea la funcion
+-- que yo escribi en este mismo parche. El error era mio y solo mio, no del
+-- sistema. Se repara en ISS193.
 -- ===========================================================================
