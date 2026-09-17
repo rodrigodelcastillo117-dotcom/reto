@@ -1,0 +1,60 @@
+-- ISS158: PREREGISTRO de la prueba de totales por tiros a puerta
+--
+-- ESTO SE ESCRIBE Y SE COMITEA ANTES DE CORRER LA PRUEBA, A PROPOSITO.
+--
+-- Por que: llevo la noche remidiendo el mismo modelo conforme entran datos.
+-- Cada vez que remido me doy otra oportunidad de cruzar el umbral por azar.
+-- Y cuando el resultado de los gemelos salio en contra, mi primer reflejo fue
+-- buscar una razon para descartarlo (culpe a las copas europeas; era falso,
+-- lo comprobe y los gemelos son casi todos de liga). Ese reflejo es
+-- exactamente como se fabrica un resultado falso sin querer.
+--
+-- Asi que el diseno queda fijado aqui, con fecha, antes de ver el numero.
+--
+-- HIPOTESIS
+--   lambda construido desde tiros a puerta predice el total de goles mejor
+--   que la constante (adivinar con la tasa base).
+--
+-- DATOS
+--   Partidos de public.historico_partidos_espn con espn_endpoint like 'soccer/%'
+--   (el filtro de deporte de ISS155 es obligatorio) y marcador final.
+--   Los dos equipos deben tener >= 5 partidos con tiros ANTERIORES al partido.
+--
+-- CORTE TEMPORAL
+--   ENTRENAMIENTO: partidos con fecha < 2026-08-01
+--   PRUEBA:        partidos con fecha >= 2026-08-01
+--   La tasa de conversion se calcula SOLO con el tramo de entrenamiento.
+--   Ningun parametro se toca mirando el tramo de prueba.
+--
+-- LINEA
+--   2.5 fija para todos. Una sola linea. Nada de mezclar 1.5/2.5/3.5/4.5:
+--   la prueba de los gemelos quedo repartida en 35 celdas de liga x linea con
+--   celdas de n=1, y eso no mide nada.
+--
+-- REFERENCIA (EL RIVAL A BATIR)
+--   La constante = tasa de over 2.5 DEL TRAMO DE ENTRENAMIENTO.
+--   NO la del tramo de prueba. Usar la del tramo de prueba le regalaria a la
+--   constante una ventaja dentro de muestra que en la vida real no tendria.
+--   No se compara contra ninguna cuota de casa de apuestas. SIN EV, SIN KELLY.
+--
+-- METRICA Y REGLA DE DECISION
+--   Brier de una clase sobre P(over 2.5). Diferencia pareada contra la
+--   constante, con IC95.
+--     Si el intervalo TOCA O CRUZA cero -> NO SE PUBLICA. Se registra el
+--     negativo en v2.evidencia_mercado_candidato y se dice que no alcanzo.
+--     Si el intervalo queda entero del lado bueno -> se reporta y se propone
+--     calibrar, que es otro paso y otra prueba.
+--
+--   Ademas se reportan, sin que decidan nada por si solos:
+--     correlacion entre P(over) y el resultado real (discriminacion)
+--     P(over) medio contra tasa real (calibracion)
+--
+-- LO QUE NO VALE
+--   Cambiar el corte, la linea, el minimo de partidos o la referencia despues
+--   de ver el resultado. Si algo de esto se cambia, se dice explicitamente que
+--   se cambio y por que, y el resultado pasa a ser exploratorio, no una prueba.
+--
+-- CORRIDA UNICA
+--   Se corre UNA VEZ cuando el backfill de tiros termine. El numero que cuenta
+--   es ese. Las mediciones intermedias de esta sesion (n=118, n=1264) quedan
+--   como exploratorias y NO como evidencia.
