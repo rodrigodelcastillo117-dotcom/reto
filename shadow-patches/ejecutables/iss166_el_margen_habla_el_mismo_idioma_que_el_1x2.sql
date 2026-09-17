@@ -1,0 +1,53 @@
+-- ISS166: el empate deja de salir con dos numeros
+--
+-- ME EQUIVOQUE EN EL DIAGNOSTICO Y LO CORRIJO AQUI
+--   En ISS165 escribi que el margen "se inflaba" al renormalizar sobre la masa
+--   medida (90.7% a 92%) y que por eso el empate salia 25.4 en el margen y 24.8
+--   en el 1X2. ERA AL REVES.
+--
+--   Calcule el empate desde lambda con una rejilla 0..12, que cubre el 100% de
+--   la masa (verificado: suma 100.00), y da esto:
+--     SK Brann-Bodo        1X2 21.4   margen 23.0   exacto 22.8
+--     Viking-Lillestrom    1X2 17.9   margen 19.0   exacto 19.1
+--     Valerenga-Fredrikstad 1X2 22.5  margen 23.9   exacto 24.1
+--     Kristiansund-Rosenborg 1X2 23.7 margen 25.2   exacto 25.4
+--
+--   El margen coincide con el calculo exacto. El que se desvia es p_draw.
+--   La renormalizacion no inflaba: estaba CORRIGIENDO la truncatura.
+--
+-- EL SESGO DEL 1X2, MEDIDO SOBRE LAS 146 TARJETAS
+--   contra el Poisson exacto desde lambda:
+--     local    +0.79
+--     empate   -1.59
+--     visita   +0.80
+--     suma 1X2 = 100.00 (es consistente consigo mismo)
+--     peor desvio del empate: 1.92 puntos
+--
+--   El 1X2 le quita 1.59 puntos al empate y los reparte entre los dos ganadores.
+--
+--   Y LA DIRECCION ES LA PREOCUPANTE: en ISS156 se midio que el Poisson
+--   independiente YA subestima los empates bajos (0-0 y 1-1 reales 17.5%,
+--   Poisson 15.0%). El 1X2 tiene todavia MENOS empates que el Poisson, o sea
+--   que empuja en sentido contrario a lo que hace la realidad.
+--
+-- QUE SE HACE Y QUE NO
+--   NO se toca el 1X2. Es el cerebro publicado y validado
+--   (MEJOR_QUE_ADIVINAR_CONCLUYENTE sobre 155 partidos). Cambiarlo invalidaria
+--   esa prueba, y eso necesita su propio preregistro y su propia medicion.
+--
+--   SI se hace que el margen hable el mismo idioma: cada tramo se reparte
+--   DENTRO de su lado del 1X2 publicado, en vez de sobre la masa medida.
+--     local_3mas/local_2/local_1  se reparten p_home
+--     empate                      es p_draw, exacto
+--     visita_1/visita_2/visita_3mas se reparten p_away
+--
+--   Asi la tarjeta deja de contradecirse sin tocar el modelo. El sesgo del 1X2
+--   queda documentado aqui para atacarlo aparte, con la correccion de
+--   Dixon-Coles que ya esta medida y sin implementar.
+--
+-- RESULTADO
+--                                  antes      despues
+--   tarjetas con el empate doble     120           0
+--   peor diferencia del empate      1.80 pp     0.00 pp
+--   suma de los siete tramos      ~91-92     99.8 a 100.2 (redondeo a 1 decimal)
+--   desvio de local y visita          --      0.10 pp maximo
