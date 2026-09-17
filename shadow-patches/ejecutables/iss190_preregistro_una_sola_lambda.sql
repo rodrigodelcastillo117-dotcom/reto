@@ -1,0 +1,73 @@
+-- ISS190: PREREGISTRO. Una sola lambda manda en toda la tarjeta de futbol.
+--         Cierra G40.1.
+--
+-- SE COMMITEA ANTES DE CORRER.
+--
+-- ===========================================================================
+-- EL DEFECTO QUE CIERRA
+-- ===========================================================================
+-- G40.1 lleva en FAIL desde ISS177, a proposito y a la vista. Medido:
+--   la tarjeta calcula over_pct con el cerebro de TIROS (lambda media 2.971)
+--   y muestra goles esperados del cerebro CROSSLEAGUE (lambda media 2.795).
+--   Sobre 135 tarjetas: diferencia media 6.47 pp entre el Over mostrado y el
+--   que implican los goles mostrados, hasta 23.16 pp, 70 fuera por mas de 5 pp
+--   y 30 por mas de 10.
+-- Son dos lambdas en la misma tarjeta. Viola "1 CEREBRO POR DEPORTE".
+--
+-- ===========================================================================
+-- LA DECISION
+-- ===========================================================================
+-- Gana UNA lambda y de ella sale TODO: 1X2, BTTS, margen, marcador y altas y
+-- bajas. Asi la tarjeta no se puede contradecir: es coherente por construccion,
+-- no por parches. G40.1 cierra pase lo que pase.
+--
+-- ===========================================================================
+-- DATOS
+-- ===========================================================================
+--   Partidos con prediccion crossleague temporal_safe guardada, resultado real,
+--   y lambda de tiros calculable as-of. Comprobado: 175 de 207 cumplen las tres.
+--
+--   La lambda de tiros se calcula con p_exigir_cargado_at = FALSE. Es el modo
+--   de MEDICION HISTORICA documentado en ISS157: los tiros se recargaron
+--   completos el 2026-09-17, asi que con la guardia encendida ninguna fila
+--   historica es utilizable. El gate G36.3 sigue exigiendo TRUE en produccion;
+--   esto es laboratorio y queda dicho.
+--
+--   LIMITACION DE POTENCIA, dicha antes de correr: 175 partidos es MUESTRA
+--   CHICA para un Brier de tres clases. Solo se detectaran diferencias grandes.
+--   Si el intervalo cruza cero no significa "son iguales": significa que con
+--   175 partidos no alcanza para distinguirlas.
+--
+-- ===========================================================================
+-- METRICA Y REGLA
+-- ===========================================================================
+-- PRIMARIA: Brier multiclase de 1X2, calculado de cada lambda con Poisson
+--   sobre rejilla 0..10 (masa verificada en 100.00 en ISS166).
+--   Se elige 1X2 y no totales porque 1X2 es el mercado principal de la tarjeta
+--   y porque los totales YA tienen veredicto: la lambda de tiros gano su
+--   prueba preregistrada (ISS158, n=1080) y el crossleague mide +0.04443
+--   contra adivinar, peor que una moneda.
+--
+-- REGLA, fijada ahora:
+--   d_i = Brier(tiros)_i - Brier(crossleague)_i
+--   La lambda de TIROS pasa a mandar en toda la tarjeta SOLO SI
+--       media(d) + 1.96*ee(d) < 0
+--   Si el intervalo cruza cero o es positivo, manda la lambda CROSSLEAGUE en
+--   toda la tarjeta, incluidos los totales, y se acepta el costo: el Over se
+--   recalcula desde crossleague aunque su medicion de totales sea peor.
+--   Coherencia por encima de optimizar cada casilla por separado. Eso es lo que
+--   pidio el dueno con "solo 1 cerebro, de verdad solo 1".
+--
+--   MUESTRA MINIMA: 150 partidos. UNA SOLA CORRIDA.
+--
+-- SECUNDARIO, se reporta, NO decide: Brier de Over/Under 2.5 de cada lambda.
+--
+-- ===========================================================================
+-- QUE PASA DESPUES, EN LOS DOS CASOS
+-- ===========================================================================
+--   GANA TIROS       -> la tarjeta entera se recalcula desde lambda de tiros.
+--   GANA CROSSLEAGUE -> el Over pasa a calcularse desde la lambda que ya se
+--                       muestra. ou_por_tiros_tarjeta deja de alimentar la
+--                       tarjeta y queda como laboratorio.
+--   En ambos G40.1 pasa a PASS y la tarjeta deja de contradecirse.
+--   Lo que NO se hace en ningun caso: dejar las dos y explicar la diferencia.
