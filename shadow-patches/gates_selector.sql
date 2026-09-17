@@ -4,3 +4,5 @@ select * from public.gate_fuga_temporal_tiros();
 select * from public.gate_tarjeta_no_vacia();
 --- G38: la via de fuerza estimada, vigilada aparte (ISS174) ---
 select * from public.gate_phi_estimado();
+--- G39: mlb_one_brain_v2 no publica sin evidencia, y la evidencia sigue entrando (ISS176) ---
+select * from public.gate_mlb_one_brain_medible();
