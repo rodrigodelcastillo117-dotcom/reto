@@ -1,0 +1,92 @@
+-- ISS191: futbol cerrado. Una sola lambda manda. G40.1 en PASS.
+--
+-- ===========================================================================
+-- LA CORRIDA, UNA SOLA, SEGUN ISS190
+-- ===========================================================================
+--   n partidos                                   175   (minimo exigido 150)
+--   Brier 1X2 crossleague                    0.59165
+--   Brier 1X2 lambda de tiros                0.61946
+--   diferencia (tiros menos crossleague)    +0.02780
+--   IC95                          [-0.01219, +0.06779]   CRUZA CERO
+--
+--   Regla preregistrada: la lambda de tiros manda SOLO si el IC95 superior
+--   queda por debajo de cero. Es +0.06779. NO PASA.
+--   -> MANDA CROSSLEAGUE EN TODA LA TARJETA, totales incluidos.
+--
+-- SECUNDARIO, reportado, no decide:
+--   Brier Over/Under 2.5 desde lambda: crossleague 0.23952, tiros 0.24338.
+--   Crossleague tambien sale mejor en totales EN ESTA MUESTRA.
+--
+--   Y esto corrige una lectura mia anterior que era injusta con el crossleague:
+--   yo venia diciendo que "el crossleague en Over/Under mide +0.04443 contra
+--   adivinar, peor que una moneda". Eso era cierto del campo p_over GUARDADO
+--   pasado por calibracion, que es OTRA cosa. El Over calculado directo de la
+--   lambda del crossleague con Poisson no es malo: aqui gana. El problema
+--   estaba en el camino calibrado, no en la lambda.
+--
+-- LIMITACION, dicha en el preregistro y se sostiene: 175 partidos es muestra
+--   chica. Que el intervalo cruce cero NO significa que las dos lambdas sean
+--   iguales; significa que con 175 no se distinguen. La decision se toma igual
+--   porque la regla estaba escrita antes y porque coherencia vale mas que
+--   optimizar casilla por casilla.
+--
+-- ===========================================================================
+-- LO IMPLEMENTADO
+-- ===========================================================================
+-- public.fn_ou_desde_lambda(lambda_local, lambda_visita, linea)
+--   La suma de dos Poisson independientes es Poisson(l1+l2), asi que el total
+--   sale directo sin recorrer la rejilla. Maneja linea entera devolviendo push.
+--   VERIFICADO contra valor de libro: lambda 2.5, linea 2.5 -> Over 45.6%.
+--
+-- v_tarjeta_soccer_v1_calculo: over_pct y under_pct pasan de
+--   ou_por_tiros_tarjeta(...) a fn_ou_desde_lambda(pr.lambda_home,
+--   pr.lambda_away, pr.over_line). Misma lambda que los goles esperados.
+--
+-- ===========================================================================
+-- RESULTADO MEDIDO SOBRE LA TARJETA SERVIDA
+-- ===========================================================================
+--   diferencia entre el Over mostrado y el que implican los goles mostrados:
+--       ANTES  6.47 pp de media, hasta 23.16, 70 de 135 fuera por mas de 5 pp
+--       AHORA  0.0643 pp de media  (solo redondeo)
+--   cobertura de totales: 135 -> 142 tarjetas. SUBIO, porque ya no depende de
+--   que el cerebro de tiros tenga muestra para ese partido.
+--
+--   G40.1 PASS (0) | G40.2 PASS | G40.3 PASS | G40.4 PASS
+--   G37.1 PASS 150 | G37.2 PASS | G37.3 PASS
+--   G41.1 a G41.5 PASS | G36.1 a G36.3 PASS | G38 INFO
+--
+--   Ejemplo servido, coherente de arriba a abajo:
+--     Bayern Munich vs Union Berlin
+--       pick     Bayern 83.3%
+--       goles    3.323 - 0.907  (total 4.23)
+--       marcador 3-0 . 10.8% del escenario
+--       margen   Gana por 2 o mas . 79.5% del escenario
+--       total    linea 4.5 -> Over 41.6% / Under 58.4%
+--     El Over sale exactamente de esos 4.23 goles. Se puede comprobar a mano.
+--
+-- ===========================================================================
+-- QUE PASA CON EL CEREBRO DE TIROS
+-- ===========================================================================
+-- NO se borra y NO se le quita su historial. Gano su prueba preregistrada
+-- ISS158 sobre 1080 partidos en lineas 2.5 y 3.5, y eso sigue siendo cierto.
+-- Lo que perdio hoy es la comparacion DIRECTA contra crossleague en 1X2, que
+-- es lo que decidia quien manda en la tarjeta entera.
+-- ou_por_tiros_tarjeta y v2.ou_tarjeta_cache quedan como laboratorio, con su
+-- cron, para poder repetir la comparacion cuando haya mas muestra.
+--
+-- ===========================================================================
+-- FUTBOL: ESTADO FINAL
+-- ===========================================================================
+--   150 tarjetas servidas, 147 con pick, 0 mudas
+--   una sola lambda manda en 1X2, BTTS, margen, marcador y totales
+--   marcador y margen condicionados al pick: 0 contradicciones (ISS179)
+--   ningun mercado atribuido al modelo que no lo calcula (ISS177)
+--   CONMEBOL y competencias sin pick, fuera (ISS162, ISS169)
+--   fuga temporal en ventanas de tiros: 0 (G36)
+--   TODOS LOS GATES DE FUTBOL EN VERDE.
+--
+-- LO QUE QUEDA ABIERTO EN FUTBOL, nombrado y sin tapar:
+--   - Sesgo de empate del 1X2 (-1.59 pp contra Poisson exacto), medido en
+--     ISS166 y NO corregido. Necesita su propio preregistro.
+--   - Coeficientes de club UEFA: idea del dueno, bloqueada porque no hay fuente
+--     ingestada. No se inventan.
