@@ -6,3 +6,5 @@ select * from public.gate_tarjeta_no_vacia();
 select * from public.gate_phi_estimado();
 --- G39: mlb_one_brain_v2 no publica sin evidencia, y la evidencia sigue entrando (ISS176) ---
 select * from public.gate_mlb_one_brain_medible();
+--- G40: la tarjeta no se contradice a si misma (ISS177). G40.1 en FAIL a proposito ---
+select * from public.gate_tarjeta_no_se_contradice();
