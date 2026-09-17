@@ -19,3 +19,5 @@ select public.fantasy_participacion('Courtland Sutton',2026);
 select * from public.gate_fantasy_un_solo_modelo();
 --- G44: el modelo de fantasy ve la temporada en curso, no solo la pasada (ISS193) ---
 select * from public.gate_fantasy_ve_la_temporada_en_curso();
+--- G30.11 / G32.6 / G33.9: totales de futbol retirado por evidencia (ISS194) ---
+select * from v2.mercado_retirado;
