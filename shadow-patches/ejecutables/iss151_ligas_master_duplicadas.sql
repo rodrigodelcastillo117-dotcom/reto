@@ -1,0 +1,54 @@
+-- ISS151: ligas_master tiene filas duplicadas y eso duplica partidos.
+-- Arreglo preventivo, medido: cero cambios hoy, mina desarmada.
+--
+-- EL DEFECTO
+-- public.ligas_master tiene DOS filas para la misma api_sports_id, con el mismo
+-- espn_endpoint y distinto nombre:
+--
+--   15  Club World Cup / FIFA Club World Cup .. soccer/fifa.cwc
+--   41  EFL League One / League One ........... soccer/eng.3
+--   42  EFL League Two / League Two ........... soccer/eng.4
+--   71, 128, 265, 268, 281 ................... Brasil, Argentina, Chile,
+--                                               Uruguay y Peru
+--
+-- Cualquier "join public.ligas_master lm on lm.api_sports_id = d.liga_id"
+-- multiplica cada partido por dos.
+--
+-- YA HABIA PASADO: en ISS147, la primera version de la funcion candidata metia
+-- la liga asignada en el WHERE de la rama ESPN y Fleetwood Town salto de 29 a
+-- 120 partidos en 540 dias, imposible. Ahi se corrigio en la candidata, pero el
+-- JOIN seguia en las dos funciones de produccion.
+--
+-- POR QUE NO ESTABA REVENTANDO HOY
+-- Medido sobre los 348 equipos con liga asignada, comparando la funcion actual
+-- contra una version con EXISTS:
+--   equipos ....................... 348
+--   cambian ....................... 0
+--   usan la rama ESPN ............. 64
+--   de esos, duplicando ........... 0
+-- Los equipos de las ligas duplicadas estan tomando la rama API_FOOTBALL, que
+-- no pasa por ligas_master.
+--
+-- PERO LA MINA ESTABA ARMADA. Los equipos que ISS146 movio a League One
+-- (Bromley, Cambridge United, Sheffield Wednesday, Oxford United, Notts County,
+-- MK Dons) tienen 6 filas en API_FOOTBALL contra 12 en ESPN. En cuanto ESPN
+-- gane el "order by n desc", el JOIN las vuelve 24 y el equipo entra al cerebro
+-- con el doble de partidos de los que jugo.
+--
+-- EL ARREGLO
+-- En v2.fn_crossleague_features_canonical y v2.fn_crossleague_features_training_asof
+-- se quita el JOIN contra ligas_master y se usa EXISTS. El alcance de lectura
+-- no cambia; lo unico que se elimina es el abanico de filas.
+--
+-- NO SE BORRAN LAS FILAS DUPLICADAS. Borrarlas es tentador pero hay codigo que
+-- referencia ligas_master por nombre, y no se puede saber desde aqui cual de
+-- los dos nombres usa cada consumidor. Se hace inmune al consumidor critico en
+-- vez de tocar la tabla.
+--
+-- VERIFICACION
+--   Fleetwood Town ... 29 partidos, liga 42, API_FOOTBALL  (no 120)
+--   Sheffield United . 31 partidos, liga 40, API_FOOTBALL
+--   Coventry City .... 4 partidos, liga 39, ESPN
+--   Bromley .......... 6 partidos, liga 41, API_FOOTBALL
+--   build_soccer_prediction_v2 corrido despues del cambio
+--   21 gates duros en PASS, 0 en FAIL
