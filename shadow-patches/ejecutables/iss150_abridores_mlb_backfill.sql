@@ -1,0 +1,53 @@
+-- ISS150: se desbloquea la muestra de NRFI bajando el abridor de cada juego.
+--
+-- DE DONDE VIENE
+-- ISS149 midio NRFI y encontro:
+--   historial de equipo ... corr 0.0145, IC95 [-0.00125, +0.00079]  cruza el cero
+--   FIP de los abridores .. corr 0.1269, IC95 [-0.00531, +0.00012]  toca el cero
+-- El del abridor es 8.7x mas fuerte y le falta MUESTRA, no senal: solo 909 de
+-- 7063 juegos (13%) tenian FIP de los dos abridores.
+--
+-- POR QUE NO HACE FALTA LA API DE MLB
+-- El resumen de ESPN ya trae a los lanzadores. Probado contra un juego real:
+--   boxscore.players[equipo].statistics[] tiene un grupo con type='pitching'
+--   y su arreglo 'athletes' esta EN ORDEN DE APARICION. El primero es el abridor.
+-- Verificado a mano en 401694907: Imanaga salio primero con 4.0 IP y Yamamoto
+-- primero con 5.0 IP; los relevistas despues y con menos entradas.
+--
+-- (rosters[] NO sirve: solo trae la alineacion de bateo, sin pitchers.)
+--
+-- Y NO HACE FALTA FIP EXTERNO. Con el abridor de cada juego se puede calcular
+-- la TASA DE PRIMERA ENTRADA EN BLANCO POR PITCHER con los datos que ya hay
+-- (v2.lab_mlb_inning_features_v1 tiene h1 y a1 por juego). Feature propio,
+-- sin depender de stats de terceros.
+--
+-- EL CUIDADO QUE HUBO QUE TENER: TAMANO
+-- Cada respuesta del resumen pesa ~870 KB. 7063 juegos serian 6.1 GB. Por eso:
+--   * se va por lotes de 50,
+--   * no se apilan peticiones (si hay algo en vuelo, no se pide mas),
+--   * y el absorbedor BORRA la fila de net._http_response, no solo la de la
+--     cola. Sin eso pg_net acumula gigabytes durante su ventana de retencion.
+--
+-- QUE SE INSTALO
+--   v2.mlb_abridor_juego(espn_event_id, lado, pitcher_id, pitcher_nombre,
+--                        entradas_lanzadas, cargado_at)
+--   v2._carga_abridor            cola en vuelo
+--   v2.pedir_abridores_mlb(n)    pide los que faltan, de lo mas reciente hacia atras
+--   v2.absorber_abridores_mlb()  extrae, guarda y PURGA las respuestas
+--   v2.ciclo_abridores_mlb(n)    absorbe y vuelve a pedir
+--   cron 'mlb-abridores-backfill' cada minuto con lote de 50
+--
+-- RITMO: 7063 juegos a 50 por minuto = ~2.3 horas, y se detiene solo cuando
+-- 'faltan' llega a cero.
+--
+-- PRIMERAS CORRIDAS (reales):
+--   60 juegos, 120 abridores, 120 pitchers distintos.
+--   Zac Gallen 3.1 IP / Daniel Lynch IV 5.0 IP, Kevin Gausman 4.0 / Logan
+--   Henderson 5.0, Lake Bachar 1.2 / Davis Martin 5.0.
+--
+-- LO QUE FALTA DESPUES (y NO se da por hecho)
+-- Cuando el backfill termine hay que RE-MEDIR el modelo de NRFI con la tasa de
+-- primera entrada en blanco por abridor, sobre los 7063 juegos, con el mismo
+-- corte temporal y la misma prueba pareada. Si el IC95 sigue tocando el cero,
+-- NRFI NO SE PUBLICA. Tener mas datos no es permiso para publicar: el criterio
+-- sigue siendo el intervalo.
