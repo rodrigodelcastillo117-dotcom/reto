@@ -715,3 +715,27 @@ end $$;
 -- coincidencia exacta (si el ancla no aparece exactamente 1 vez, aborta).
 --
 -- Estado al instalar: G34.10 PASS (0) | G34.11 PASS (0)
+
+-- ===========================================================================
+-- GATE 35 (ISS145) -- frescura de datos. Mide el RESULTADO, no la causa.
+-- ===========================================================================
+-- Nacio porque ESPN dejo de aceptar "dates=AAAAMMDD-AAAAMMDD" y la ingesta de
+-- resultados de futbol se cayo durante dias mientras cron.job_run_details
+-- marcaba "succeeded": el SQL encolaba bien las 58 peticiones, el HTTP
+-- devolvia 400 despues de forma asincrona, y nadie miraba el status_code.
+-- El modelo se quedo ciego con el tablero en verde.
+--
+--   G35.1  el_ultimo_resultado_de_futbol_es_reciente
+--          FAIL si el ultimo marcador guardado tiene mas de 36 horas.
+--   G35.2  lo_que_ya_se_jugo_tiene_marcador
+--          FAIL si un partido de liga mapeada que termino hace mas de 6 horas
+--          sigue sin marcador. Acotado a ligas activas y no bloqueadas: los
+--          eventos con liga_id nulo son otro problema, no de ingesta.
+--   G35.3  espn_no_esta_rechazando_las_peticiones
+--          FAIL si el lote en curso trae respuestas != 200.
+--   G35.4  alertas_de_ingesta_sin_ver (INFO)
+--
+-- Lo importante de G35 es que no depende de QUE se rompio. Si manana cambia
+-- otra vez el endpoint, la llave o la red, se pone rojo igual.
+--
+-- Estado al instalar: G35.1 PASS (3h) | G35.2 PASS (0) | G35.3 PASS (0)
