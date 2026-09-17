@@ -28,3 +28,6 @@ select coalesce(analisis_json#>>'{probabilidades,_fuente_1x2}','(sin 1X2)') fuen
 from public.analisis_partidos where analisis_json ? 'probabilidades' group by 1;
 --- G30.12: el backend no emite totales de futbol, asi el front no puede pintarlos (ISS198) ---
 select * from public.gate_tarjetas_soccer() where gate like 'G30.1%';
+--- G45: UN cerebro por deporte, declarado y contado todos los dias (ISS199) ---
+select * from public.gate_un_solo_cerebro();
+select * from v2.cerebro_autorizado order by deporte, rol, model_version;

@@ -1,0 +1,83 @@
+-- ISS199 · El guardia que faltaba: un cerebro por deporte, declarado y contado
+--
+-- ===========================================================================
+-- LA PREGUNTA DEL DUENO: "COMO QUE 3? QUE PASO?"
+-- ===========================================================================
+-- Respuesta corta: construir un cerebro nuevo era ADITIVO y apagar el viejo era
+-- otra tarea que nadie hacia nunca.
+--
+-- Cada vez que se construyo un cerebro mejor, se creo una tabla nueva, una vista
+-- nueva y un cron nuevo, y se apunto la tarjeta al nuevo. Eso es todo lo que
+-- pasaba. El viejo seguia con su cron, su tabla y su escritura, sin que nada ni
+-- nadie lo contara. La tarjeta quedaba bien, y detras seguian corriendo dos o
+-- tres motores. Apagar el viejo es la parte riesgosa (algo lo lee), asi que
+-- siempre se posponia.
+--
+-- MI PARTE, QUE ES LA QUE IMPORTA AQUI:
+-- gate_coherencia_soccer_v2 llevaba tiempo reportando MODEL_MATRIX_INCOHERENT en
+-- FAIL, con el texto "los dos motores discrepan mas de 1 pp. Maximo 50.6 pp".
+-- El gate estaba diciendo EXACTAMENTE esto. Yo lo clasifique en mis propios
+-- reportes como "deuda de superficies viejas que no toca las tarjetas" y no lo
+-- abri. El guardia funciono; el que no leyo fui yo.
+--
+-- POR QUE NINGUN OTRO GATE LO AGARRO:
+-- Todos los gates que existian preguntaban si lo que la tarjeta muestra es
+-- coherente CONSIGO MISMO. Ninguno preguntaba cuantos motores estan escribiendo
+-- por deporte. Una tarjeta puede ser perfectamente coherente con tres cerebros
+-- corriendo detras. Ese era el hueco, y es estructural, no de disciplina.
+--
+-- ===========================================================================
+-- EL CENSO REAL, MEDIDO HOY
+-- ===========================================================================
+--   FUTBOL     3 motores escribiendo su propio pronostico:
+--                soccer_canonical_v2  (el autorizado, el de la tarjeta)
+--                dc-2026.09.1         (Dixon-Coles, desconectado en ISS196)
+--                fut_predicciones     (SIGUE VIVO, escribio hoy 22:00)
+--   BEISBOL    2 motores:
+--                mlb_one_brain_v2          (autorizado, 38 partidos futuros)
+--                mlb_runtime_a7fb15853076  (VIVO, 45 partidos futuros: MAS que
+--                                           el autorizado. La tarjeta no lo lee.)
+--   NFL        1 motor. Aqui nunca hubo duplicado.
+--
+-- ===========================================================================
+-- LO QUE SE CONSTRUYO
+-- ===========================================================================
+-- v2.cerebro_autorizado: registro por deporte con tres papeles posibles.
+--   AUTORIZADO         el unico que publica. Un indice unico parcial impide
+--                      fisicamente que haya dos por deporte.
+--   RETADOR_DECLARADO  se mide a proposito y NO se publica. Medir candidatos es
+--                      como se decide cual es mejor; eso es legitimo, siempre
+--                      que este declarado.
+--   RETIRADO           ya no manda. Si vuelve a escribir despues de su retiro,
+--                      el gate truena.
+--
+-- public.gate_un_solo_cerebro(), cuatro subgates:
+--   G45.1  exactamente un AUTORIZADO por deporte
+--   G45.2  nadie escribe predicciones sin estar declarado en el registro
+--   G45.3  ningun RETIRADO vuelve a escribir despues de su retiro
+--   G45.3b INFO, siempre a la vista: el censo de motores por deporte con su
+--          papel. Existe para que el dueno NUNCA tenga que preguntar "como que
+--          tres?". La respuesta esta impresa todos los dias.
+--   G45.4  las tablas viejas de futbol no calculan su propio 1X2
+--
+-- POR QUE G45.3 NO FALLA POR LOS RETADORES:
+-- Un gate que grita por motores que ya se apagaron es un gate que se aprende a
+-- ignorar, y asi es como se dejan pasar tres cerebros. La falla real no es que
+-- existan retadores declarados: es que algo declarado muerto siga vivo, o que
+-- algo vivo no este declarado. Eso es lo que truena.
+--
+-- ===========================================================================
+-- ESTADO AL CERRAR (2026-09-17)
+-- ===========================================================================
+--   G45.1  PASS   un autorizado por deporte
+--   G45.2  PASS   ningun motor sin declarar
+--   G45.3  PASS   ningun retirado volvio a escribir
+--   G45.3b INFO   beisbol: 1 autorizado + 1 retador vivo
+--                 futbol:  1 autorizado + 2 retadores + retirados apagandose
+--                 (NFL no aparece porque no capturo en 3 dias)
+--   G45.4  FAIL   146 filas de fut_predicciones con mercados propios para
+--                 partidos de hoy en adelante. ESTE ES EL TERCER CEREBRO Y
+--                 SIGUE VIVO. Queda en rojo a proposito hasta apagarlo.
+--
+-- Lo que falta para apagarlo esta bloqueado por una sola pregunta, ya hecha al
+-- frontend: quien lee fut_predicciones. Cortarla a ciegas rompe la app.
