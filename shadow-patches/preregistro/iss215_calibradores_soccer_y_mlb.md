@@ -116,19 +116,35 @@ hueco de diagnóstico del editorial (`es_pick=false`, `no_decide=true`).
 
 Se mide la muestra **disponible**, que no es un resultado de la prueba.
 
-| deporte | model_version | eventos con predicción | eventos **ya jugados** | días de captura |
-|---|---|---|---|---|
-| soccer | `soccer_canonical_v2` | 318 (suma de 6 `calibration_status`) | **≤ 73** | 3 (15→18 sep) |
-| baseball | `mlb_one_brain_v2` | 39 | **23** | 1 (17→18 sep) |
+Primer conteo, laxo (sólo `model_version` + `kickoff < now()`):
 
-Contra el umbral de la sección 2:
+| deporte | model_version | eventos con predicción | eventos ya jugados |
+|---|---|---|---|
+| soccer | `soccer_canonical_v2` | 318 (suma de 6 `calibration_status`) | ≤ 73 |
+| baseball | `mlb_one_brain_v2` | 39 | 23 |
 
-- soccer: 73 de 450. **NO ALCANZA.**
-- baseball: 23 de 300. **NO ALCANZA.**
+Conteo **estricto**, que es el que manda porque es la regla de la sección 1
+(`temporal_safe` AND predicción anterior al saque AND evento ya jugado,
+contando cada `espn_event_id` una sola vez):
+
+| deporte | umbral | muestra estricta | faltan |
+|---|---|---|---|
+| soccer | 450 | **30** | 420 |
+| baseball | 300 | **9** | 291 |
+
+El conteo estricto es bastante menor que el laxo, y esa diferencia es el punto:
+en soccer sólo 45 de las 2,789 filas con `calibration_status='OOS_VALIDATED'`
+traen `temporal_safe`, y en baseball la mayoría de las capturas de
+`mlb_one_brain_v2` son de partidos que todavía no se juegan. Si hubiera usado
+el conteo laxo habría reportado una muestra tres veces mayor que la real.
 
 **Veredicto preregistrado: la prueba no se corre para ninguno de los dos.**
 Ambos quedan `SIN_CALIBRATION_VERSION`. MLB sigue sin picks monetizables.
+Cero filas insertadas en `public.calibradores`.
 
-El gate `public.gate_calibrador_muestra_suficiente()` mide esta tabla sola y
-pasa a `LISTO` el día que se llegue al umbral, sin que nadie redefina el diseño
-después de ver los datos.
+El gate `public.gate_calibrador_muestra_suficiente()` mide exactamente esta
+tabla y pasa a `LISTO` el día que se llegue al umbral, sin que nadie redefina
+el diseño después de ver los datos. Su tercera fila,
+`CALIBRADOR_SELLADO_SIN_MUESTRA`, se pone en FAIL sola si alguna vez aparece un
+calibrador `apto_para_lock` para estos dos modelos antes de que la muestra
+llegue.
