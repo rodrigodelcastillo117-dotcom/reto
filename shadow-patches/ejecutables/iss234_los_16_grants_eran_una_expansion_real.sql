@@ -1,0 +1,102 @@
+-- ISS234 — LOS 16 GRANT SELECT ERAN UNA EXPANSION REAL DE EXPOSICION.
+-- Tu objecion era correcta y mi justificacion estaba mal.
+--
+-- =====================================================================
+-- 1. LO QUE AFIRME, Y POR QUE ERA FALSO
+-- =====================================================================
+-- Dije: "no amplia exposicion, esos datos ya salian por la vista".
+-- Eso solo vale si la tabla no expone ni una fila ni una columna mas. No lo
+-- verifique. Medido ahora:
+--
+--   COLUMNAS (dependencia exacta via pg_depend.refobjsubid, no heuristica):
+--     13 de las 16 tablas exponian columnas de mas.
+--       v2.model_learning_gate .............. 27 columnas, la vista usa 10  (+17)
+--       v2.nfl_branch_release_authority ..... 14, usa 2                     (+12)
+--       v2.competition_catalog .............. 18, usa 7                     (+11)
+--       v2.nfl_hybrid_model_config_v1 ....... 12, usa 6                      (+6)
+--       public.superficie_temporalidad .......  7, usa 2                     (+5)
+--       ... y 8 mas
+--
+--   FILAS (lo peor):
+--       v2.nfl_decision_snapshot   tabla 8,360 filas
+--                                  via nfl_tablero .............. 572
+--                                  via v_prediccion_reto_canonico . 14
+--       v2.soccer_prediction_v2    tabla 25,307 filas
+--                                  via v_prediccion_reto_canonico . 14
+--
+-- 8,360 contra 572 son 14x. 25,307 contra 14 son 1,800x. Eso no es
+-- "compatibilidad": es una expansion de exposicion del historial completo de
+-- decisiones del modelo, que ademas es logica propietaria.
+--
+-- =====================================================================
+-- 2. LA PREGUNTA QUE NO ME HABIA HECHO
+-- =====================================================================
+-- ¿Para que servia security_invoker en esas vistas? Para que la RLS de sus
+-- tablas base filtrara por usuario. Medido: las vistas que consumen esas 3
+-- tablas alcanzan RLS solo sobre agenda_espn, historico_partidos_espn,
+-- live_scores, nfl_partidos, escudos_espn, ligamx_*, mlb_stats_cache,
+-- odds_espn, radar_odds_snapshots y gates de v2.
+--
+-- NINGUNA de ellas tiene columna de dueno. alcanza_datos_de_usuario = false
+-- en las 76 vistas revisadas.
+--
+-- Conclusion: en esas vistas security_invoker no protegia a ningun usuario, y
+-- su unico efecto fue obligarme a abrir tablas base. Costo sin beneficio.
+--
+-- =====================================================================
+-- 3. LA REGLA CORRECTA, APLICADA
+-- =====================================================================
+--   Una vista de cliente conserva security_invoker=true SI Y SOLO SI su cierre
+--   transitivo alcanza una tabla con RLS que tiene columna de dueno
+--   (apodo, user_id, usuario_id, owner, uid).
+--   Si no lo alcanza, se revierte y NO se abre ninguna tabla base.
+--
+-- Aplicado en dos pasadas (la primera dejo vistas intermedias del barrido
+-- final aun en invoker, y la cadena seguia rota):
+--   conservan invoker ......... 53   (alcanzan datos de usuario)
+--   revertidas ................ 71 + 26 = 97
+--   GRANT SELECT revocados .... 16 de 16
+--
+-- =====================================================================
+-- 4. VERIFICACION
+-- =====================================================================
+--   de las 16 tablas, siguen abiertas al cliente ................ 0
+--   lectura directa como authenticated A:
+--       v2.nfl_decision_snapshot ...... DENEGADO
+--       v2.soccer_prediction_v2 ....... DENEGADO
+--   vistas que deben tener invoker y lo perdieron ............... 0
+--
+--   Las 5 que la regresion habia visto romperse, ahora ACCESIBLES:
+--       nfl_lock_semana, nfl_tablero, nfl_tablero_semana,
+--       v_favorito_nfl, v_prediccion_reto_canonico
+--
+--   Regresion A/B/anon contra la linea base ANTES:
+--     rol                 antes       final       n
+--     authenticated A     ACCESIBLE   ACCESIBLE  119
+--     authenticated A     ACCESIBLE   DENEGADO    59   <- revocaciones queridas
+--     authenticated A     DENEGADO    DENEGADO    22
+--     authenticated B     ACCESIBLE   ACCESIBLE  119
+--     authenticated B     ACCESIBLE   DENEGADO    59
+--     anon                ACCESIBLE   ACCESIBLE   91
+--     anon                ACCESIBLE   DENEGADO    59
+--   Cero ACCESIBLE -> ERROR.
+--
+--   El filtrado por usuario sigue intacto donde debe estar:
+--     bankroll_curva ....................... A 81  vs  B 17
+--     ai_performance_por_clasificacion ..... A 15  vs  B 12
+--     ai_performance_por_fuente ............ A  5  vs  B  4
+--     clv_veredicto ........................ A  1  vs  B  1  (cada quien la suya)
+--
+-- =====================================================================
+-- 5. LO QUE APRENDI Y QUEDA ESCRITO
+-- =====================================================================
+-- security_invoker NO es un bien en si mismo. Sobre una vista que no toca datos
+-- de usuario, activarlo no protege nada y empuja a abrir tablas base para que
+-- siga funcionando. Ese empujon es justo el error que cometi: convertir un
+-- problema de RLS en una expansion de GRANT.
+--
+-- Nunca mas un GRANT SELECT a tabla completa para hacer pasar una vista.
+--
+-- ROLLBACK
+--   vistas:  select sql_rollback from v2.iss230_vista_accion;
+--   grants:  select sql_rollback from v2.iss232_log where accion='GRANT_SELECT_BASE';
