@@ -1,0 +1,114 @@
+-- ISS240-243 — AUTORIZACION EFECTIVA, EJECUTADA. Y UNA VULNERABILIDAD REAL
+-- EN LA TABLA DE DINERO.
+--
+-- Tenias razon: clasificar 335 politicas no demuestra nada. Esto se ejecuto.
+--
+-- =====================================================================
+-- 1. COMBINACION DE POLITICAS (catalogo, como paso previo)
+-- =====================================================================
+-- 17 tablas candidatas a segregar. Para cada una:
+--   RLS activa .................... 17/17
+--   FORCE ROW LEVEL SECURITY ......  0/17   <- el dueno (postgres) la salta
+--   politicas RESTRICTIVE .........  0      (antes de ISS243)
+--   politicas permisivas con USING(true) que aplicaran a anon/authenticated: 0
+-- O sea: no habia ningun caso de USING(true) anulando por OR a otra politica
+-- para el cliente. Las abiertas que existen estan limitadas a service_role.
+--
+-- FORCE RLS en 0/17 es relevante y lo dejo dicho: es exactamente por eso que
+-- una vista sin security_invoker, propiedad de postgres, salta la RLS. Es el
+-- mecanismo de publicacion implicito que sigue pendiente de sustituir.
+--
+-- =====================================================================
+-- 2. MATRIZ DE LECTURA EFECTIVA (v2.iss241_autz) — 51 pruebas EJECUTADAS
+-- =====================================================================
+-- 17 tablas x {authenticated A, authenticated B, anon}. Se compara el CONJUNTO
+-- de filas (md5 de la fila), y se cuenta "filas_ajenas": filas cuyo dueno no es
+-- el de la sesion. Las filas globales (dueno NULL) no cuentan como ajenas.
+--
+--   pruebas ................... 51
+--   LECTURAS CRUZADAS ..........  0
+--   denegadas ..................  9   (anon sobre tablas de usuario)
+--   permitidas ................. 42
+--
+-- UN FALSO POSITIVO MIO, DECLARADO:
+-- La primera corrida marco 59 "filas ajenas" en equipos_favoritos. Era MI
+-- comparador, no la RLS: equipos_favoritos.user_id guarda usuarios.id
+-- (1b0d0ce2...), no auth.uid() (0c631a09...). La politica mapea bien:
+--   user_id IN (select u.id from usuarios u where u.user_id = auth.uid())
+-- Corregido el comparador para aceptar las dos identidades. A ve sus 59, B ve 0,
+-- anon DENEGADO. Casi te reporto una fuga que no existia.
+--
+-- =====================================================================
+-- 3. MATRIZ DE ESCRITURA (v2.iss242_escritura) — 45 pruebas EJECUTADAS
+-- =====================================================================
+-- Tres pruebas por tabla, todas dentro de una subtransaccion que SIEMPRE
+-- revierte (raise 'ZZ_RB' capturado). Cero filas de produccion modificadas.
+--   UPDATE de fila ajena
+--   REASIGNAR el dueno de una fila propia a otro usuario  (prueba de WITH CHECK)
+--   DELETE de fila ajena
+--
+--   bloqueadas ............... 44
+--   PERMITIDA ................  1   <- vulnerabilidad
+--
+-- =====================================================================
+-- 4. LA VULNERABILIDAD: public.ajustes_cuenta
+-- =====================================================================
+-- Unica politica, FOR ALL, para authenticated:
+--   USING      user_id IN (select id from usuarios where user_id = auth.uid())
+--   WITH CHECK user_id IN (select id from usuarios where user_id = auth.uid())
+--
+-- Protege user_id. NO protege apodo. Y el dinero se resuelve por APODO:
+--   get_bankroll_real(p_apodo), get_bankroll_disponible(p_apodo),
+--   registrar_movimiento_cuenta(p_apodo,...), registrar_ajuste_manual(p_apodo,...)
+--
+-- Explotacion medida, como authenticated rodelcast:
+--   update ajustes_cuenta set apodo = 'el dos' where user_id = <el suyo>
+--   -> 9 FILAS AFECTADAS. USING pasa (user_id sigue siendo suyo), WITH CHECK
+--      pasa por lo mismo, y el apodo queda apuntando a otro usuario.
+--
+-- Efecto: un usuario autenticado empuja sus propios movimientos de cuenta
+-- (depositos, retiros, bonos) al saldo de otro. No lee dinero ajeno: lo corrompe,
+-- y de paso altera el suyo. Es escritura cruzada en la tabla financiera.
+--
+-- ARREGLO (ISS243): politica RESTRICTIVE. Se combinan con AND, solo aprietan.
+--   create policy ajustes_apodo_coherente on public.ajustes_cuenta
+--     as restrictive for all to authenticated
+--     using (true)
+--     with check (apodo is null or user_id is null
+--                 or lower(btrim(apodo)) = lower(btrim(coalesce(
+--                      (select u.apodo from usuarios u where u.id = ajustes_cuenta.user_id),''))));
+-- USING(true) deja las lecturas EXACTAMENTE igual. No se toco ningun dato ni la
+-- politica existente.
+--
+-- VERIFICADO DESPUES:
+--   REASIGNAR_DUENO -> BLOQUEADO, 0 filas,
+--   "new row violates row-level security policy ajustes_apodo_coherente"
+--   UPDATE_FILA_AJENA -> BLOQUEADO 0 | DELETE_FILA_AJENA -> BLOQUEADO 0
+--
+-- =====================================================================
+-- 5. RIESGO ADICIONAL ENCONTRADO, NO CORREGIDO A PROPOSITO
+-- =====================================================================
+-- public.usuarios: un usuario SI puede cambiar su propio apodo a uno libre
+-- (medido: 1 fila afectada, sin error). Renombrarse es comportamiento normal
+-- de producto, PERO el apodo es la llave de propiedad del dinero:
+--   ajustes_cuenta.apodo, picks.apodo, parlays.apodo, score_notifications.apodo
+--
+-- Ataque concreto: A se renombra a X y deja libre su apodo viejo. B se renombra
+-- al apodo viejo de A y HEREDA todas las filas de A que siguen apuntando a ese
+-- texto: su historial de picks, parlays y movimientos de cuenta.
+--
+-- NO lo bloqueo: prohibir el renombrado es un cambio de producto y no tengo
+-- autorizacion. Las dos salidas reales, para que decidas:
+--   (a) prohibir reutilizar un apodo ya usado alguna vez (tabla de apodos
+--       retirados, sin borrar historia);
+--   (b) dejar de usar apodo como llave de propiedad del dinero y pasar todo a
+--       user_id, con apodo solo como etiqueta de presentacion.
+-- (b) es la correcta. (a) es el parche barato.
+--
+-- =====================================================================
+-- 6. ROLLBACK
+-- =====================================================================
+--   drop policy if exists ajustes_apodo_coherente on public.ajustes_cuenta;
+-- Las tablas de evidencia (iss240..iss243) son solo lectura de auditoria y se
+-- pueden borrar sin efecto: drop table v2.iss240_rls_efectiva, v2.iss241_autz,
+-- v2.iss242_escritura;
