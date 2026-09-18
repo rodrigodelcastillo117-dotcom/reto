@@ -87,3 +87,25 @@
 --   drop function v2.normalizar_motivo_perdida(text);
 --   restaurar v2.medir_captura_prospectiva y public.gate_captura_prospectiva
 --   desde el historial de git (ISS221).
+
+-- ==========================================================================
+-- 3. ETA DE CALIBRACION: SUSPENDIDA, no recalculada
+-- ==========================================================================
+-- v2.calibrador_contador gana eta_vigente y nota. Las filas anteriores quedan
+-- en eta_vigente = false.
+-- Las proyecciones 2027-04-02 (futbol) y 2027-12-15 (beisbol) se calcularon con
+-- un ritmo medido ANTES de separar el denominador y ANTES de la barrera, asi que
+-- mezclaban dias incompletos, eventos excluidos por decision del dueno y
+-- perdidas historicas ya cerradas. No sirven.
+--
+-- No se vuelve a publicar ETA hasta tener SIETE dias completos posteriores a la
+-- barrera de cada deporte:
+--   deporte   barrera      primera fecha para recalcular  dias evaluables  faltan
+--   soccer    2026-09-16   2026-09-23                     3                4
+--   baseball  2026-09-17   2026-09-24                     2                5
+--
+-- Cuando llegue, se reportan DOS tasas separadas, como pidio el dueno:
+--   tasa de captura preevento  (capturados / denominador)
+--   tasa de probabilidad READY (probabilidad_ready / denominador)
+-- sin mezclar partidos futuros ni dias incompletos: la tabla ya los separa en
+-- las columnas pendientes y estado='PENDIENTE'.
