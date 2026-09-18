@@ -1,0 +1,119 @@
+-- ISS205 · intended_game_date exacto, permisos revocados y gobernanza de mercados
+--
+-- ===========================================================================
+-- 1. PROHIBIDO EL HORIZONTE MOVIL. LA IDENTIDAD TEMPORAL ES intended_game_date
+-- ===========================================================================
+-- Extender 48h a 72h resolvio cobertura pero violaba la regla: MLB no se
+-- selecciona con now() + interval. La convencion de fecha NO se invento: es la
+-- que ya usa el sistema en rongol_refrescar_horarios,
+--   (fecha AT TIME ZONE 'America/Mexico_City')::date
+-- y se dejo explicita en la propia vista, en la columna timezone_de_particion.
+--
+-- v_mlb_publication_v1 ahora selecciona por PARTICIONES EXACTAS:
+--   intended_game_date = ANY(ARRAY[ D0, D0+1, D0+2 ])  con D0 = hoy en CDMX
+-- mas un filtro de pregame (a.fecha > now()) que NO es identidad: es lo que
+-- impide publicar un partido ya empezado en una superficie pregame.
+-- Columnas nuevas: intended_game_date, dia_offset (0/1/2), estado_agenda,
+-- timezone_de_particion. La UI pide D0, D+1 o D+2 como particion, no como ventana.
+--
+-- NOTA: CREATE OR REPLACE VIEW solo permite AÑADIR columnas al final. Se
+-- intentaron insertar en medio y Postgres lo rechaza ("cannot change name of
+-- view column"). Van al final a proposito.
+--
+-- PRUEBAS (31 publicados, 31 eventos unicos)
+--   sin intended_game_date ................................. 0
+--   partidos ya iniciados en superficie pregame ............ 0
+--   horas negativas al kickoff ............................. 0
+--   intended_game_date incoherente con el kickoff .......... 0
+--   timezones distintas .................................... 1 (America/Mexico_City)
+--   estados presentes ...................................... solo 'pre'
+--   duplicados por espn_event_id ........................... 0
+--   (la doble cartelera se preserva porque la identidad es espn_event_id, no la
+--    fecha: dos partidos del mismo dia y los mismos equipos son dos filas)
+--
+-- COBERTURA POR PARTICION, Y CADA EXCLUSION EXPLICADA
+--   D0  2026-09-17 .... 1 elegible ..... 1 publicado ..... 0 excluidos
+--   D+1 2026-09-18 ... 15 elegibles ... 15 publicados .... 0 excluidos
+--   D+2 2026-09-19 ... 15 elegibles ... 15 publicados .... 0 excluidos
+--   2026-09-20 ....... 15 elegibles .... 0 publicados ... 15 excluidos
+-- La bajada de 46 a 31 es UNA sola causa: los 15 partidos del cuarto dia
+-- calendario, fuera del limite D+2 declarado. Ninguna otra exclusion. Todos
+-- estan en estado 'pre' y entran solos cuando el calendario avanza.
+-- Cobertura dentro de cada particion solicitada: 100%.
+--
+-- ===========================================================================
+-- 2. PERMISOS REVOCADOS (motores retirados)
+-- ===========================================================================
+-- REVOKE EXECUTE ... FROM public, anon, authenticated en:
+--   public.agente_analizar_futuros            (escritor del 3er cerebro futbol)
+--   public.agente_analizar_futuros_lote       (dos firmas)
+--   public.sincronizar_fechas_reprogramadas   (escribe fut_predicciones)
+--   public.predecir_mlb                       (motor MLB retirado)
+--   public.predecir_partido                   (despachador que lo llamaba)
+-- Verificado despues: public=f anon=f auth=f en las seis entradas.
+-- Registrado en v2.apagado_reversible con el GRANT exacto para revertir.
+-- fut_predicciones queda como archivo historico: 1097 filas intactas, retirada
+-- el 2026-09-18 01:00:34, cero filas posteriores.
+--
+-- ===========================================================================
+-- 3. GATES NUEVOS
+-- ===========================================================================
+-- G46.1 ninguna tabla RETIRADA recibe filas posteriores a su fecha de retiro
+--       (lee v2.tabla_protegida.retirada_at y la columna de fecha declarada)
+-- G46.2 ninguna funcion SECURITY DEFINER sin declarar tiene ruta de escritura a
+--       una tabla CANONICA. Importa porque SECURITY DEFINER corre como el dueno
+--       y un REVOKE no la detiene: la unica defensa es estar declarada.
+--       Resultado: 0.
+-- G47.1 ningun mercado declarado NO monetizable aparece en superficies de picks
+-- G47.2 BTTS se muestra declarando probado=false (138 tarjetas, 0 mal declaradas)
+-- G47.3 INFO: rama latente de BTTS en el parlay automatico
+--
+-- ===========================================================================
+-- 4. GOBERNANZA DE MERCADOS: v2.mercado_monetizable
+-- ===========================================================================
+--   futbol/Moneyline ....... PERMITIDO (unico con cerebro canonico)
+--   futbol/BTTS ............ PROHIBIDO para dinero. Se puede MOSTRAR etiquetado.
+--                            n=29, IC95 -0.0612 a +0.0137: cruza cero.
+--   futbol/Over/Under ...... RETIRADO por evidencia (ISS194)
+--   futbol/Corners, Tarjetas, Doble Oportunidad, Total Equipo ... sin modelo
+--   beisbol/Moneyline ...... PERMITIDO
+--   beisbol/Over/Under ..... PERMITIDO (linea de la casa, probabilidad del modelo)
+--
+-- UN GATE MIO QUE GRITABA DE MAS, CORREGIDO
+-- La primera version de G47.3 marcaba FAIL con 12 funciones por co-ocurrencia de
+-- palabras ("kelly" y "btts" en el mismo cuerpo). Entre las 12 estaba mi propio
+-- gate y varios textos narrativos. Revisadas a mano las dos que importaban:
+--   kelly_stake__base ....... solo un COMENTARIO menciona BTTS. No hay camino.
+--   generar_parlay_seguro ... rama real: WHEN 'BTTS' THEN 4 en el ORDER BY.
+-- Ese camino esta INALCANZABLE hoy porque el pool de candidatos ya no trae BTTS
+-- (lo prueba G47.1). Se reclasifico a INFO con el arreglo exacto anotado, en vez
+-- de dejar un FAIL permanente por codigo muerto: un gate que grita de mas es un
+-- gate que se aprende a ignorar.
+--
+-- ===========================================================================
+-- 5. AUDITORIA DE LOS DOS CICLOS, PROGRAMADA (no inventada)
+-- ===========================================================================
+-- v2.auditoria_ciclos_retiro + v2.auditar_ciclo_retiro(etiqueta)
+-- crons: auditoria-ciclo-retiro-1 (10 4 * * *) y -2 (10 9 * * *)
+-- Registra por corrida: ultima escritura de fut_predicciones, filas totales,
+-- filas post-retiro, crons retirados activos, ultima corrida de esos crons,
+-- escritores no declarados, cobertura MLB y futbol, duplicados, discrepancias
+-- entre superficies y numero de gates en FAIL.
+--
+-- LINEA BASE ya registrada (id=1, 'linea-base-pre-ciclos', 2026-09-18 01:01:03):
+--   fut_ultima_escritura ....... 2026-09-17 22:00:02
+--   fut_filas_totales .......... 1097
+--   fut_filas_post_retiro ...... 0
+--   crons_retirados_activos .... 0
+--   ultima corrida de esos crons 2026-09-17 22:00:02
+--   cobertura_mlb .............. 31 de 31
+--   cobertura_futbol ........... 138 tarjetas
+--   duplicados ................. 0
+--   discrepancias_superficies .. 0
+--   gates_fail ................. 17
+--
+-- COMO LEER EL RESULTADO (procedimiento exacto, sin inventar nada):
+--   select * from v2.auditoria_ciclos_retiro order by corrida_at;
+-- PASS de los dos ciclos requiere, en las filas 'post-ciclo-0400' y
+-- 'post-ciclo-0900': fut_ultima_escritura IGUAL a la de la linea base,
+-- fut_filas_post_retiro = 0 y crons_retirados_activos = 0.
