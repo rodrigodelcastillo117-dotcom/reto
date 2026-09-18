@@ -1,0 +1,147 @@
+-- ISS213 — Separar el hallazgo historico del health productivo (punto 5)
+--
+-- Instruccion del dueno: "el healthcheck productivo debe considerar solo fuentes
+-- activas, escrituras despues de retired_at y superficies publicables actuales" y
+-- "0 FAIL productivos, sin borrar evidencia historica".
+--
+-- Se cierran CUATRO de los cinco: #1, #2, #8 y #17. Falta #10.
+--
+-- ═════════════════════════════════════════════════════════════════════
+-- #1 MODEL_MATRIX_INCOHERENT  FAIL(12) -> PASS(0)
+-- #2 MODELO_SIN_EVENTO_EN_AGENDA  FAIL(729) -> PASS(0)
+-- ═════════════════════════════════════════════════════════════════════
+-- POR QUE ESTE GATE MEDIA UN CADAVER. v_coherencia_soccer_v2 compara motor_a
+-- contra motor_b, y leyendo la definicion:
+--   motor_a = analisis_partidos.analisis_json.probabilidades, que desde ISS196
+--             toma su 1X2 del cerebro canonico;
+--   motor_b = public.fut_predicciones.mercados, tabla RETIRADA el 2026-09-18
+--             01:00:33, sin SELECT para anon ni authenticated desde ISS209.
+-- Y motor_b se une por NOMBRE DIFUSO:
+--   sin_acentos(lower(btrim(home_nombre))) = ... AND fecha::date = fecha::date
+-- O sea: los 12 desacuerdos eran desacuerdos con una tabla muerta, emparejada por
+-- nombre. De esos 12, MEDIDO: 6 son de eventos prospectivos que hoy si estan
+-- publicados, pero el desacuerdo sigue siendo contra el cadaver, no contra otro
+-- motor vivo.
+--
+-- PRODUCTIVO AHORA: solo cuenta si la segunda fuente esta ACTIVA (sin retirada_at)
+-- y el evento llega a una superficie publicable de hoy.
+-- ARCHIVADO: dos renglones INFO nuevos conservan los 12 y los 729 con su maximo
+-- de 23.9pp. La evidencia NO se borra.
+-- Y COMO NO SE DEBILITA EL CANDADO: se agrega un subgate BLOQUEANTE nuevo,
+--   SEGUNDA_FUENTE_ACTIVA_DE_1X2
+-- que se pone en FAIL si aparece cualquier tabla de futbol clase LEGADO o SHADOW
+-- sin retirada_at capaz de emitir su propio 1X2. analisis_partidos esta exenta
+-- porque desde ISS196 su 1X2 VIENE del canonico. Hoy: PASS con 0.
+-- Tambien se registro la columna de escritura de analisis_partidos en
+-- v2.tabla_protegida, que estaba en NULL: coalesce(reanalizado_at, created_at).
+--
+-- ═════════════════════════════════════════════════════════════════════
+-- #17 G45.4  FAIL(115) -> PASS(0), Y UN HALLAZGO EN VIVO EN EL CAMINO
+-- ═════════════════════════════════════════════════════════════════════
+-- Primera reescritura: medir "escrituras despues de retirada_at" en lugar de
+-- contar filas historicas. Resultado inmediato: FAIL, porque detecto 4 filas
+-- escritas a las 2026-09-18 02:30:00.868737, DESPUES del retiro de 01:00:33.
+-- No era un artefacto del gate. Era un escritor vivo.
+--
+-- QUIEN: el cron rongol-etapa4-futuros (jobid 458, '30 2 * * *',
+-- select public.rongol_paso('futuros',240000)) arranco a las 02:30:00.865893.
+-- Tres milisegundos antes de la escritura. La cadena es
+-- rongol_paso('futuros') -> public.agente_analizar_futuros -> INSERT en
+-- fut_predicciones. El revoke de EXECUTE de ISS205 no lo detenia: quito el
+-- privilegio a public, anon y authenticated, y el cron corre como postgres.
+--
+-- LA RESPUESTA NO FUE PERSEGUIR CRONS. Perseguir crons no escala: manana aparece
+-- otro. La barrera va EN LA TABLA:
+--   v2.tg_tabla_retirada_no_recibe_escrituras()  BEFORE INSERT OR UPDATE
+--   Si v2.tabla_protegida.retirada_at no es null, DESCARTA la fila (return null) y
+--   la CUENTA en v2.escritura_bloqueada_post_retiro con la pila de llamadas.
+--   Descarta en lugar de levantar excepcion a proposito: levantar rompería crons
+--   que ademas hacen trabajo legitimo, y el objetivo es congelar la tabla, no
+--   apagar el cron. El bloqueo no es silencioso porque queda contado.
+--   Instalada como zz_retirada_no_recibe_escrituras en public.fut_predicciones.
+--   Se agrego v2.tabla_protegida.barrera_instalada_at.
+--
+-- PRUEBA: se llamo a public.agente_analizar_futuros() a mano. Devolvio (400,28,372)
+-- y los 28 INSERT quedaron BLOQUEADOS Y AUDITADOS. Filas que llegaron a la tabla: 0.
+--
+-- ADEMAS se apago el cron 458 de forma reversible, registrado en
+-- v2.apagado_reversible. La barrera es la garantia estructural; apagar el cron
+-- solo evita 28 intentos bloqueados cada noche.
+--
+-- El gate mide ahora desde barrera_instalada_at y declara las 4 filas previas como
+-- VIOLACION ARCHIVADA en lugar de borrarlas. Estado: PASS, 0 escrituras despues de
+-- la barrera, 28 intentos bloqueados, 119 filas prospectivas historicas conservadas.
+--
+-- ═════════════════════════════════════════════════════════════════════
+-- #8 ID_AJENO_EN_COLUMNA_espn_event_id  FAIL(1318) -> PASS(0)
+-- ═════════════════════════════════════════════════════════════════════
+-- CENSO MEDIDO de public.live_scores, 1,962 filas, CUATRO espacios de nombres en
+-- una sola columna:
+--   espn                   9 digitos                    643 filas, 7 deportes
+--   apifootball_fixture    6 digitos                    812 filas (futbol y tenis)
+--   apifootball_prefijado  af_ + 7 digitos              503 filas, solo futbol
+--   oddsapi                oa_ + 32 hex                   4 filas, solo tenis
+--
+-- MIGRACION ADITIVA Y REVERSIBLE. espn_event_id NO se toca, asi que ningun join se
+-- rompe y no se reescribe historia. Las tres columnas nuevas son GENERATED ALWAYS
+-- ... STORED a partir de ella, asi que no hay backfill que pueda desincronizarse:
+--   provider            proveedor inferido del formato
+--   provider_event_id   el id sin prefijo
+--   canonical_event_id  provider || ':' || provider_event_id
+-- Registro declarado: v2.proveedor_de_evento, una fila por proveedor con su patron.
+-- Unicidad exigida por el dueno: indice unico live_scores_provider_event_uniq
+-- sobre (provider, provider_event_id). Se creo sin conflicto, o sea 0 colisiones.
+--
+-- RIESGO QUE MEDI PORQUE ERA EL UNICO REAL: apifootball_fixture y
+-- apifootball_prefijado son EL MISMO proveedor con dos codificaciones. Si sus
+-- rangos se solaparan, el mismo partido tendria dos identidades.
+--   colisiones entre las dos codificaciones: 0
+--   largo del id: 6-6 en una, 7-7 en la otra. Disjuntos por construccion.
+--
+-- BARRERA CONTRA NUEVAS IDENTIDADES AJENAS:
+--   CHECK live_scores_event_id_proveedor_declarado, NOT VALID a proposito: las
+--   1,962 filas existentes quedan indultadas y TODA fila nueva o modificada se
+--   valida contra los cuatro patrones declarados.
+--   PROBADO: un INSERT con espn_event_id = 'zz_proveedor_inventado_999' fue
+--   RECHAZADO por el CHECK.
+--
+-- El gate mide ahora (a) filas con proveedor NO declarado = 0 y (b) colisiones
+-- reales = 0, y el conteo historico de 1,319 pasa a ID_AJENO_ARCHIVED_FINDING.
+--
+-- ═════════════════════════════════════════════════════════════════════
+-- PUNTO G — sincronizar_fechas_reprogramadas: la parte legitima, separada
+-- ═════════════════════════════════════════════════════════════════════
+-- PRIMERA PREGUNTA DEL DUENO: el revoke de ISS205 NO rompio nada. Revoco EXECUTE
+-- para public, anon y authenticated; el cron sincronizar-fechas-reprogramadas
+-- corre como postgres y siguio funcionando (exito verificado a las 02:39:00 en
+-- cron.job_run_details). Un cliente nunca deberia poder mover fechas de partidos a
+-- mano, asi que el revoke era correcto Y no tenia efecto sobre el cron.
+--
+-- SEGUNDA: si mezclaba responsabilidades, TRES de hecho:
+--   1) agenda_espn obedece a live_scores       LEGITIMO, se conserva
+--   2) fut_predicciones obedece a live_scores  ESCRITURA AL CEREBRO VIEJO, ELIMINADA
+--   3) ligamx_partidos obedece a live_scores   LEGITIMO, se conserva (fecha_utc)
+-- La llave fut_predicciones_corregidos se mantiene en el jsonb de salida para no
+-- romper consumidores, siempre en 0, con fut_predicciones_motivo explicando por que.
+-- Corrida de prueba: agenda 0, ligamx 0, fut 0. Sin error.
+--
+-- ═════════════════════════════════════════════════════════════════════
+-- GATES
+-- ═════════════════════════════════════════════════════════════════════
+--   gate_coherencia_soccer_v2 / MODEL_MATRIX_INCOHERENT        FAIL(12)   -> PASS(0)
+--   gate_coherencia_soccer_v2 / MODELO_SIN_EVENTO_EN_AGENDA    FAIL(729)  -> PASS(0)
+--   gate_coherencia_soccer_v2 / SEGUNDA_FUENTE_ACTIVA_DE_1X2   NUEVO, PASS(0)
+--   gate_coherencia_soccer_v2 / ..._ARCHIVED_FINDING x2        NUEVOS, INFO(12 y 729)
+--   gate_un_solo_cerebro / G45.4                               FAIL(115)  -> PASS(0)
+--   gate_pata_calificable / ID_AJENO_EN_COLUMNA_espn_event_id   FAIL(1318) -> PASS(0)
+--   gate_pata_calificable / ID_AJENO_ARCHIVED_FINDING           NUEVO, INFO(1319)
+--
+-- ROLLBACK
+--   Barrera:   drop trigger zz_retirada_no_recibe_escrituras on public.fut_predicciones;
+--              update v2.tabla_protegida set barrera_instalada_at = null where tabla='fut_predicciones';
+--   Cron 458:  select cron.alter_job(458, active := true);
+--   Identidad: alter table public.live_scores drop constraint live_scores_event_id_proveedor_declarado;
+--              drop index live_scores_provider_event_uniq;
+--              alter table public.live_scores drop column canonical_event_id, drop column provider_event_id, drop column provider;
+--   Las cuatro filas post-retiro NO se borraron. Los 12 y 729 hallazgos historicos
+--   siguen a la vista en los renglones ARCHIVED_FINDING.

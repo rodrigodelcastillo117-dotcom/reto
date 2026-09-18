@@ -92,3 +92,13 @@ select * from v2.escritor_autorizado order by tipo, objeto;
 --   13 por statement timeout en 3 jobs que ya fallaban dias antes de ISS209.
 --   Corregida una regresion mia: score_notifications habia perdido el UPDATE de
 --   authenticated, asi que marcar una notificacion como vista estaba roto.
+
+-- ISS213 (2026-09-18). Hallazgo historico separado del health productivo.
+--   MODEL_MATRIX_INCOHERENT        FAIL(12)   -> PASS(0)   + ARCHIVED_FINDING INFO(12)
+--   MODELO_SIN_EVENTO_EN_AGENDA    FAIL(729)  -> PASS(0)   + ARCHIVED_FINDING INFO(729)
+--   SEGUNDA_FUENTE_ACTIVA_DE_1X2   NUEVO bloqueante, PASS(0)
+--   G45.4                          FAIL(115)  -> PASS(0)
+--   ID_AJENO_EN_COLUMNA_espn_...   FAIL(1318) -> PASS(0)   + ARCHIVED_FINDING INFO(1319)
+-- HALLAZGO EN VIVO: el G45.4 reescrito detecto 4 escrituras en fut_predicciones
+-- DESPUES de su retiro, del cron rongol-etapa4-futuros. Se puso barrera en la
+-- tabla (28 intentos bloqueados y auditados) y se apago el cron de forma reversible.
