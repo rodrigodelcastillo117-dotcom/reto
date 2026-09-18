@@ -1,0 +1,173 @@
+-- ISS209 — Las superficies crudas se cierran (seccion E)
+--
+-- Instruccion del dueno: "identifica los permisos exactos, revoca
+-- public/anon/authenticated, RLS deny-by-default, confirma que ninguna vista o
+-- RPC publica dependa de ellas, registra las tablas de laboratorio como
+-- SHADOW_ONLY, re-corre los gates. Que 'el frontend no las lea' no es suficiente
+-- si siguen expuestas."
+--
+-- ESTADO ANTES (medido por gate_superficie_cruda):
+--   SUPERFICIE_CRUDA_SIN_DECLARAR      FAIL  92
+--   RLS_PERMISIVA_QUE_NO_RESTRINGE     FAIL  53
+--   SUPERFICIE_CRUDA_SIN_RLS           FAIL  16
+--   SUPERFICIE_CRUDA_SIN_TEMPORALIDAD  FAIL 142
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- PASO 0: COMO SE DECIDIO QUE SE PUEDE CERRAR, sin romper la app
+-- ─────────────────────────────────────────────────────────────────────
+-- Dos analisis independientes, los dos medidos:
+--
+-- (a) DEPENDENCIA REAL. Una vista security_invoker corre con los permisos de QUIEN
+--     LA LEE, asi que quitarle el SELECT a su tabla base la rompe. Una vista
+--     definer (el default) no. Se recorrio el grafo pg_depend/pg_rewrite desde
+--     TODAS las vistas security_invoker legibles por cliente (19 de ellas) hasta
+--     6 niveles de profundidad. Resultado: de las 92 relaciones crudas, solo DOS
+--     son necesarias por esa via: public.parlays y public.picks.
+--     Dato de paso: de las 88 superficies declaradas que existen, 87 son definer
+--     y solo 1 es security_invoker (calibracion_mercado).
+--
+-- (b) USO REAL. pg_stat_statements, llamadas por rol de cliente. De las 90
+--     restantes, solo SEIS tienen alguna lectura de anon o authenticated:
+--       score_notifications         auth 1,271
+--       usuarios                    auth   464
+--       v_tarjeta_soccer_v1         anon   392 + auth  30
+--       v_nfl_publication_v1        anon   326 + auth   3
+--       v_futpro_publication_v3     anon    32 + auth 178
+--       v_tarjeta_universal_v1      anon   115 + auth   9
+--     CAVEAT DECLARADO: pg_stat_statements normaliza y puede desalojar entradas,
+--     asi que 0 llamadas NO prueba que nadie la lea. Por eso se declararon tambien
+--     las hermanas del mismo contrato aunque midan 0: v_mlb_publication_v1,
+--     v_team_sports_publication_v1, v_picks_usuario_historial y
+--     v_reto_pick_story_cards_v1.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- E1) 12 superficies DECLARADAS en public.superficie_usuario
+-- ─────────────────────────────────────────────────────────────────────
+-- Las 6 medidas + 4 hermanas del contrato + parlays y picks.
+-- Y se limpiaron dos incoherencias del registro:
+--   * v_super_pick seguia declarada como superficie de usuario y ya no existe
+--     (ISS206 la retiro). Pasa a superficie_retirada con su lapida.
+--     El disparador tg_superficie_solo_sale_con_lapida me lo exigio, y funciono:
+--     el primer intento de borrarla fallo con SUPERFICIE_SIN_LAPIDA.
+--   * calibracion_mercado estaba declarada USUARIO al mismo tiempo que
+--     gate_gobierno_no_legible_por_cliente exige que el cliente NO la lea (y de
+--     hecho no la lee). Se retira la declaracion, no el objeto.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- E2) 80 superficies CERRADAS
+-- ─────────────────────────────────────────────────────────────────────
+-- 63 tablas + 17 vistas. Para cada una:
+--   revoke all privileges ... from anon, authenticated, public
+--   drop de TODA politica cuyos roles incluyan anon, authenticated o public
+--   alter table ... enable row level security   (solo tablas)
+-- Total: 58 politicas de cliente borradas.
+-- Deny-by-default de verdad: RLS encendida SIN ninguna politica de cliente. No
+-- rompe el servidor porque service_role y postgres tienen rolbypassrls = true
+-- (verificado en pg_roles antes de hacerlo).
+-- El registro de lo cerrado queda en v2.iss209_superficie_a_cerrar con
+-- rls_previa, politicas_cliente_previas y cerrada_at, para poder revertir.
+--
+-- NOTA OPERATIVA: el primer intento en un solo bloque DO se paso de los 60s del
+-- cliente MCP. Un timeout NO es un rollback, asi que lo primero fue verificar el
+-- estado: las 92 seguian abiertas, nada se habia aplicado. Se rehizo
+-- materializando la lista en una tabla y en tres lotes de 30.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- E3) parlays y picks: fuga de datos entre usuarios
+-- ─────────────────────────────────────────────────────────────────────
+-- Las dos necesitan SELECT de cliente (19 vistas security_invoker dependen de
+-- ellas), pero cada una tenia DOS politicas: una por dueno
+--   (lower(btrim(apodo)) = lower(btrim(apodo_de_la_sesion())))
+-- y otra llamada "Auth read all ..." con qual = true.
+-- Como las politicas permisivas se SUMAN, la segunda anulaba a la primera:
+-- CUALQUIER usuario autenticado podia leer las apuestas de TODOS. Eso no es solo
+-- el hallazgo RLS_PERMISIVA_QUE_NO_RESTRINGE: es una fuga de datos personales.
+-- Se borran las dos "read all". Queda la de dueno.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- E4) score_notifications: lo mismo, y peor
+-- ─────────────────────────────────────────────────────────────────────
+-- Tiene columna apodo, o sea dato personal, y tenia:
+--   score_notif_auth_select  SELECT  authenticated  qual = true
+--   auth marca notificado    UPDATE  authenticated  qual = true
+--   score_notif_auth_insert  INSERT  authenticated  sin WITH CHECK
+-- y ademas anon tenia SELECT. Cualquiera podia leer, y cualquier autenticado
+-- podia MARCAR COMO VISTAS las notificaciones de otro.
+-- Se revoca todo a anon y a public, y las tres politicas se reescriben acotadas
+-- por dueno con el mismo predicado de parlays y picks, incluido WITH CHECK en el
+-- INSERT y en el UPDATE.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- E5) oraculo_picks_tracking: restriccion REAL, no cosmetica
+-- ─────────────────────────────────────────────────────────────────────
+-- MEDIDO: 3,740 filas, de las cuales 39 traen apodo (3 distintos). O sea es casi
+-- global pero SI carga atribucion personal, y su politica era qual = true.
+-- No se le puede quitar el SELECT: 14 vistas security_invoker legibles por
+-- cliente la leen. Se acota de verdad:
+--   using (apodo is null or lower(btrim(apodo)) = lower(btrim(coalesce(apodo_de_la_sesion(),''))))
+-- VERIFICADO leyendo como anon: 3,701 filas de 3,740. Las 39 atribuidas quedan
+-- fuera. El filtro funciona.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- E6) v2.lectura_global_declarada: la unica exencion, y con evidencia
+-- ─────────────────────────────────────────────────────────────────────
+-- oraculo_prob_picks no tiene NINGUNA columna de dueno: 0 de sus 25 columnas casan
+-- con apodo|user|usuario|email|auth_id|owner. Sin columna de dueno no existe
+-- predicado de dueno que escribir, y escribir uno falso seria peor que declararlo.
+-- Asi que se declara, con motivo y evidencia, en un registro nuevo, y el gate
+-- exime SOLO lo que este ahi. No es una exencion por categoria.
+-- Y hay un gate nuevo, LECTURA_GLOBAL_CON_EVIDENCIA, que pone FAIL si alguien
+-- declara lectura global de una tabla que SI tiene columna de dueno.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- E7) superficie_temporalidad: 61 filas nuevas, sin inventar columnas
+-- ─────────────────────────────────────────────────────────────────────
+-- La columna de evento NO se invento. Para cada relacion se eligio la PRIMERA que
+-- EXISTE DE VERDAD en el esquema, por orden de preferencia del mismo vocabulario
+-- que ya usaban las 31 filas declaradas: arranca_en, kickoff, match_date,
+-- scheduled_at, game_date, fecha, dia_mx, saque, cuando. Si la relacion no tiene
+-- ninguna, se declara SIN_FECHA_EVENTO, que es lo que ya hacian las otras 5 filas:
+-- son agregados y resumenes, no filas por partido.
+-- Resultado: 59 EVENTO + 37 SIN_FECHA_EVENTO. Tambien se borro la fila de
+-- v_super_pick, que ya no existe.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- PRUEBAS DE NO-REGRESION, leyendo de verdad con el rol del cliente
+-- ─────────────────────────────────────────────────────────────────────
+-- Como anon:
+--   v_tarjeta_universal_v1        254 filas   OK
+--   v_tarjeta_soccer_v1           138         OK
+--   v_futpro_publication_v3       138         OK
+--   v_nfl_publication_v1           32         OK
+--   v_mlb_publication_v1           30         OK
+--   v_team_sports_publication_v1   91         OK
+--   v_reto_pick_story_cards_v1    138         OK
+--   oraculo_picks_tracking      3,701 de 3,740 (RLS nueva filtrando)  OK
+--   oraculo_prob_picks              0         OK (vacia hoy)
+--   v_picks_usuario_historial   permission denied for table picks
+--       -> CORRECTO: es una vista security_invoker sobre picks, y anon no debe
+--          ver los picks de nadie. authenticated si puede.
+-- Como authenticated:
+--   picks, parlays, score_notifications, usuarios, v_picks_usuario_historial
+--   -> 0 filas, sin error. Correcto: sin JWT, apodo_de_la_sesion() no resuelve y
+--      la RLS por dueno no devuelve nada. Es el candado funcionando.
+--   v_tarjeta_universal_v1 254 filas.  OK
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- GATES
+-- ─────────────────────────────────────────────────────────────────────
+--   SUPERFICIE_CRUDA_SIN_DECLARAR      FAIL  92 -> PASS 0
+--   RLS_PERMISIVA_QUE_NO_RESTRINGE     FAIL  53 -> PASS 0
+--   SUPERFICIE_CRUDA_SIN_RLS           FAIL  16 -> PASS 0
+--   SUPERFICIE_CRUDA_SIN_TEMPORALIDAD  FAIL 142 -> PASS 0
+-- Y dos gates NUEVOS, para que esto no se deshaga en silencio:
+--   public.gate_superficies_cerradas_siguen_cerradas()
+--     SUPERFICIE_CERRADA_REABIERTA   PASS 0 de 80 cerradas
+--     LECTURA_GLOBAL_CON_EVIDENCIA   PASS 0
+--
+-- ROLLBACK
+--   v2.iss209_superficie_a_cerrar guarda relacion, clase, rls_previa,
+--   politicas_cliente_previas y cerrada_at. Reponer privilegios es
+--   "grant select on public.<rel> to anon, authenticated" y apagar RLS donde
+--   rls_previa era false. Las politicas borradas estan en el git de este repo y
+--   en el historial de pg_policies de los reportes anteriores.

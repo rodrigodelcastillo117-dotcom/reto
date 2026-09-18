@@ -63,3 +63,15 @@ select * from v2.escritor_autorizado order by tipo, objeto;
 -- Corregido con public.feature_asof_de_pick(). 496 de 496 filas con corte de datos
 -- real anterior al evento. El motivo paso a SIN_CALIBRATION_VERSION: no hay
 -- calibrador sellado para soccer_canonical_v2 ni para mlb_one_brain_v2.
+
+-- ISS209 (2026-09-18). Superficies crudas cerradas (seccion E).
+--   gate_superficie_cruda / SUPERFICIE_CRUDA_SIN_DECLARAR      FAIL(92)  -> PASS(0)
+--   gate_superficie_cruda / RLS_PERMISIVA_QUE_NO_RESTRINGE     FAIL(53)  -> PASS(0)
+--   gate_superficie_cruda / SUPERFICIE_CRUDA_SIN_RLS           FAIL(16)  -> PASS(0)
+--   gate_superficie_cruda / SUPERFICIE_CRUDA_SIN_TEMPORALIDAD  FAIL(142) -> PASS(0)
+-- NUEVO public.gate_superficies_cerradas_siguen_cerradas():
+--   SUPERFICIE_CERRADA_REABIERTA   PASS(0 de 80)
+--   LECTURA_GLOBAL_CON_EVIDENCIA   PASS(0)
+-- 80 relaciones cerradas, 58 politicas de cliente borradas, RLS deny-by-default en
+-- 63 tablas. Fuga corregida: parlays, picks y score_notifications dejaban a
+-- cualquier autenticado leer los datos de todos.
