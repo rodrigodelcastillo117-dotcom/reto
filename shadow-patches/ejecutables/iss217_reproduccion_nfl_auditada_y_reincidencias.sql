@@ -1,0 +1,209 @@
+-- ISS217 (2026-09-18). Items 1, 2, 3 y 6 del mandato de auditoria.
+--
+-- ==========================================================================
+-- ITEM 1. NFL: la reproduccion preregistrada, completa.
+-- ==========================================================================
+-- Commit del preregistro: e348655 (2026-09-18 02:30:27), ANTES de correr nada.
+-- Definicion del target : P(gana el local) en Moneyline. Alcance MONEYLINE_ONLY.
+-- Fuente               : v2.team_history_event, espn_endpoint='football/nfl',
+--                        1,738 partidos con marcador, 2021-08-06 a 2026-09-15.
+-- Corte temporal       : holdout = partidos donde CUALQUIERA de los dos equipos
+--                        lleva <4 partidos de temporada regular en curso, en
+--                        sep-dic 2024, sep-dic 2025 y 2026-09-10 a 2026-09-16.
+-- Incluidos / excluidos: 144 de 1,738. Los 1,594 restantes NO se evaluan pero SI
+--                        alimentan el Elo secuencialmente (es walk-forward).
+-- Rama medida          : EARLY_ELO (todas las 144 filas).
+--
+-- RESULTADO, por rebanada y agregado:
+--   rebanada    n     Brier     acierto   logloss    sello_n  sello_Brier  coincide
+--   2024        64    0.24689   60.94%    0.68745    64       0.25069      SI
+--   2025        64    0.21155   70.31%    0.61339    63       0.20533      NO
+--   2026_week1  16    0.24596   75.00%    0.68871    16       0.24309      SI
+--   AGREGADO   144    0.23108   66.67%    0.65468   143       0.22986      --
+--
+--   baseline           : 0.25 (volado)
+--   diferencia media   : -0.01892
+--   sd de la diferencia:  0.12126   se: 0.01010
+--   IC95               : [-0.03873, +0.00088]  <-- CRUZA CERO
+--   logloss            : 0.65468 contra 0.69315 del volado (SI mejora)
+--   calibracion (tramos con n>=20, decil):
+--     0.30-0.40  n=15  dice 36.79  entrega 26.67  brecha 10.12 pp
+--     0.40-0.50  n=32  dice 45.59  entrega 37.50  brecha  8.09 pp
+--     0.50-0.60  n=41  dice 55.16  entrega 70.73  brecha 15.58 pp  <- peor
+--     0.60-0.70  n=39  dice 64.87  entrega 64.10  brecha  0.77 pp
+--   (con tramos mas gruesos el maximo es 12.29pp en el tramo n=73. El sello
+--    declaraba 6.54pp: mi medicion da casi el doble.)
+--
+-- CRITERIO PREREGISTRADO, escrito antes de ver los numeros:
+--   REPRODUCIDA     : los tres n exactos y los tres Brier a +-0.005
+--   PARCIALMENTE    : al menos una rebanada coincide en n y Brier a +-0.005
+--   NO REPRODUCIBLE : ninguna coincide
+-- VEREDICTO SIN REINTERPRETAR: PARCIALMENTE REPRODUCIDA (2 de 3).
+-- La rebanada de 2025 da n=64 contra 63 y Brier 0.21155 contra 0.20533. NO ajuste
+-- la configuracion para hacerlas cuadrar.
+--
+-- AUTORIZACION: FAIL. El IC95 cruza cero, asi que con n=144 la ventaja contra un
+-- volado no es distinguible de cero. publish_authorized=false para
+-- ELO_HISTORICAL_PRIOR en v2.nfl_branch_release_authority.
+--
+-- PRUEBA DE NO LOOKAHEAD (nueva en ISS217, no estaba antes):
+--   v2.iss217_elo_nfl_truncado(event_id) reconstruye el Elo desde cero con la
+--   fuente TRUNCADA a game_date ESTRICTAMENTE anterior al evento, y se compara
+--   contra el p_home almacenado. n=42 eventos (los 14 primeros de cada rebanada).
+--     max_input_date < game_date            : 42 de 42
+--     |delta| < 0.005                       : 32 de 42
+--     delta maximo                          : 0.055713
+--     Brier almacenado                      : 0.21108
+--     Brier reconstruido truncado           : 0.21223
+--     diferencia media (alm - trunc)        : -0.001143
+--     IC95 de esa diferencia                : [-0.006454, +0.004167]  CRUZA CERO
+--   LECTURA: si el almacenado tuviera fuga, su Brier seria SISTEMATICAMENTE mejor
+--   que el de una reconstruccion estrictamente-anterior. No lo es: la diferencia
+--   no es distinguible de cero. No hay evidencia de fuga temporal.
+--   LIMITACION QUE DECLARO: 10 de 42 eventos difieren hasta 0.0557 y NO pude
+--   explicar por que. Descarte la hipotesis de empates de instante (para los 3
+--   casos revisados, 0 partidos del mismo instante tocan a esos equipos). O sea:
+--   mi walk-forward de ISS211 no es bit-reproducible por una reimplementacion
+--   independiente en 10 de 42 puntos de control. Eso es un hallazgo, no un
+--   detalle, y no lo tapo.
+--
+-- VALIDACION HISTORICA vs DISPONIBILIDAD OPERATIVA 2026, que son dos cosas:
+--   nfl_hybrid_ml_v1 tiene DOS ramas con autoridad separada:
+--     ELO_HISTORICAL_PRIOR  publish_authorized=false  IC95 cruza cero (n=144)
+--     CURRENT_FORM / MATURE publish_authorized=true   n=123 Brier 0.21033
+--   El hibrido usa la rama madura SOLO cuando los DOS equipos llevan >=4 partidos
+--   de temporada regular en curso.
+--   MEDIDO HOY: los 32 equipos llevan exactamente 1 partido de 2026 (min=1,max=1,
+--   equipos con >=4: 0). Y las 704 filas que nfl_hybrid_ml_v1 escribio en
+--   v2.nfl_decision_snapshot (33 eventos, 15 al 18 de sep) son TODAS
+--   ELO_HISTORICAL_PRIOR. Cero de la rama autorizada.
+--   ARITMETICA: 1 partido hoy -> se necesitan 4 -> faltan 3 jornadas -> la rama
+--   madura empieza a mandar en la semana 5.
+--   O sea: el modelo esta validado con historia de 2021-2025, pero lo que la
+--   temporada 2026 permite calcular hoy es solo la rama que NO pasa. Por eso NFL
+--   tiene 0 P_RETO: no es que el modelo no exista, es que la rama disponible no
+--   esta autorizada.
+--
+-- ==========================================================================
+-- ITEM 2. FEATURE_ASOF: los tres gates con evidencia real.
+-- ==========================================================================
+--   FEATURE_ASOF_NO_ALMACENADO        PASS(0 de 502 evaluados)
+--   FEATURE_ASOF_SIN_RELOJ            PASS
+--   FEATURE_ASOF_ESPEJEA_PUBLICACION  PASS(0 de 168: soccer 138, baseball 30, football 0)
+--
+-- LINAJE REAL, FUTBOL (soccer_canonical_v2):
+--  event_id  | feature_asof        | evento_at           | snapshot usado                       | snaps | max(data_asof) | fn dice
+--  401874503 | 2026-09-13 12:00:00 | 2026-09-18 17:00:00 | f1e6b001-6249-461b-8c86-759f04821b68 | 88    | igual          | igual
+--  401873932 | 2026-09-13 17:15:00 | 2026-09-18 17:00:00 | 55337b98-fd84-47ff-9177-697ff5edbbd1 | 88    | igual          | igual
+--  401888290 | 2026-09-13 14:00:00 | 2026-09-18 17:00:00 | f40368b1-471f-4996-bfc4-1065db7167f0 | 88    | igual          | igual
+--
+-- LINAJE REAL, BEISBOL (mlb_one_brain_v2):
+--  event_id  | feature_asof              | evento_at           | snapshot                             | snaps | margen
+--  401816984 | 2026-09-17 23:45:05.434   | 2026-09-18 22:40:00 | ec250dc9-9ce6-45e5-ba52-19c303732011 | 1     | 22:54:54
+--  401816985 | 2026-09-17 23:45:05.484   | 2026-09-18 22:40:00 | 5db2d5b3-e905-41a6-981f-a0d9804633cb | 1     | 22:54:54
+--  401816986 | 2026-09-17 23:45:05.467   | 2026-09-18 23:05:00 | 205ea727-02ba-454e-b2b9-b5e8dff22752 | 1     | 23:19:54
+--
+-- PRUEBA ADVERSARIAL (v2.iss217_prueba_lookahead_asof), sujeto 401873932:
+--   A_PLANTAR_SNAPSHOT_POSTERIOR  RECHAZADO
+--     Plante un snapshot con data_asof = kickoff + 2h y computed_at futuro para
+--     que fuera el ELEGIDO. La compuerta de escritura lo rechazo:
+--     "RETO/soccer_prediction_v2: escritura rechazada. Ninguna funcion declarada
+--      como escritora de esta tabla aparece en la pila. ... Falsificar el
+--      model_version no sirve: se verifica QUIEN escribe."
+--   A_RESIDUO                     CERO_RESIDUO (88 snapshots antes, 88 despues)
+--   B_PREDICADO_CORTE_POSTERIOR   NO_ELEGIBLE, temporalidad_medida = FALSE
+--   C_CONTROL_POSITIVO            temporalidad_medida = TRUE
+--   LIMITACION QUE DECLARO: el control positivo NO puede leerse sobre 'eligible',
+--   porque hoy NINGUN evento es elegible (reason_code=SIN_CALIBRATION_VERSION en
+--   los dos casos). El control solo discrimina en el criterio temporal, que es
+--   justo el que esta prueba mide. Lo digo en vez de presentar un PASS limpio.
+--
+-- ==========================================================================
+-- ITEM 3. RONGOL-ETAPA4-FUTUROS: cierre demostrado.
+-- ==========================================================================
+--   jobid                 : 458
+--   jobname               : rongol-etapa4-futuros
+--   schedule              : 30 2 * * *   (diario 02:30 UTC)
+--   username / database   : postgres / postgres  <- por eso un REVOKE no lo paraba
+--   comando               : select public.rongol_paso('futuros',240000);
+--   active ANTES          : true   (6 corridas succeeded, 13 al 18 de sep)
+--   active DESPUES        : false  (via cron.alter_job, reversible)
+--   ultima corrida        : 2026-09-18 02:30:00, succeeded, "1 row"
+--   ultima escritura      : 2026-09-18 02:30:00.868737
+--   retirada_at           : 2026-09-18 01:00:33.938805
+--   barrera_instalada_at  : 2026-09-18 02:46:23.377873
+--   filas post-retiro     : 4    <- las 4 del hueco, se CONSERVAN como INFO
+--   filas post-barrera    : 0    <- el corte que bloquea
+--   intentos bloqueados   : 29 (28 de ISS213 + 1 de la prueba de ISS217)
+--
+--   CAMINOS ALTERNATIVOS, descartados uno por uno:
+--     Funciones que escriben fut_predicciones: 3, todas sin EXECUTE de cliente
+--       agente_analizar_futuros(integer,integer)            anon/auth: false
+--       agente_analizar_futuros_lote(integer,integer,integer)      false
+--       agente_analizar_futuros_lote(integer,integer,integer,integer) false
+--     Crons que las invocan: 179 y 239, los DOS inactive.
+--     Otros crons que llamen rongol_paso('futuros'): NINGUNO. Revisados los 5
+--       jobs de rongol uno por uno con su comando completo; 182, 456, 457 y 459
+--       estan activos pero ninguno incluye el paso 'futuros'.
+--     Triggers sobre la tabla: 2, los dos declarados
+--       zz_estampar_linaje               (tg_estampar_linaje)
+--       zz_retirada_no_recibe_escrituras (la barrera)
+--
+--   PRUEBA EN VIVO DE LA BARRERA (v2.iss217_prueba_barrera_fut):
+--     1_INSERT_DIRECTO  DEVUELTO_NULL_POR_TRIGGER (1101 filas antes, 1101 despues)
+--     2_AUDITADO        AUDITADO (28 -> 29)
+--     3_RESIDUO         CERO_RESIDUO
+--
+-- ==========================================================================
+-- ITEM 6. GATES REESCRITOS: reincidencia sintetica con rollback.
+-- ==========================================================================
+-- v2.iss217_reincidencia_gates. Cero FAIL NO se logro debilitando la deteccion:
+--
+--   G46.1  antes de ISS216: contaba desde retirada_at -> FAIL(4) permanente por un
+--          hecho historico inmutable.
+--          ahora: cuenta desde coalesce(barrera_instalada_at, retirada_at).
+--          historia conservada: G46.1b INFO(4), las 4 filas del hueco, sin borrar.
+--          que lo vuelve a poner en FAIL: cualquier fila con generado_at posterior
+--          a la barrera.
+--          PROBADO: PASS(0) -> apago la barrera, planto 1 fila -> FAIL(1) con
+--          "filas posteriores A LA BARRERA 1" -> borro y reactivo -> PASS(0),
+--          residuo 0, trigger tgenabled='O'.
+--
+--   G45.6  antes: FAIL(1) por MI trigger zz_retirada_no_recibe_escrituras de
+--          ISS213, que se me olvido declarar.
+--          ahora: declarado en v2.escritor_autorizado. La regla no cambio.
+--          historia conservada: la fila de declaracion dice que fue mi olvido.
+--          que lo vuelve a poner en FAIL: cualquier trigger nuevo sobre una tabla
+--          protegida sin declarar.
+--          PROBADO: PASS(0) -> creo zz_iss217_intruso -> FAIL(1)
+--          "fut_predicciones.zz_iss217_intruso" -> drop -> PASS(0), 0 residuos.
+--
+--   G41.1  antes: exigia >=3 deportes sirviendo tarjeta -> FAIL(2) por el apagado
+--          de NFL decidido por evidencia en ISS211.
+--          ahora: bloquea contra v2.tarjeta_esperada_por_deporte, declaracion
+--          explicita deporte por deporte.
+--          historia conservada: G41.1b INFO(1) nombra football y su motivo
+--          completo con criterio de reingreso.
+--          que lo vuelve a poner en FAIL: un deporte con se_espera_tarjeta=true
+--          y cero tarjetas.
+--          PROBADO: PASS(0) -> pongo football en true -> FAIL(1) "football" ->
+--          lo devuelvo a false -> PASS(0).
+--
+--   G47.1  antes: contaba filas CRUDAS de v_picks_mlb_modelo -> FAIL(2).
+--          ahora: cuenta v_pick_canonico where es_pick and not monetizable.
+--          historia conservada: G47.1b INFO(88).
+--          que lo vuelve a poner en FAIL: un pick con es_pick=true en un mercado
+--          no monetizable.
+--          NO SE PUDO PROBAR LA REINCIDENCIA, Y LO DECLARO: hoy es_pick=false en
+--          las 502 filas, asi que la condicion bloqueante es VACUA (0 de 0) y no
+--          hay forma de dispararla sin inventar un calibrador. Lo que SI probe es
+--          la unidad que de verdad aplica el candado, public.mercado_monetizable:
+--          PERMITIDO -> volteo la declaracion a permitido=false -> BLOQUEADO ->
+--          restauro -> PERMITIDO. Esa es la funcion que la cadena de dinero
+--          consulta ahora. La parte vacua queda pendiente de probar el dia que
+--          haya un pick monetizable.
+--
+-- ROLLBACK de ISS217: drop table v2.iss217_lookahead_nfl,
+--   v2.iss217_prueba_lookahead_asof, v2.iss217_prueba_barrera_fut,
+--   v2.iss217_reincidencia_gates; drop function v2.iss217_elo_nfl_truncado(text).
+--   Ninguno de estos objetos participa en produccion: son evidencia.
