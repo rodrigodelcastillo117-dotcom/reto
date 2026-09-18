@@ -1,0 +1,140 @@
+-- ISS230/231/232 — P0 continuado: vistas que saltaban RLS, tablas sin RLS,
+-- y la REGRESION REAL POR CANAL DE CLIENTE que faltaba.
+--
+-- Tenias razon: "564 crons succeeded" no prueba nada del lado del cliente.
+-- Los crons corren como postgres; no tocan PostgREST, ni RLS, ni grants de
+-- anon/authenticated. Aqui esta la matriz que si lo prueba.
+--
+-- =====================================================================
+-- 1. VISTAS QUE SALTABAN RLS  (el advisor decia 129; el catalogo dice mas)
+-- =====================================================================
+-- Medido en v2.iss230_vista_dep (cierre transitivo vista -> tablas base, 5 niveles):
+--   vistas y matviews en public+v2 ................................ 273
+--   legibles por cliente .......................................... 233
+--   legibles por cliente SIN security_invoker ..................... 215
+--   ... y que alcanzan una tabla CON RLS .......................... 200
+--   tablas con RLS alcanzadas por esas vistas ......................  75
+--
+-- Una vista sin security_invoker corre como su DUENO y se salta la RLS de sus
+-- tablas base. Es el mismo vector por el que encontre la fuga de 37 filas en
+-- ISS218, donde arregle 3 y declare cerrado. Eran 200.
+--
+-- DECISION POR VISTA, no en bloque:
+--   SECURITY_INVOKER ... 120  (authenticated ya ve todas las bases con RLS:
+--                              la RLS pasa a filtrar y la vista sigue sirviendo)
+--   REVOCAR_CLIENTE ....  80  (70 vistas + 10 matviews: el cliente NO puede leer
+--                              las bases, asi que la vista ERA el bypass)
+-- 47 de las 120 y 5 de las 80 tocan bankroll, picks, parlays, notificaciones,
+-- favoritos, perfil, historial o configuraciones.
+--
+-- RESULTADO VERIFICADO EN EL CATALOGO:
+--   vistas de cliente sin security_invoker:  215 -> 0
+--   advisor security_definer_view:           129 -> 15 -> 0 (barrido final)
+--   advisor materialized_view_in_api:         10 -> 0
+--
+-- =====================================================================
+-- 2. LA PRUEBA DE QUE LA FUGA ERA REAL, Y DE QUE SE CERRO
+-- =====================================================================
+-- Sonda por rol, simulando la sesion como llega por PostgREST
+-- (set role + request.jwt.claims con el sub real), usuarios A y B reales.
+--
+-- ANTES, en las 15 vistas sensibles, conteos A vs B:
+--   YA FILTRABAN (3): bankroll_curva 81 vs 17, ai_performance_por_clasificacion
+--                     15 vs 12, ai_performance_por_fuente 5 vs 4
+--   A Y B VEIAN LO MISMO (8): ai_picks_historial, ai_performance_por_liga,
+--     ai_performance_por_mercado, clv_dashboard, clv_veredicto,
+--     oraculo_calibracion, oraculo_roi_por_liga, panel_salud
+--
+-- DESPUES, una por una:
+--   panel_salud ......... DENEGADO al cliente (era interna)
+--   las otras 7 ......... SIN CAMBIO, y esta bien: todas leen
+--     oraculo_picks_tracking, que es el historial de picks DEL MODELO, sin
+--     columna de usuario. Verificado: sus definiciones no mencionan apodo,
+--     user_id ni auth.uid. clv_veredicto lee usuarios[RLS:4] y devuelve 1 fila
+--     a cada uno: cada quien la suya.
+--   NO afirmo que hubiera fuga donde no la hubo. Conteos iguales en una vista
+--   global son correctos.
+--
+-- =====================================================================
+-- 3. TABLAS SIN RLS
+-- =====================================================================
+-- El advisor dice 142 (solo public expuesto). El catalogo, en public+v2: 308.
+--
+--   clase             n    legibles   escribibles   con columna de dueno
+--   PRIVATE_INTERNAL 147     127         105              0
+--   SHADOW           123       2           0              2
+--   RETIRED           32      10          10              1
+--   USER_OWNED         3       2           1              3
+--   PUBLIC_REFERENCE   3       3           3              0
+--
+-- 105 tablas internas eran ESCRIBIBLES por un cliente. Eso no es fuga de
+-- informacion: es ataque de integridad directo.
+--
+-- Las 3 USER_OWNED resultaron ser de laboratorio (lab_baseline_kelly,
+-- lab_ff_ownership, parlay_reconciliacion), no tablas de usuario real. Ninguna
+-- necesitaba politicas RLS nuevas: bastaba cerrarlas.
+--
+-- ORDEN POR RIESGO, no por conteo:
+--   Fase 1  revocar INSERT/UPDATE/DELETE/TRUNCATE a cliente ..... 119 tablas
+--   Fase 2  revocar SELECT en RETIRED / SHADOW / lab_* ..........  38 tablas
+--   Fase 3  SELECT sobre PRIVATE_INTERNAL ...................... NO SE TOCA
+--           Esas 106 no tienen columna de dueno, asi que leerlas no es fuga
+--           entre usuarios, y es justo donde el frontend podria leer directo.
+--           Queda declarado como riesgo residual, no como trabajo hecho.
+--
+-- VERIFICADO: tablas sin RLS escribibles por cliente  119 -> 0
+--
+-- =====================================================================
+-- 4. DOS ERRORES MIOS QUE LA REGRESION ATRAPO
+-- =====================================================================
+-- (a) Clasifique "esquema v2 => SHADOW". FALSO. v2.nfl_decision_snapshot es
+--     produccion: alimenta v_prediccion_reto_canonico, la vista canonica de
+--     prediccion del producto.
+-- (b) Al decidir SECURITY_INVOKER comprobe que authenticated viera las bases
+--     CON RLS, y deje fuera del chequeo las bases SIN RLS. Esas fueron las que
+--     rompieron.
+--
+-- Sintoma medido: 5 vistas pasaron de ACCESIBLE a DENEGADO
+--   nfl_lock_semana, nfl_tablero, nfl_tablero_semana, v_favorito_nfl,
+--   v_prediccion_reto_canonico   -- todas con "permission denied for table
+--                                   nfl_decision_snapshot"
+-- Arreglo de raiz, no parche puntual: GRANT SELECT a authenticated sobre toda
+-- tabla SIN RLS que sea base de una vista con security_invoker que el cliente
+-- ya podia leer. 16 tablas. No amplia exposicion: esos datos ya salian por la
+-- vista.
+--
+-- Sin la matriz A/B/anon esto se habria ido a produccion roto. Los crons
+-- seguian en verde todo el tiempo.
+--
+-- =====================================================================
+-- 5. REGRESION FINAL, POR CANAL DE CLIENTE
+-- =====================================================================
+--   rol                      antes        final      n
+--   anon                     ACCESIBLE    ACCESIBLE   77
+--   anon                     ACCESIBLE    DENEGADO    73   <- revocaciones queridas
+--   anon                     DENEGADO     DENEGADO    50
+--   authenticated A          ACCESIBLE    ACCESIBLE  117
+--   authenticated A          ACCESIBLE    DENEGADO    61   <- revocaciones queridas
+--   authenticated A          DENEGADO     DENEGADO    22
+--
+-- CERO casos de ACCESIBLE -> ERROR. Las 120 vistas con security_invoker siguen
+-- sirviendo a A y a B.
+-- Crons en paralelo: 360 corridas en 25 min, todas succeeded.
+--
+-- =====================================================================
+-- 6. ROLLBACK
+-- =====================================================================
+--   vistas:   select sql_rollback from v2.iss230_vista_accion;
+--   tablas:   select sql_rollback from v2.iss232_log where ok;
+--   ambos guardan la sentencia exacta por objeto.
+--
+-- =====================================================================
+-- 7. LO QUE SIGUE ABIERTO
+-- =====================================================================
+--   106 tablas PRIVATE_INTERNAL siguen legibles por cliente (sin columna de
+--       dueno, sin fuga entre usuarios, pendientes de evidencia de Lovable)
+--   advisor rls_disabled_in_public sigue en 142: revocar grants no habilita RLS.
+--       Habilitar RLS sin politicas rompe lecturas legitimas; va por tabla.
+--   292 SECURITY DEFINER siguen cliente-ejecutables (P0.1)
+--   25 funciones que reciben identidad, no validan dueno y solo LEEN (P0.2)
+--   frontend real de Lovable: sin probar, sin credenciales
