@@ -1,0 +1,95 @@
+-- ISS202 · MLB migrado al cerebro canonico, sin perder cobertura
+--
+-- ===========================================================================
+-- CORTE UNICO DE AUDITORIA: 2026-09-18 00:20:39 UTC
+-- ===========================================================================
+-- Por que antes bailaban los numeros (45 vs 38, luego 32 vs 27, luego 46 vs 28):
+-- eran FOTOGRAFIAS A DISTINTAS HORAS. Los partidos empiezan y salen de la
+-- ventana de futuro. Con un solo corte y una ventana explicita el cuadro es
+-- exacto:
+--   elegibles 72h ............ 46
+--   elegibles 48h ............ 28
+--   canonico ................. 28  (= 100% de su horizonte de entonces)
+--   motor viejo .............. 46
+--   interseccion ............. 28
+--   solo viejo ............... 18  (TODOS por encima de 48h)
+--   solo canonico ............  0
+--   favoritos distintos ...... 11 de 28  (39%)
+--   diferencia media / maxima  6.27 pp / 20.30 pp
+-- La unica diferencia estructural era el HORIZONTE. Ni duplicados, ni fuera de
+-- temporada, ni equipos sin normalizar, ni contaminacion.
+--
+-- ===========================================================================
+-- CONSUMIDORES REALES, Y UNA CORRECCION MIA
+-- ===========================================================================
+-- Yo afirme dos veces que "Favoritos y Destacados usan el motor viejo". La
+-- direccion era correcta pero el mecanismo estaba MAL: reto_registrar_favoritos
+-- y refrescar_destacados NO llaman a predecir_mlb; solo lo mencionan en
+-- comentarios. La cadena real es indirecta:
+--   predecir_mlb -> v_picks_mlb_modelo -> v_pick_canonico -> reto_registrar_favoritos
+--                                                         -> reto_picks_hoy__base
+--                                                         -> revisar_apuesta__base
+--                                                         -> seleccionar_picks_seguro_valor
+-- v_pick_canonico SI tiene grant a anon y authenticated. v_picks_mlb_modelo NO.
+-- predecir_partido no es ejecutable por anon ni authenticated y registro 0
+-- llamadas en 19 horas.
+--
+-- Llamadas REALES a predecir_mlb (no comentarios):
+--   PRODUCCION: v_picks_mlb_modelo, predecir_partido, refrescar_mlb_totales_grid
+--   LABORATORIO/MEDICION (legitimo, es su objeto de estudio): bt_predecir_mlb,
+--     lab_mlb_drain_forward, fn_mlb_runtime_version,
+--     capture_mlb_learning_snapshot, capture_mlb_canonical_forward_v1
+--
+-- ===========================================================================
+-- EL HORIZONTE DE 48h ERA ARBITRARIO
+-- ===========================================================================
+-- Se probo: los 18 partidos entre 48 y 72 horas devuelven status READY con
+-- moneyline desde mlb_one_brain_v2. No era una decision de frescura de datos;
+-- era un limite que obligaba a elegir entre coherencia y cobertura.
+-- v_mlb_publication_v1: 48h -> 72h.
+-- Costo medido: ~74 ms por llamada al cerebro, 46 eventos ~ 3.4 s.
+-- Resultado: 46 elegibles, 46 publicados, 0 sin cobertura.
+--
+-- ===========================================================================
+-- LA MIGRACION
+-- ===========================================================================
+-- 1. Respaldo exacto: public.v_picks_mlb_modelo_legacy_v0 (definicion vieja
+--    intacta, no la consume nadie).
+-- 2. public.v_picks_mlb_modelo reescrita: sale EXCLUSIVAMENTE de
+--    v_mlb_publication_v1 (mlb_one_brain_v2). Cero llamadas extra al cerebro:
+--    totales, carreras esperadas e insumos ya viajan dentro de provenance.
+--    confiable y brecha_pp -> NULL. Venian de edge_vs_mercado, o sea de comparar
+--    contra el precio. No se fabrica un sustituto falso: se declara no disponible.
+-- 3. v2.refrescar_mlb_totales_grid reescrita: del motor retirado al canonico.
+--    El canonico produce UNA linea (la de la casa), no una rejilla. No se
+--    inventan las demas. Se guarda bajo su clave y bajo '8.5' solo si la linea
+--    canonica ES 8.5, porque la tarjeta usa esa clave como respaldo.
+--    marcador_mas_probable va NULL: el canonico no lo produce.
+--
+-- ===========================================================================
+-- VERIFICACION POSTERIOR
+-- ===========================================================================
+--   filas 114 | eventos 46 | Moneyline 92 | Over/Under 22
+--   EV residual (confiable/brecha_pp no nulos) ....... 0
+--   probabilidades fuera de rango ................... 0
+--   duplicados (evento, mercado, pick) .............. 0
+--   intended_game_date distinta ..................... 0
+--   equipos sin normalizar .......................... 0
+--   elegibles ahora 46 | cubiertos 46 | sin cobertura 0 | cubiertos no elegibles 0
+--   gate_tarjetas_mlb ............................... 0 FAIL
+--   tarjetas de beisbol servidas .................... 85
+--   consumidores de produccion de predecir_mlb que quedan: predecir_partido
+--     (no ejecutable por anon ni authenticated, 0 llamadas en 19 h)
+--
+-- Favoritos distintos entre el antes y el despues: 10 de 28. Ese ES el cambio
+-- que se buscaba: la tarjeta y Favoritos ahora dicen lo mismo.
+--
+-- ===========================================================================
+-- ROLLBACK EXACTO
+-- ===========================================================================
+--   create or replace view public.v_picks_mlb_modelo as
+--     select * from public.v_picks_mlb_modelo_legacy_v0;
+--   -- horizonte: volver '72:00:00' a '48:00:00' en v_mlb_publication_v1
+--   -- grid: restaurar la version anterior de v2.refrescar_mlb_totales_grid
+--          (llamaba a public.predecir_mlb y guardaba j->'prediccion'->'totales')
+-- Nada se borro. predecir_mlb sigue existiendo y funcionando.
