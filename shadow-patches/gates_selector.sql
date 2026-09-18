@@ -216,3 +216,15 @@ select * from v2.escritor_autorizado order by tipo, objeto;
 -- (7-28 s), CERO ligas instaladas. n_usable promedio 2.4 contra un minimo de 20;
 -- 0 de 39 alcanzarian el umbral. MI PREDICCION DE ISS221 ERA FALSA: drenar el
 -- backlog no instala phi. El cuello es la muestra cruzada, no el cron.
+
+-- ISS223 (2026-09-18). FASE 3 Paso 1: reproducibilidad de NFL LOGRADA.
+-- Causa de las 10/42 diferencias: el tratamiento de los EMPATES. Mi
+-- reimplementacion de ISS217 daba 0 a los dos lados (los marcadores no sumaban
+-- 1 y cada empate fugaba un punto de masa); ISS211 usaba sh_home=0, sh_away=1.
+-- 13 empates en la fuente, 11 de ellos en pretemporada. Todo equipo divergente
+-- es participante de un empate o rival de uno; New England 3 de 3.
+-- Matriz 2x2 decisiva: solo empate=0 + agosto incluido colapsa el error.
+-- delta maximo 0.055713 -> 0.000127; 9 de 10 por debajo de 0.0001.
+-- Descartadas con medicion: duplicados (0), Washington (0 de 10), Pro Bowl
+-- (0 de 10), deriva temporal (mismo dia con deltas de 0.00001 y 0.055).
+-- El veredicto NO cambia: el IC95 sigue cruzando cero. Reproducible no es valido.

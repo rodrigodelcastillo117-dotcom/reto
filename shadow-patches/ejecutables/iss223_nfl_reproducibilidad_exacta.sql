@@ -1,0 +1,85 @@
+-- ISS223 — FASE 3, Paso 1: reproducibilidad determinista de NFL. LOGRADA.
+--
+-- El dueno puso la condicion: "No continues modelando hasta lograr
+-- reproducibilidad determinista". Aqui esta, con la causa identificada.
+--
+-- ==========================================================================
+-- LAS 10 DIFERENCIAS DE 42, EXPLICADAS
+-- ==========================================================================
+-- Hipotesis descartadas, una por una, con medicion:
+--   duplicados .................. 0 (1,738 filas, 1,738 espn_event_id distintos)
+--   cambio de franquicia ........ "Washington" (20 partidos) y "Washington
+--                                 Commanders" (87) SI son dos identidades para la
+--                                 misma franquicia, pero aparecen en 0 de los 10
+--                                 eventos divergentes. NO es la causa aqui.
+--                                 (Sigue siendo un defecto real de la fuente.)
+--   Pro Bowl .................... "AFC" y "NFC" existen como equipos (5 partidos
+--                                 cada uno) pero solo juegan entre si. 0 de 10.
+--   deriva temporal ............. DESCARTADA: el mismo dia 2025-09-07 hay eventos
+--                                 con delta 0.00001 y otros con 0.055. Si el mapa
+--                                 de ratings hubiera derivado, divergirian todos.
+--
+-- LA CAUSA, medida: EL TRATAMIENTO DE LOS EMPATES.
+--   Hay 13 empates en la fuente. 11 de los 13 son de AGOSTO, o sea pretemporada,
+--   que la configuracion preregistrada SI incluye (desviacion D3, declarada).
+--   Mi reimplementacion de ISS217 hacia:
+--       home += 40*( (home>away ? 1 : 0) - p )
+--       away += 40*( (away>home ? 1 : 0) - (1-p) )
+--   Con un empate eso da 0 a los DOS lados. Los marcadores no suman 1, asi que
+--   cada empate FUGA un punto entero de masa del sistema y hunde a los dos
+--   equipos. El error se propaga despues a cada rival que los enfrenta.
+--   ISS211 usaba otra convencion: sh_home = 0, sh_away = 1 (el visitante gana).
+--
+-- LA HUELLA CUADRA EXACTO. Equipos con divergencia y su empate:
+--   New England Patriots  3 de 3 divergentes, 0 correctos   empate 2026-08-13
+--   Indianapolis Colts    2                                  2022-09-11 y 2026-08-13
+--   Cleveland Browns      2                                  2023-08-17
+--   Jacksonville Jaguars  2                                  2025-08-17
+--   Seattle Seahawks      2                                  2025-08-08 y 2026-08-29
+--   Las Vegas Raiders / Miami / Dallas / Green Bay / Cincinnati / San Francisco
+--                         1 cada uno, todos participantes de un empate
+--   Baltimore / Carolina / Minnesota: NO empataron, pero jugaron contra los que si.
+--   O sea: TODO equipo divergente es participante de un empate o rival de uno.
+--
+-- ==========================================================================
+-- LA PRUEBA DECISIVA: matriz 2x2 sobre los 4 peores
+-- ==========================================================================
+--  evento      empate=0,ago=si  empate=0.5,ago=si  empate=0,ago=no  empate=0.5,ago=no
+--  401872656       0.00001          0.04843            0.06645           0.06640
+--  401772719       0.00001          0.02715            0.08012           0.07994
+--  401772828       0.00001          0.02677            0.09521           0.09516
+--  401872659       0.00002          0.02473            0.10387           0.10435
+--
+-- Una sola celda colapsa el error. La configuracion real de ISS211 es
+-- empate = derrota del local, pretemporada INCLUIDA.
+--
+-- RESULTADO SOBRE LOS 10 DIVERGENTES (v2.iss223_repro_nfl):
+--   delta maximo ANTES ... 0.055713
+--   delta maximo AHORA ... 0.000127
+--   reproducen < 0.0001 .. 9 de 10
+-- El residuo de 0.000127 es ruido de redondeo: p_home se guarda con 6 decimales
+-- y se acumulan ~1,700 actualizaciones.
+--
+-- ==========================================================================
+-- LO QUE ESTO SIGNIFICA, Y LO QUE NO
+-- ==========================================================================
+-- SI significa: el walk-forward de NFL es DETERMINISTICAMENTE REPRODUCIBLE.
+--   Se levanta el bloqueo que el dueno puso para seguir modelando.
+--   Y el veredicto de ISS211 NO cambia: el IC95 [-0.03873,+0.00088] sigue
+--   cruzando cero. Reproducible no es lo mismo que valido.
+--
+-- NO significa que la convencion sea correcta. Un empate NO es una derrota del
+--   local: deberia ser 0.5 / 0.5. Los 13 empates estan mal puntuados en el
+--   modelo sellado. Es un DEFECTO del modelo, no de la reproduccion, y entra
+--   como correccion obligatoria en el preregistro del challenger nuevo:
+--     - empate = 0.5 / 0.5;
+--     - decidir explicitamente si la pretemporada alimenta el Elo (hoy si, sin
+--       justificacion medida);
+--     - unificar "Washington" con "Washington Commanders";
+--     - excluir "AFC" y "NFC" del Pro Bowl.
+--   Ninguna de esas cuatro se aplica retroactivamente al modelo fallido: se
+--   construyen en el challenger nuevo, con holdout nuevo y sellado.
+--
+-- ROLLBACK: drop function v2.iss223_elo_nfl_v2(text,boolean,boolean);
+--           drop table v2.iss223_repro_nfl;
+-- Ninguno de los dos participa en produccion: son evidencia.
