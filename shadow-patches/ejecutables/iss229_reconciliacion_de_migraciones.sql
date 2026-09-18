@@ -1,0 +1,92 @@
+-- ISS229 — P0.5: RECONCILIACION DE MIGRACIONES.
+--
+-- Tenias razon en el senalamiento: durante ISS224 use Apply migration mientras
+-- iteraba, y llego a existir una version rota. Auditoria completa abajo.
+--
+-- =====================================================================
+-- 1. LO PRIMERO: ESTE REPO NO TIENE CARPETA DE MIGRACIONES
+-- =====================================================================
+--   find . -type d -name migrations  ->  (vacio)
+--   no existe supabase/  ni supabase/migrations/
+-- La convencion establecida de este proyecto (ISS214..ISS228) es:
+--   - el cambio se aplica al servidor;
+--   - shadow-patches/ejecutables/*.sql documenta QUE se aplico y el rollback.
+-- Asi que "reconciliar repo y servidor" aqui NO puede significar comparar
+-- archivos de migracion contra remotas: no hay archivos. Significa que cada
+-- objeto tenga su definicion canonica documentada en shadow-patches. Lo digo
+-- explicito para no fingir una reconciliacion que este repo no soporta.
+--
+-- =====================================================================
+-- 2. TABLA DE RECONCILIACION  (16 migraciones remotas del 2026-09-18)
+-- =====================================================================
+-- version         | nombre remoto                                | estado      | objeto                        | accion
+-- 20260918095433  | iss224_phi2_membresia_punto_en_el_tiempo     | CANONICA    | v2.phi2_membresia, phi2_registro | conservar
+-- 20260918095500  | iss224_phi2_puente_tabla                     | CANONICA    | v2.phi2_puente                | conservar
+-- 20260918095811  | iss224_phi2_fit                              | SUPERSEDED  | v2.phi2_fit (numeric)         | historica
+-- 20260918095942  | iss224_phi2_fit_v2_sin_ddl_en_bucle          | ROTA        | v2.phi2_fit (placeholder)     | historica
+-- 20260918100008  | iss224_phi2_fit_v3                           | SUPERSEDED  | v2.phi2_fit (numeric, ok)     | historica
+-- 20260918100628  | iss224_phi2_fit_float8                       | CANONICA    | v2.phi2_fit                   | conservar
+-- 20260918100734  | iss224_phi2_eval_y_cv                        | PARCIAL     | phi2_eval + phi2_cv*          | tablas canonicas, funcion superseded
+-- 20260918101310  | iss224_phi2_eval_una_sola_llamada            | SUPERSEDED  | v2.phi2_eval                  | historica
+-- 20260918101458  | iss224_phi2_eval_setbased                    | CANONICA    | v2.phi2_eval                  | conservar
+-- 20260918101719  | iss224_phi2_perfil_incertidumbre             | CANONICA*   | v2.phi2_perfil, phi2_estimacion | *parcheada fuera de migracion
+-- 20260918101908  | iss224_phi2_puntuar_por_evento               | CANONICA    | v2.phi2_puntuar               | conservar
+-- 20260918102313  | iss224_candado_execute_public_en_funciones_nuevas | SUPERSEDED | tg_funcion_nueva_sin_public | historica
+-- 20260918110151  | iss227_candado_execute_con_allowlist         | CANONICA    | tg_ + allowlist + log         | conservar
+-- 20260918110340  | iss228_inventario_funciones_secdef           | CANONICA    | v2.iss228_inventario_funcion  | conservar
+-- 20260918110622  | iss228_contar_consumidores_por_lotes         | CANONICA    | v2.iss228_contar_consumidores | conservar
+-- 20260918110820  | iss228_revocar_por_firma_con_rollback        | CANONICA*   | v2.iss228_revocar             | *parcheada fuera de migracion
+--
+-- Balance: 16 remotas, 10 canonicas, 5 superseded, 1 ROTA (la del placeholder).
+-- Ninguna superseded ni la rota tiene objeto vivo: fueron reemplazadas por
+-- CREATE OR REPLACE de la canonica. No hay que borrarlas del historial (eso
+-- rompe la trazabilidad); quedan marcadas aqui como historicas.
+--
+-- =====================================================================
+-- 3. CAMBIOS APLICADOS AL SERVIDOR SIN ENTRADA DE MIGRACION
+-- =====================================================================
+-- Todos via execute_sql + bloque DO con verificacion de coincidencia exacta
+-- (c<>1 -> raise). Quedan documentados aqui porque en el historial remoto NO
+-- aparecen:
+--   a) alter function v2.phi2_eval(...) volatile
+--      motivo: SET no se permite en una funcion STABLE.
+--   b) v2.phi2_eval: fn_dist_from_lambda con casts a numeric (luego superseded
+--      por la version set-based).
+--   c) v2.phi2_perfil: insercion de "#variable_conflict use_column"
+--      motivo: los parametros OUT (lid, th, lo, hi...) chocaban con columnas.
+--   d) v2.phi2_fit: "drop table if exists _lg/_th" al inicio
+--      motivo: on commit drop no sirve si el CV la llama varias veces en la
+--      misma transaccion.
+--   e) v2.iss228_revocar: agregar "revoke ... from public" y
+--      "grant execute ... to service_role"
+--      motivo: sin quitar PUBLIC la revocacion no servia de nada.
+--   f) alter default privileges for role postgres in schema v2/public
+--      (probado ineficaz, ver ISS227; se deja porque no hace dano)
+--
+-- =====================================================================
+-- 4. ESTADO FINAL, VERIFICADO EN EL CATALOGO
+-- =====================================================================
+--   funciones v2.phi2* ................... 5
+--   sobrecargas duplicadas ............... 0   <- una definicion por objeto
+--   definiciones rotas o con placeholder . 0
+--   funciones en numeric ................. 0   (todas float8)
+--   tablas v2.phi2* ...................... 8
+--   tablas v2.iss22x* .................... 7
+--   migraciones aplicadas hoy ............ 16
+--
+-- =====================================================================
+-- 5. LA REGLA QUE ADOPTO DE AQUI EN ADELANTE
+-- =====================================================================
+-- No mas Apply migration durante la experimentacion. Se itera con execute_sql
+-- y se emite UNA migracion limpia al cerrar el objeto. Las 10 de ISS224 debieron
+-- ser 4. Es un costo que me cobre solo y que ensucia el historial.
+--
+-- =====================================================================
+-- 6. ROLLBACK
+-- =====================================================================
+-- Por bloque, en su propio archivo:
+--   ISS224 (phi2)       -> iss224_phi_v2_jerarquico_resultado.sql seccion 7
+--   ISS227 (candado)    -> iss227_default_privileges_investigado.sql
+--   ISS228 (revocadas)  -> iss228_inventario_y_cierre_de_funciones.sql seccion 5
+-- Los tres probados: el de ISS228 se ejecuto de hecho en la pasada de
+-- reparacion (se limpio revocada_at y se reejecuto sobre las 254).
