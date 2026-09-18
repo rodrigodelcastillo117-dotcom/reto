@@ -34,3 +34,13 @@ select * from v2.cerebro_autorizado order by deporte, rol, model_version;
 --- G45.5-G45.8: quien PUEDE escribir, no solo lo ya escrito (ISS200) ---
 select * from public.gate_escritores_declarados();
 select * from v2.escritor_autorizado order by tipo, objeto;
+
+-- ISS206 (2026-09-18). NFL: gates afectados y su estado medido.
+--   gate_p_reto_sin_precio / P_RETO_SUSTITUIDO_POR_PRECIO      FAIL -> PASS (0)
+--   gate_p_reto_sin_precio / P_RETO_SUSTITUCION_SIN_REVISAR    FAIL -> PASS (0)
+--   gate_linaje_de_writers / MODELO_EN_PRODUCCION_SIN_MOTOR    FAIL -> PASS (0)
+--   gate_linaje_de_writers / MOTOR_SIN_MODELO_REGISTRADO       FAIL (7)  sigue igual, es seccion D
+--   gate_linaje_de_writers / CALIBRADOR_SIN_AUTORIDAD          FAIL (0)  sigue igual, es seccion D
+-- Prueba adversarial de la barrera de NFL (v2.fn_nfl_legacy_predicciones_failclosed):
+-- cuatro contrabandos en una fila, los cuatro rechazados. Ver T7 en
+-- shadow-patches/ejecutables/iss206_nfl_cinco_cerebros_y_el_precio_como_probabilidad.sql
