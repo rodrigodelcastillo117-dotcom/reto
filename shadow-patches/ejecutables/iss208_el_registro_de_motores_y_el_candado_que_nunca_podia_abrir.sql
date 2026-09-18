@@ -1,0 +1,150 @@
+-- ISS208 — El registro de motores, y el candado que NUNCA podia abrir
+--
+-- Seccion D del mandato. Y en el camino, el hallazgo que explica por que la app
+-- llevaba dias sin publicar un solo pick.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- EL HALLAZGO: el candado de elegibilidad no podia abrir NI EN TEORIA
+-- ─────────────────────────────────────────────────────────────────────
+-- public.v_pick_canonico llamaba a elegibilidad_no_economica_v1 pasandole
+--     'feature_asof', NULL::text
+-- y ese predicado exige
+--     feature_asof IS NOT NULL AND evento_at IS NOT NULL AND feature_asof < evento_at
+-- Con NULL, tiempo_ok es SIEMPRE falso. O sea: ningun pick del selector canonico
+-- podia ser elegible, pasara lo que pasara con el resto de los criterios.
+-- Medido antes del parche: 498 filas en v_pick_canonico, las 498 con
+-- es_pick = false. Y registrar el model_version, por si solo, no habria
+-- encendido nada: habria movido el motivo de SIN_MODEL_VERSION a
+-- SIN_LINAJE_MEDIDO, y el producto seguiria oscuro.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- D1) Los dos cerebros canonicos entran a public.modelo_registry
+-- ─────────────────────────────────────────────────────────────────────
+-- Hasta hoy NO estaban, y por eso modelo_de_pick() devolvia NULL.
+--
+-- soccer_canonical_v2  -> PRODUCCION
+--   Es lo que declaran los 138 eventos de v_futpro_publication_v3
+--   (model_name=reto_soccer_canonical, canonical_pick_version=soccer_1x2_argmax_v2,
+--   model_status=READY) y de ahi salen las 414 filas Moneyline de
+--   v_picks_futbol_calibrado.
+--   A FAVOR: n=161, Brier 0.6084 contra 0.6667 de adivinar, IC95 [-0.1036,-0.0128];
+--            el intervalo no cruza cero.
+--   EN CONTRA, registrado: en el pareado de ISS201 (n=96, 11 ligas) el margen
+--            contra adivinar fue -0.03678 con IC95 [-0.09636,+0.02025], que SI
+--            CRUZA CERO. La afirmacion "le gana a adivinar" descansa en el
+--            conjunto de 161, no en el de 96. Le gano a Dixon-Coles por +0.04051
+--            IC95 [+0.00049,+0.08032], con el limite inferior en el filo, y
+--            Dixon-Coles le gano en acierto (47.92% contra 46.88%).
+--
+-- mlb_one_brain_v2 -> PRODUCCION, con una advertencia que es un hallazgo nuevo:
+--   Es lo que declaran los 30 eventos de v_mlb_publication_v1 y de ahi salen las
+--   60 filas Moneyline + 22 Over/Under de v_picks_mlb_modelo y las 85 tarjetas.
+--   PERO SU VALIDACION NO ESTA SELLADA:
+--     * v_mlb_publication_v1 devuelve brier_model y brier_delta_upper95 en NULL
+--       en las 30 filas;
+--     * la unica autoridad de MLB que existe, v_mlb_canonical_release_authority_v1,
+--       NO habla de este model_version. Sella mlb_canonical_v1 con candidato
+--       C0-prod-2026-09 y lo sella asi: n_oos_events=1,
+--       validation_status=FORWARD_SAMPLE_INSUFFICIENT, scientific_ready=false,
+--       product_release_authorized=false, money_authorized=false,
+--       supported_calibration_buckets=0.
+--   O sea: la autoridad de MLB dice NO AUTORIZADO para otro nombre, y el nombre
+--   que de hecho publica no tiene autoridad ninguna. Queda escrito en
+--   motivo_estado, no en una nota al pie.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- D2) public.motor_modelo_mapa: 7 filas con model_version NULL -> 4 con modelo real
+-- ─────────────────────────────────────────────────────────────────────
+-- LLENADAS con el modelo que de verdad las sirve:
+--   motor_futbol_calibrado / soccer   / Moneyline  -> soccer_canonical_v2
+--   motor_mlb_cuantitativo / baseball / Moneyline  -> mlb_one_brain_v2
+--   motor_mlb_cuantitativo / baseball / Over/Under -> mlb_one_brain_v2
+--   (motor_nfl_hibrido / football / Moneyline -> nfl_hybrid_ml_v1, de ISS206)
+--
+-- RETIRADAS, con registro en v2.mercado_retirado, porque no sirven a nada:
+--   motor_futbol_calibrado / soccer / Over/Under  -- mercado retirado en ISS194
+--       (p_over calibrado 0.5436 IC95 [0.0065,0.0808] y lambda+Poisson 0.5424
+--        IC95 [0.0057,0.0792] sobre n=152: los dos peor que un volado)
+--   motor_futbol_calibrado / soccer / BTTS        -- no monetizable desde ISS205
+--   motor_picks / soccer / Moneyline              -- MEDIDO: aporta 0 de las 498
+--       filas de v_pick_canonico. Su unico consumidor con nombre propio era
+--       v_super_pick, retirada en ISS206. Se retira en lugar de registrarle un
+--       modelo: no hay ningun modelo que registrarle.
+--   motor_picks / soccer / Over/Under             -- igual, y mercado retirado
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- D3) CONTRADICCION QUE YO METI EN ISS205 Y QUE AQUI SE CORRIGE
+-- ─────────────────────────────────────────────────────────────────────
+-- En ISS205 declare v2.mercado_monetizable baseball/Moneyline = true y
+-- baseball/Over-Under = true. Las dos cosas contradicen evidencia que YA ESTABA
+-- en la base y que yo no confronte:
+--   * Moneyline: public.mercados_sin_modelo.mlb_moneyline_sin_modelo esta ACTIVO
+--     desde el 2026-09-11 con 800 partidos liquidados, Brier 0.24707 contra
+--     0.25000 de un volado y 0.2486 de "siempre gana el local", e historial
+--     publicado de 1 de 8.
+--   * Las dos: v_mlb_canonical_release_authority_v1 tiene money_authorized=false,
+--     market_scope=MONEYLINE_ONLY, spread_total_authorized=false y
+--     validation_status=FORWARD_SAMPLE_INSUFFICIENT.
+-- Las dos pasan a false. Resultado: el UNICO mercado monetizable del sistema es
+-- soccer/Moneyline.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- D4) public.feature_asof_de_pick(text,text): el corte de datos real
+-- ─────────────────────────────────────────────────────────────────────
+-- Devuelve el corte de datos de cada deporte desde la fuente BARATA, no desde la
+-- vista de publicacion (esa llama al motor una vez por fila):
+--   futbol  -> v2.soccer_prediction_v2.data_asof del model_version AUTORIZADO
+--   beisbol -> public.mlb_stats_cache.cached_at, que es exactamente lo que
+--              v_mlb_publication_v1 publica como data_asof y decision_time
+--   NFL     -> v2.nfl_decision_snapshot.data_asof del model_version AUTORIZADO
+-- Si no hay corte devuelve NULL y el pick sigue fail-closed. No se inventa una
+-- fecha para que el candado pase.
+--
+-- Parche a v_pick_canonico con disciplina de exactamente-una-vez: se verifico que
+-- la cadena "'feature_asof', NULL::text" aparecia EXACTAMENTE 1 vez antes de
+-- reemplazarla, y la funcion levanta excepcion si no.
+--
+-- MEDIDO despues: 496 filas, las 496 con corte de datos no nulo y ESTRICTAMENTE
+-- ANTERIOR al evento (414 de futbol, 82 de MLB). El motivo de no-elegibilidad
+-- paso de SIN_MODEL_VERSION a SIN_CALIBRATION_VERSION.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- D5) CALIBRADOR_SIN_AUTORIDAD pasa a INFO, y lo bloqueante se mueve
+-- ─────────────────────────────────────────────────────────────────────
+-- El dueno autorizo bajarlo a INFO si el fail-closed funciona. Funciona, y se
+-- mide. Pero bajar un gate a INFO sin poner otro que bloquee seria quitar el
+-- candado, asi que gate_linaje_de_writers gana un subgate nuevo:
+--   FAIL_CLOSED_SIN_CALIBRADOR = picks con es_pick=true cuyo model_version NO
+--   tiene calibrador vivo para su deporte y mercado. Debe ser 0.
+-- Hoy: 0 de 496 filas, todas con motivo SIN_CALIBRATION_VERSION.
+--
+-- LO QUE SIGUE BLOQUEANDO AL PRODUCTO, dicho sin adorno:
+-- public.calibradores tiene 18 filas, 14 invalidadas, 0 vivas, y NI UNA para
+-- soccer_canonical_v2 ni para mlb_one_brain_v2. Los dos unicos calibradores
+-- elegidos son de mlb_totales_normal_v1 y soccer_1x2_poisson_v1, los dos
+-- CHALLENGER y ninguno apto_para_lock. Sellar un calibrador para el cerebro
+-- canonico de futbol es trabajo de modelado con su propia preregistracion: no se
+-- cierra escribiendo una fila, y no la voy a escribir.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- PRUEBAS
+-- ─────────────────────────────────────────────────────────────────────
+-- T1 modelo_registry: 3 PRODUCCION (soccer_canonical_v2, mlb_one_brain_v2,
+--    nfl_hybrid_ml_v1), 1 COMPONENTE, 3 CHALLENGER, 4 MODEL_REJECTED, 1 RETIRADO. OK
+-- T2 motor_modelo_mapa: 4 filas, las 4 con model_version. 0 con NULL.            OK
+-- T3 v2.mercado_monetizable: soccer/Moneyline es el unico true.                  OK
+-- T4 feature_asof_de_pick: 496 de 496 con corte, 496 de 496 anterior al evento.  OK
+-- T5 Parche exactamente-una-vez aplicado a v_pick_canonico.                      OK
+-- T6 es_pick_reason: SIN_MODEL_VERSION (498) -> SIN_CALIBRATION_VERSION (496).   OK
+-- T7 gate_linaje_de_writers:
+--      MOTOR_SIN_MODELO_REGISTRADO     FAIL(7) -> PASS(0)
+--      MODELO_EN_PRODUCCION_SIN_MOTOR  PASS(0)  (ya venia de ISS206)
+--      CALIBRADOR_SIN_AUTORIDAD        FAIL    -> INFO
+--      FAIL_CLOSED_SIN_CALIBRADOR      nuevo, PASS(0)  [medicion viva]
+--
+-- ROLLBACK
+--   v_pick_canonico: volver a poner 'feature_asof', NULL::text.
+--   motor_modelo_mapa: las 4 filas retiradas estan en v2.mercado_retirado con su
+--     evidencia, se reponen desde ahi.
+--   modelo_registry y mercado_monetizable: los valores anteriores estan en el git
+--     de este repo y en los textos de motivo_estado.

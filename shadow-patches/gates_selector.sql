@@ -53,3 +53,13 @@ select * from v2.escritor_autorizado order by tipo, objeto;
 --   NUEVOS subgates de medicion viva en gate_precio_no_decide:
 --     PRECIO_NO_BORRA_PICKS      PASS(0)  -- ningun pick descartado por motivo economico
 --     RUTA_PRECIO_REVERIFICADA   PASS     -- los inventarios se comparan contra el codigo vivo
+
+-- ISS208 (2026-09-18). Registro de motores y el candado que nunca podia abrir.
+--   gate_linaje_de_writers / MOTOR_SIN_MODELO_REGISTRADO   FAIL(7) -> PASS(0)
+--   gate_linaje_de_writers / CALIBRADOR_SIN_AUTORIDAD      FAIL    -> INFO (por instruccion del dueno)
+--   gate_linaje_de_writers / FAIL_CLOSED_SIN_CALIBRADOR    NUEVO, PASS(0)  [reemplaza el candado]
+-- Hallazgo: v_pick_canonico pasaba feature_asof=NULL a elegibilidad_no_economica_v1,
+-- que exige feature_asof < evento_at. Ningun pick podia ser elegible NI EN TEORIA.
+-- Corregido con public.feature_asof_de_pick(). 496 de 496 filas con corte de datos
+-- real anterior al evento. El motivo paso a SIN_CALIBRATION_VERSION: no hay
+-- calibrador sellado para soccer_canonical_v2 ni para mlb_one_brain_v2.
