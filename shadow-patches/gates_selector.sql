@@ -122,3 +122,37 @@ select * from v2.escritor_autorizado order by tipo, objeto;
 -- y nfl_predecir.
 -- Reparto de los 55 veredictos que faltaban: 25 FALSO_POSITIVO_DETECTOR,
 -- 15 DIAGNOSTICO_NO_DECIDE, 8 DIMENSIONAMIENTO_ECONOMICO, 7 MEDICION_RETROSPECTIVA.
+
+-- ISS215 (2026-09-18). Item 6: calibradores. NO se corrio la prueba.
+-- NUEVO public.gate_calibrador_muestra_suficiente():
+--   CALIBRADOR_SOCCER_MUESTRA       NO_ALCANZA(30 de 450 preregistradas)
+--   CALIBRADOR_MLB_MUESTRA          NO_ALCANZA(9 de 300 preregistradas)
+--   CALIBRADOR_SELLADO_SIN_MUESTRA  PASS(0)
+-- Cero filas en public.calibradores. Los dos cerebros siguen
+-- SIN_CALIBRATION_VERSION y MLB sigue sin picks monetizables.
+
+-- ISS216 (2026-09-18). Item 7: censo global de los SEIS deportes.
+-- NUEVO public.gate_censo_global():
+--   DEPORTE_CON_EVENTOS_Y_SIN_CENSO       PASS(0)
+--   MODELO_FUERA_DEL_PRODUCTO_ALCANZABLE  FAIL(1) -> PASS(0)
+--   CENSO_GLOBAL_FRESCO                   PASS(6)
+-- Cuatro gates que estaban en FAIL midiendo la cosa equivocada:
+--   G45.6  gate_escritores_declarados        FAIL(1) -> PASS(0)
+--   G47.1  gate_btts_no_monetizable          FAIL(2) -> PASS(0) + G47.1b INFO(88)
+--   G46.1  gate_sin_escrituras_post_retiro   FAIL(4) -> PASS(0) + G46.1b INFO(4)
+--   G41.1  gate_tarjeta_universal            FAIL(2) -> PASS(0) + G41.1b INFO(1)
+-- HALLAZGOS EN VIVO:
+--   TENIS tenia tennis_elo_challenger_v1_k8 sin declarar, corriendo cada 3h,
+--   legible por authenticated con RLS apagada, y con brier_holdout PEOR que
+--   0.25 en los siete k probados. Declarado RETADOR y cerrado al cliente.
+--   La cadena de DINERO (reto_picks_hoy__base) NO consultaba
+--   v2.mercado_monetizable: las declaraciones de ISS194/205/208 eran papel
+--   para ese camino. Barrera fail-closed instalada.
+--   v2.team_elo_product_release_gate decia product_authorized=true para NBA y
+--   WNBA, contra v2.cerebro_autorizado y contra la exclusion del dueno.
+-- ESTADO REAL DEL PRODUCTO: los 502 picks de v_pick_canonico estan en
+-- es_pick=false con es_pick_reason='SIN_CALIBRATION_VERSION'. El contrato ya
+-- falla cerrado sin calibrador sellado (FAIL_CLOSED_SIN_CALIBRADOR PASS(0),
+-- 502 filas evaluadas). Encenderlos exigiria inventar una fila en
+-- public.calibradores, que es justo lo prohibido.
+-- BATERIA COMPLETA: 40 funciones gate_*, CERO FAIL productivos.
