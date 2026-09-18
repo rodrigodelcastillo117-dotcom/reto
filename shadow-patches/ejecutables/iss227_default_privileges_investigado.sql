@@ -1,0 +1,96 @@
+-- ISS227 — P0: LA EXPLICACION DEFINITIVA DE LOS DEFAULT PRIVILEGES,
+--              Y LAS PRUEBAS DEL EVENT TRIGGER.
+--
+-- El dueno pidio demostrar, no teorizar. Todo lo que sigue esta medido en
+-- v2.iss227_acl_experimento y v2.iss227_trigger_prueba.
+--
+-- =====================================================================
+-- 1. ¿ISS218 CAMBIO EL ROL EQUIVOCADO?  NO.
+-- =====================================================================
+--   current_user al crear por MCP ........ postgres
+--   session_user ......................... postgres
+--   owner real de la funcion creada ...... postgres
+--   default ACL de postgres en public .... {postgres=X/postgres,service_role=X/postgres}
+--   default ACL de postgres en v2 ........ {postgres=X/postgres,service_role=X/postgres}
+-- El rol creador y el rol del default ACL COINCIDEN. La hipotesis del rol
+-- equivocado queda descartada.
+--
+-- Existe ademas un segundo default ACL, de supabase_admin en public:
+--   {postgres=X,anon=X,authenticated=X,service_role=X}
+-- pero NO aplica, porque el creador es postgres. Y de todas formas no se puede
+-- tocar: "ALTER DEFAULT PRIVILEGES FOR ROLE supabase_admin" devuelve
+--   permission denied to change default privileges
+--
+-- =====================================================================
+-- 2. ¿SIRVE EL REVOKE EN LOS DEFAULT PRIVILEGES?  NO, EN ESTA INSTALACION.
+-- =====================================================================
+-- Con el event trigger DESACTIVADO, cuatro variantes probadas:
+--
+--   paso 1  CREATE OR REPLACE, default ACL tal cual
+--           -> {=X/postgres,postgres=X/postgres,service_role=X/postgres}  anon=SI
+--   paso 2  reaplicando REVOKE EXECUTE ... FROM PUBLIC para el rol creador,
+--           misma transaccion
+--           -> identico                                                   anon=SI
+--   paso 3  intentando tambien para supabase_admin (denegado)
+--           -> identico                                                   anon=SI
+--   paso 4  CREATE plano (no OR REPLACE, no dentro de DO/EXECUTE),
+--           en TRANSACCION SEPARADA del ALTER, en public Y en v2
+--           -> identico en los dos                                        anon=SI
+--
+-- El "=X/postgres" es PUBLIC. anon y authenticated lo heredan por PUBLIC.
+--
+-- Descartado por medicion, no por intuicion:
+--   - rol creador distinto .................. NO (postgres en los 4 pasos)
+--   - esquema ............................... NO (public y v2 igual)
+--   - visibilidad transaccional del ALTER ... NO (paso 4, transaccion aparte)
+--   - forma de la sentencia ................. NO (CREATE plano igual que REPLACE)
+--   - interferencia de event triggers ....... NO (desactivado; y los 4 de
+--         Supabase estan guardados por su propia extension: grant_pg_cron_access,
+--         grant_pg_graphql_access y grant_pg_net_access solo actuan si el DDL ES
+--         su extension, y pgrst_ddl_watch solo hace NOTIFY. Leidos uno por uno.)
+--
+-- CONTRASTE QUE CIERRA EL ARGUMENTO: en un esquema SIN entrada en
+-- pg_default_acl (zz_fuera_224), la funcion nace con proacl = NULL, que es el
+-- default interno de Postgres = EXECUTE a PUBLIC. En public/v2 nace con el
+-- default interno MAS los grants del default ACL. Es decir: la entrada de
+-- pg_default_acl se comporta como ADITIVA, y el REVOKE FROM PUBLIC no llega a
+-- suprimir el grant interno.
+--
+-- LO QUE NO PUEDO AFIRMAR: el mecanismo exacto por el que el REVOKE no surte
+-- efecto. Puede haber comportamiento del lado de Supabase que no se observa
+-- desde SQL. No lo invento. Lo que si esta probado es que la ruta de default
+-- privileges NO cierra el agujero y que el event trigger SI.
+--
+-- =====================================================================
+-- 3. PRUEBAS DEL EVENT TRIGGER (las seis pedidas, mas DROP+CREATE)
+-- =====================================================================
+--   P1  funcion interna nueva ................ anon=no auth=no sr=si    PASA
+--   P2  RPC nueva + GRANT explicito despues .. anon=no auth=SI          PASA
+--   P3a RPC existente REEMPLAZADA sin allowlist anon=SI                 PASA
+--         -> CREATE OR REPLACE CONSERVA el ACL. El riesgo que senalaste
+--            (dejar una RPC legitima inaccesible) NO se materializa.
+--   P3b igual con allowlist .................. anon=SI                  PASA
+--   P4a DROP + CREATE sin allowlist .......... anon=no                  PASA
+--         -> DROP+CREATE SI borra el ACL. Aqui si haria falta la allowlist.
+--   P4b DROP + CREATE con allowlist .......... anon=SI repuesto         PASA
+--   P5  SECURITY DEFINER nueva ............... anon=no auth=no          PASA
+--   P6  esquema fuera de public/v2 ........... INTACTA, no se toca      PASA
+--
+-- Las cuatro prohibiciones del dueno, verificadas:
+--   - no rompe extensiones: net.http_get, net.http_post, graphql_public.graphql
+--     y extensions.uuid_generate_v4 conservan sus grants. Ademas el trigger
+--     salta explicitamente cualquier objeto con pg_depend.deptype='e'.
+--   - no quita permisos fuera de alcance: P6 lo demuestra.
+--   - no deja una RPC legitima inaccesible: P3a y P4b.
+--   - no impide el rollback: rollback de dos lineas al final de este archivo.
+--
+-- Toda RPC de cliente debe declararse en v2.rpc_cliente_allowlist(firma, roles)
+-- y recibir GRANT explicito en su propia migracion. Ninguna debe depender de
+-- los privilegios por defecto. v2.candado_execute_log registra cada actuacion.
+--
+-- Residuos de las pruebas: 0 funciones zz_*, 0 esquemas de prueba,
+-- 0 filas de prueba en la allowlist. Verificado.
+--
+-- ROLLBACK
+--   drop event trigger if exists tg_funcion_nueva_sin_public;
+--   drop function if exists public.tg_funcion_nueva_sin_public();
