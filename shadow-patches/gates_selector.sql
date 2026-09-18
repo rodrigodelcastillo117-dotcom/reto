@@ -31,3 +31,6 @@ select * from public.gate_tarjetas_soccer() where gate like 'G30.1%';
 --- G45: UN cerebro por deporte, declarado y contado todos los dias (ISS199) ---
 select * from public.gate_un_solo_cerebro();
 select * from v2.cerebro_autorizado order by deporte, rol, model_version;
+--- G45.5-G45.8: quien PUEDE escribir, no solo lo ya escrito (ISS200) ---
+select * from public.gate_escritores_declarados();
+select * from v2.escritor_autorizado order by tipo, objeto;

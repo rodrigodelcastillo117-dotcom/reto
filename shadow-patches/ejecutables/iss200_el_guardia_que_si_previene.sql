@@ -1,0 +1,79 @@
+-- ISS200 · El guardia que SI previene (el dueno tenia razon)
+--
+-- LA CORRECCION QUE ACEPTE
+-- Yo dije que el indice unico de v2.cerebro_autorizado impedia "fisicamente" que
+-- hubiera dos cerebros por deporte. Es falso y el dueno lo senalo: ese indice
+-- solo impide DECLARAR dos AUTORIZADOS. No impide que un cron, un trigger o una
+-- funcion no autorizada siga ESCRIBIENDO. El gate diario detectaba despues del
+-- dano. Detectar no es prevenir.
+--
+-- LO QUE SE CONSTRUYO
+-- 1. v2.tg_solo_cerebro_autorizado(): trigger BEFORE INSERT/UPDATE que RECHAZA
+--    en el momento de la escritura. Parametros por tabla:
+--      TG_ARGV[0] deporte literal o '@columna'
+--      TG_ARGV[1] columna con el model_version
+--      TG_ARGV[2] CANONICO (solo el AUTORIZADO) | SHADOW (autorizado o retador)
+--    Rechaza: motor no declarado, retador escribiendo en canonica, retirado que
+--    intenta volver, y fila sin deporte o sin model_version.
+-- 2. v2.tabla_protegida: que tablas son CANONICA, SHADOW o LEGADO.
+-- 3. v2.escritor_autorizado: censo CONGELADO de quien escribe hoy (10 funciones,
+--    20 triggers, 9 crons). A partir de aqui, cualquier escritor nuevo sin
+--    declarar hace fallar el gate.
+-- 4. public.gate_escritores_declarados(): cuatro subgates que miran quien PUEDE
+--    escribir, no solo lo ya escrito.
+--      G45.5 ninguna funcion nueva escribe sin declarar
+--      G45.6 ningun trigger nuevo sin declarar
+--      G45.7 ningun cron nuevo sin declarar
+--      G45.8 toda tabla canonica y shadow tiene puesto el guardia
+-- 5. Comodin 'mlb_runtime_%' en el registro: mlb_runtime_XXXX no es una version,
+--    es la huella md5 de public.predecir_mlb(). Si alguien edita esa funcion la
+--    huella cambia. Se declara por prefijo para que un cambio de codigo no tumbe
+--    la captura, pero sigue siendo RETADOR: no puede tocar ninguna canonica.
+--
+-- PRUEBAS EJECUTADAS (5 de 5 correctas, sin dejar filas)
+--   AUTORIZADO en tabla canonica ............ PASA    (esperado PASA)
+--   RETIRADO en tabla canonica .............. RECHAZA (esperado RECHAZA)
+--   NO DECLARADO en tabla canonica .......... RECHAZA (esperado RECHAZA)
+--   RETADOR en tabla shadow ................. PASA    (esperado PASA)
+--   NO DECLARADO en tabla shadow ............ RECHAZA (esperado RECHAZA)
+-- Nota: el primer intento del caso 4 fallo por un defecto de MI prueba (omiti
+-- una columna NOT NULL), no del guardia. Se repitio bien construida.
+--
+-- PRUEBA ADVERSARIAL DEL GATE (que no sea decorativo)
+--   Se creo public.zz_escritor_clandestino_de_prueba() que escribe en
+--   v2.soccer_prediction_v2 sin estar declarada.
+--   G45.5 paso a FAIL y la nombro: "public.zz_escritor_clandestino_de_prueba ->
+--   soccer_prediction_v2". Se borro la funcion y G45.5 volvio a PASS.
+--
+-- VERIFICACION DE NO REGRESION
+--   v2.capture_mlb_one_brain_snapshot(5) y v2.capture_mlb_learning_snapshot(5)
+--   corren sin excepcion bajo el guardia.
+--   El constructor de futbol escribe model_version='soccer_canonical_v2' desde
+--   el 2026-09-15 (6144 filas en 3 dias), que es el AUTORIZADO: no lo bloquea.
+--
+-- RIESGO QUE SE VERIFICO ANTES DE INSTALAR, Y QUE ERA REAL
+--   v2.crossleague_competition_policy todavia declara PROD_APPROVED a
+--   'crossleague_v1' (24 competiciones) y 'crossleague_v1_1' (2), y el trigger
+--   v2.enforce_soccer_prediction_model_identity REETIQUETA model_version a ese
+--   valor cuando model_name='reto_crossleague'. Si el constructor todavia
+--   escribiera con ese model_name, el guardia habria rechazado TODA prediccion
+--   de futbol. No lo hace desde el 2026-09-15 (ahora escribe
+--   model_name='reto_soccer_canonical'), asi que instalar fue seguro. Queda
+--   anotado como trampa: si alguien revive ese model_name, el futbol se cae.
+--
+-- ARQUITECTURA REAL DE FUTBOL, QUE CORRIGE MI PROPIO MARCO ANTERIOR
+--   v2.soccer_prediction_v2 ya es UN solo cerebro con modulos internos:
+--     model_name    = 'reto_soccer_canonical'
+--     model_version = 'soccer_canonical_v2'   (unica, para todas las filas)
+--     provenance.engine = crossleague_v1 | crossleague_v1_1 | soccer_form_v2 | null
+--   Eso es exactamente "un cerebro canonico con modulos internos por mercado".
+--   Los cerebros REALMENTE separados eran otros dos: el Dixon-Coles que escribia
+--   en analisis_partidos (desconectado en ISS196) y fut_predicciones (vivo).
+--
+-- ROLLBACK EXACTO
+--   drop trigger zz_solo_cerebro_autorizado on v2.soccer_prediction_v2;
+--   drop trigger zz_solo_cerebro_autorizado on v2.mlb_learning_snapshot;
+--   drop function public.gate_escritores_declarados();
+--   drop function v2.tg_solo_cerebro_autorizado();
+--   -- las tablas v2.tabla_protegida y v2.escritor_autorizado se pueden dejar:
+--   -- son registro, no cambian comportamiento. Nada se borro ni se migro.
