@@ -1,0 +1,45 @@
+-- ISS203 · El gateway deja de confiar en la etiqueta
+--
+-- LA CORRECCION DEL DUENO, ACEPTADA
+-- "El trigger que valida model_version todavia confia en una etiqueta
+--  proporcionada por el escritor. No es una frontera suficiente."
+-- Exacto. La version de ISS200 comprobaba QUE etiqueta traia la fila. Un motor
+-- viejo solo tenia que poner el nombre del autorizado y pasaba.
+--
+-- QUE HACE AHORA (dos comprobaciones independientes)
+--   (a) la etiqueta declarada, como antes
+--   (b) QUIEN escribe: se lee la pila de ejecucion con GET DIAGNOSTICS PG_CONTEXT
+--       y se exige que alguna funcion de esa pila este en v2.escritor_autorizado
+--       con tabla_destino = la tabla que se esta tocando.
+-- Falsificar el model_version ya no sirve, porque la etiqueta no es lo unico que
+-- se mira. Y una escritura directa por SQL, sin funcion declarada en la pila,
+-- tambien se rechaza.
+--
+-- NOTA DE ALCANCE, DICHA SIN ADORNO
+-- Esto NO es una frontera criptografica. En Supabase casi todo pertenece a
+-- postgres y las funciones SECURITY DEFINER corren como postgres, asi que un
+-- REVOKE no detiene a otra funcion SECURITY DEFINER. Lo que se puede garantizar
+-- dentro del motor es esto: quien escriba tiene que estar declarado, y quien no
+-- lo este no escribe aunque mienta con la etiqueta. Prometer mas seria mentir.
+--
+-- PRUEBAS EJECUTADAS
+--   Constructor legitimo v2.build_soccer_prediction_v2() ... 197 filas escritas
+--   Captura legitima capture_mlb_one_brain_snapshot(10) .... 3 filas escritas
+--   Motor NO declarado falsificando 'soccer_canonical_v2' .. RECHAZADO
+--   Escritura DIRECTA con etiqueta autorizada (canonica) ... RECHAZADO
+--   Escritura DIRECTA con etiqueta autorizada (shadow) ..... RECHAZADO
+--   Repetidas DESPUES del arreglo de nombres ............... siguen RECHAZADAS
+--
+-- UN BUG MIO QUE LA PRUEBA CAZO ANTES DE PRODUCCION
+-- PG_CONTEXT imprime el nombre de la funcion CON esquema o SIN el, segun como se
+-- resuelva con su search_path. Mi comparacion usaba split_part(objeto,'.',2),
+-- que devuelve cadena VACIA cuando el nombre no trae punto. Resultado:
+-- capture_mlb_one_brain_snapshot, un escritor legitimo y declarado, quedaba
+-- rechazado y la captura de MLB se habria caido en el siguiente cron.
+-- Lo cazo la prueba de no regresion, no la revision a ojo. Corregido con
+-- regexp_replace(x,'^.*\.','') en los dos lados.
+--
+-- ROLLBACK
+--   Reinstalar la version de ISS200 de v2.tg_solo_cerebro_autorizado (la que solo
+--   valida la etiqueta), o quitar los triggers zz_solo_cerebro_autorizado de
+--   v2.soccer_prediction_v2 y v2.mlb_learning_snapshot.
