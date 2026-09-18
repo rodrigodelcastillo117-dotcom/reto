@@ -102,3 +102,23 @@ select * from v2.escritor_autorizado order by tipo, objeto;
 -- HALLAZGO EN VIVO: el G45.4 reescrito detecto 4 escrituras en fut_predicciones
 -- DESPUES de su retiro, del cron rongol-etapa4-futuros. Se puso barrera en la
 -- tabla (28 intentos bloqueados y auditados) y se apago el cron de forma reversible.
+
+-- ISS214 (2026-09-18). #10 cerrado clasificando por comportamiento, y el
+-- comportamiento destapo tres violaciones vivas.
+--   gate_precio_no_decide / PRECIO_DECIDE_P0_SIN_CLASIFICAR  FAIL(269) -> PASS(0)
+--   (las otras cinco filas del gate ya estaban en PASS y siguen en PASS)
+-- NUEVO public.gate_el_precio_no_elige_el_pick():
+--   PICK_ELEGIDO_POR_FUENTE_MERCADO             PASS(0)
+--   ESCRITURA_DE_MODELO_EJECUTABLE_POR_CLIENTE  FAIL(3) -> PASS(0)
+--   PICK_DE_PRECIO_EN_EVENTO_NO_JUGADO          PASS(0)
+-- HALLAZGO EN VIVO: badrino_predecir() elegia mejor_pick con
+-- WHERE fuente='mercado' ORDER BY probabilidad DESC y lo llamaba "fuentes
+-- validadas". 373 de 377 filas de badrino_predicciones traian ese pick, y la
+-- funcion era ejecutable por anon y authenticated (43 llamadas por PostgREST).
+-- Corregido a fail-closed (mejor_pick NULL), EXECUTE revocado via PUBLIC,
+-- 373 filas guardadas como evidencia y solo los 11 picks de eventos no jugados
+-- retirados. Retirada ademas v_picks_premium (precio puro, 0 consumidores) y
+-- revocado el EXECUTE de cliente a mlb_shadow_generar, nfl_capturar_prediccion
+-- y nfl_predecir.
+-- Reparto de los 55 veredictos que faltaban: 25 FALSO_POSITIVO_DETECTOR,
+-- 15 DIAGNOSTICO_NO_DECIDE, 8 DIMENSIONAMIENTO_ECONOMICO, 7 MEDICION_RETROSPECTIVA.
