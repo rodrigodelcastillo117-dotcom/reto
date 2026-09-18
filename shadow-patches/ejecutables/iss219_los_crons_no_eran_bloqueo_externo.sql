@@ -1,0 +1,79 @@
+-- ISS219 (2026-09-18). Item 7: los tres crons. Tenias razon: no eran bloqueo
+-- externo. Eran TRES CAUSAS DISTINTAS, todas medibles, y ninguna era "subir el
+-- timeout". El limite real que los mata es el del statement EXTERIOR: un
+-- SET statement_timeout DENTRO de la funcion NO re-arma el temporizador que ya
+-- arranco, asi que morian a los 120 s exactos sin importar lo que declararan.
+--
+-- ==========================================================================
+-- 524 phi-extension-30m
+-- ==========================================================================
+--   schedule 7,37 * * * *   |  39 fallos desde el 16-sep, 46 exitos antes
+--   DOS defectos, los dos reales:
+--   (a) BUG DE SQL. v2.fn_crossleague_strength_integrity tenia league_id, phi,
+--       n_cross, servable y config_hash SIN CALIFICAR dentro de un subselect
+--       correlacionado, y el alias externo s tambien tiene league_id:
+--       "column reference league_id is ambiguous". CORREGIDO calificando con x.
+--   (b) EL LOOP NO PODIA TERMINAR NUNCA. Medido: 16.7 s por liga y 44 ligas
+--       pendientes = 735 s contra un limite de 120 s. Y peor: una liga que sale
+--       INSUFFICIENT_SAMPLE no se instala, asi que seguia pendiente y se
+--       reintentaba cada 30 minutos, para siempre.
+--   CORRECCION: nueva tabla v2.phi_fit_intento (memoria de intentos) + tope de
+--   ligas por corrida. Una liga rechazada no se reintenta hasta que su muestra
+--   CRECE.
+--   PROBADO: 2 ligas en 32.8 s (16.4 s/liga) -> con el tope de 5 son ~82 s,
+--   dentro de 120 s. Segunda corrida tomo ligas DISTINTAS (42 y 62, no 40 y 41):
+--   la memoria funciona. Backlog de 44 ligas: ~4.5 h a 5 por corrida.
+--
+-- ==========================================================================
+-- 310 motor-cache-refrescar
+-- ==========================================================================
+--   schedule 10 */2 * * *  ->  4-59/15 * * * *
+--   64.5 s de promedio cuando funcionaba, techo de 120 s desde el 15-sep.
+--   CAUSA: calcula 3 ventanas por evento llamando a motor_del_partido, y el
+--   horizonte de 60 h con tres deportes crecio hasta no caber. 184 eventos.
+--   CORRECCION: p_max_eventos, procesando de lo mas RANCIO a lo mas fresco, asi
+--   que ningun evento se queda sin refrescar.
+--   PROBADO: 5 eventos en 34.5 s (6.9 s/evento, cache frio) y 12 eventos en
+--   17.7 s (cache tibio). A 12 por corrida cada 15 min son 48/h; el ciclo
+--   completo de 184 eventos toma ~3.8 h, muy dentro del TTL de 12 h que la
+--   propia funcion aplica. El limite NO se subio.
+--
+-- ==========================================================================
+-- 515 reto-global-candidate-snapshot-v1  -> DESACTIVADO, y explico por que
+-- ==========================================================================
+--   176 de 177 corridas de 24 h muertas por statement timeout.
+--   MEDIDO: la materializada tiene 53 filas y 120 kB. El problema NO es la MV:
+--   es su vista fuente v_reto13m_global_candidate_source_v2, que NO TERMINA en
+--   60 s porque recorre la cadena canonica y llama a los MOTORES por evento.
+--   Bajar la frecuencia no arregla nada: la consulta no cabe en 120 s a NINGUNA
+--   frecuencia. El arreglo real es que la fuente lea de motor_cache o de los
+--   snapshots ya materializados en vez de invocar los motores, y eso es una
+--   refactorizacion de la vista y sus dependencias que NO hago a ciegas.
+--   Se desactiva de forma reversible para no quemar un worker cada 15 min a
+--   cambio de nada. La MV conserva su ultimo contenido bueno (53 filas,
+--   2026-09-17 13:57). Reactivar: select cron.alter_job(515, active := true).
+--
+-- ==========================================================================
+-- HALLAZGO ESTRUCTURAL, mas grande que los tres
+-- ==========================================================================
+--   max_worker_processes = 6, con 272 crons activos y 108 de ellos sub-horarios.
+--   30 corridas perdidas en 24 h por "job startup timeout": pg_cron no encuentra
+--   worker libre. Y 243 corridas canceladas por statement timeout en 24 h,
+--   repartidas en DOCE jobs, no tres:
+--     reto-global-candidate-snapshot-v1 176 | phi-extension-30m 37
+--     motor-cache-refrescar 12 | tarjeta-mlb-refresh-15m 7
+--     futbol-jugadores-pedir 2 | refresh-cobertura-soccer-20m 2
+--     reto-futpro-analysis-snapshot-v1 2 | reto-soccer-read-context-v1 1
+--     motor-cache-horizonte-largo 1 | auditoria-ciclo-retiro-1 1
+--     espejo-apifootball-live 1 | autodiagnostico 1
+--   Arregle los tres que nombraste. Los otros nueve NO estan arreglados y no
+--   voy a decir que si. Quedan visibles en gate_cron_sano.
+--
+-- NUEVO public.gate_cron_sano():
+--   CRON_ACTIVO_FALLANDO_SIEMPRE        (3 ultimas corridas fallidas)
+--   CRON_SATURACION_DE_WORKERS          (job startup timeout en 24 h)
+--   CRON_CORRIDAS_QUE_PEGAN_EN_EL_TECHO (statement timeout en 24 h)
+--
+-- ROLLBACK: cron.alter_job para devolver schedule y command originales de 310,
+-- 515 y 524; drop table v2.phi_fit_intento; restaurar las firmas anteriores de
+-- refrescar_motor_cache y ajustar_e_instalar_phi desde el historial de git.

@@ -170,3 +170,21 @@ select * from v2.escritor_autorizado order by tipo, objeto;
 -- B 17/0. Acceso cruzado observado en logs: ninguno (cota inferior).
 -- Causa raiz del EXECUTE abierto: el privilegio por defecto de Supabase concede
 -- EXECUTE a anon y authenticated en cada funcion nueva. Cerrado para las nuevas.
+
+-- ISS219 (2026-09-18). Item 7: los tres crons no eran bloqueo externo.
+-- NUEVO public.gate_cron_sano():
+--   CRON_ACTIVO_FALLANDO_SIEMPRE         FAIL(2)  <- se limpia tras 3 corridas buenas
+--   CRON_SATURACION_DE_WORKERS           FAIL(30) <- max_worker_processes=6 con 272 crons
+--   CRON_CORRIDAS_QUE_PEGAN_EN_EL_TECHO  FAIL(243 en 12 jobs) <- ABIERTO, 9 sin arreglar
+-- 524 phi-extension: bug de SQL (league_id ambiguo) + loop imposible (16.7 s x 44
+--   ligas contra 120 s) + reintento infinito de lo rechazado. Los tres corregidos.
+-- 310 motor-cache: partido en lotes de 12 por lo mas rancio, 17.7 s medidos.
+-- 515 candidate-snapshot: DESACTIVADO. Su vista fuente no cabe en 120 s a ninguna
+--   frecuencia porque llama a los motores por evento; el arreglo es refactorizar
+--   la fuente, no subir el limite.
+-- ISS220 (2026-09-18). Item 5: contador diario v2.calibrador_contador, cron 546.
+--   soccer 30/450, ritmo 15/semana, estimada 2027-04-02.
+--   baseball 9/300, ritmo 4.5/semana, estimada 2027-12-15.
+--   Muestra historica: POSIBLE en futbol (existe fn_crossleague_features_training_asof)
+--   con la limitacion de que historico_partidos_espn es backfill; IMPOSIBLE en MLB
+--   (mlb_stats_cache se sobrescribe y no hay funcion as-of de beisbol).
