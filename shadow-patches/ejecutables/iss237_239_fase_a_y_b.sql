@@ -1,0 +1,131 @@
+-- ISS237/238/239 — FASE A y FASE B.
+-- Segunda simplificacion mia, corregida: la regla "columna de dueno" tampoco servia.
+--
+-- =====================================================================
+-- FASE A — LA REGLA CORRECTA SALE DE LAS POLITICAS, NO DE LAS COLUMNAS
+-- =====================================================================
+-- Tenias razon. Lei las 335 politicas RLS reales (v2.iss237_politica) y las
+-- clasifique por si SEGREGAN filas, no por si hay columna de dueno:
+--
+--   NO_SEGREGA ............ 302 politicas en 222 tablas   (USING true / sin USING)
+--   AUTH_UID ..............  18 politicas en  11 tablas
+--   COLUMNA_DUENO .........  14 politicas en   7 tablas
+--   MEMBRESIA .............   1 politica  en   1 tabla
+--
+-- Solo 17 tablas segregan filas de verdad:
+--   ajustes_cuenta, alertas_enviadas, alertas_sistema, canasta, config_staking,
+--   equipos_favoritos, fantasy_roster_semanal, limites_usuario, notificaciones,
+--   oraculo_picks_tracking, parlays, picks, push_subscriptions,
+--   reportes_errores, score_notifications, user_roles, usuarios
+--
+-- MI REGLA ANTERIOR ERA MALA EN LAS DOS DIRECCIONES:
+--   - sobre-incluia: contaba 75 tablas "con RLS y columna de dueno", de las que
+--     la mayoria tiene politica USING true y no segrega nada;
+--   - sub-incluia: perdia las que segregan SIN columna de dueno.
+--
+-- EL HUECO REAL QUE ENCONTRO, Y QUE MI REGLA ANTERIOR NO VEIA:
+--   public.salud_alertas  ->  lee public.alertas_sistema
+--   politica de esa base:  has_role(auth.uid(), 'admin')
+--   alertas_sistema NO tiene columna apodo ni user_id: segrega por ROL.
+--   La vista era legible por authenticated y estaba SIN security_invoker, asi
+--   que cualquier usuario autenticado veia las 7 alertas de sistema de admin.
+--   Corregido: security_invoker = true. Un no-admin ahora ve 0 filas.
+--
+-- CLASIFICACION DE LAS 153 VISTAS DE CLIENTE (v2.iss237_vista_categoria):
+--   USER_OR_TENANT_SCOPED ....... 49   conservan security_invoker
+--   PUBLIC_PRODUCT_PROJECTION ... 101
+--   UNKNOWN ......................  3  -> resueltas una por una:
+--       v_mercados_permitidos ... PUBLIC_SAFE. Cuatro literales, sin tabla base.
+--                                 Contrato: 1 columna (mercado), 4 filas fijas.
+--       v_objeto_accionable ..... REVOCADA. Enumeraba pg_proc y quien puede
+--                                 ejecutar cada funcion: era el mapa de la
+--                                 superficie de ataque, legible por anon.
+--       v_lab_pfair_ml_c1 ....... REVOCADA. Laboratorio, publicaba praw/pfair.
+--
+-- INVARIANTE VERIFICADO: 0 vistas de cliente que alcancen una tabla que segrega
+-- filas y esten sin security_invoker.
+--
+-- ADVISORS, SIN ESCONDER NADA:
+--   security_definer_view ........... 129 -> 0 -> 96
+--   Volvio a 96 PORQUE revertí 97 vistas. No lo maquillo.
+--   rls_disabled_in_public .......... 142 -> 109
+--   materialized_view_in_api ......... 10 -> 0 (cerrado)
+--   function_search_path_mutable .... 304 -> 296
+--
+-- LO QUE NO CUMPLI DE FASE A, Y LO DIGO:
+-- Pediste "no usar el propietario postgres como mecanismo implicito de
+-- publicacion". Las 101 PUBLIC_PRODUCT_PROJECTION publican exactamente asi:
+-- corren como postgres. Documente su contrato (columnas, bases alcanzadas, y la
+-- prueba de que ninguna toca una tabla que segrega), pero NO construi la capa de
+-- publicacion con rol de privilegio minimo. Eso sigue pendiente y es la razon
+-- honesta de los 96 ERROR del advisor.
+-- Las alternativas que probe y por que no sirven:
+--   (a) security_invoker=true -> exige GRANT a las tablas base, que prohibiste;
+--   (b) RLS con USING(true) en las bases -> misma exposicion de filas, mas ruido;
+--   (c) rol publicador de privilegio minimo -> es la correcta, y no esta hecha.
+--
+-- =====================================================================
+-- FASE B — LAS 16 TABLAS, MATRIZ COMPLETA (v2.iss238_fase_b)
+-- =====================================================================
+--   anon con SELECT de tabla ................... 0 de 16
+--   authenticated con SELECT de tabla .......... 0 de 16
+--   con GRANT a nivel de COLUMNA para anon ..... 0 de 16   (has_column_privilege)
+--   con GRANT a nivel de COLUMNA para auth ..... 0 de 16
+--   heredan SELECT por PUBLIC .................. 0 de 16
+--   service_role con SELECT .................... 2 de 16   (control admin)
+--   lectura directa como authenticated A:
+--       v2.nfl_decision_snapshot .... DENEGADO
+--       v2.soccer_prediction_v2 ..... DENEGADO
+--
+-- PERO LA PREGUNTA 3 DE TU FASE B ENCONTRO LO QUE FALTABA:
+-- "ningun RPC cliente permite leerlas indirectamente".  FALSO.
+--
+--   v2.soccer_prediction_v2 ......... legible via 21 funciones de cliente
+--        entre ellas SECDEF: soccer_universal_analysis_v1, futpro_terminal_v2,
+--        futpro_terminal_v2_certified_core, motivo_sin_p_reto,
+--        feature_asof_de_pick, refresh_model_learning
+--   v2.crossleague_competition_policy  8
+--   v2.nfl_decision_snapshot ......... 7   (nfl_terminal_v2 [SECDEF],
+--        build_nfl_decision_snapshot, refresh_model_learning [SECDEF])
+--   public.superficie_usuario ........ 7
+--   v2.competition_catalog ........... 5
+--   v2.mlb_learning_snapshot ......... 5
+--   ... 13 de las 16 tenian al menos una via indirecta.
+--
+-- Revocar el GRANT de tabla NO cierra nada si una funcion SECURITY DEFINER la
+-- lee por el cliente. Es la leccion de fondo: el perimetro no son las tablas,
+-- son las funciones.
+--
+-- =====================================================================
+-- ACCION INMEDIATA: 41 ESCRITORES DEL MODELO, CERRADOS
+-- =====================================================================
+-- Funciones de cliente cuyo nombre y cuerpo las delatan como constructores o
+-- refrescadores de estado del modelo (build_/rebuild_/refresh_/refrescar_/
+-- capture_/grade_/sincronizar_/publish_/promote_/sellar_/instalar_/ajustar_):
+--
+--   total client-ejecutables ............ 41
+--   de esas, ESCRIBEN ................... 37
+--   SECURITY DEFINER .................... 15
+--   tocan estado de publicacion ......... 23
+--   escriben Y son SECDEF ............... 14
+--
+-- Un cliente podia disparar v2.build_nfl_decision_snapshot,
+-- v2.refresh_model_learning, v2.build_soccer_prediction_v2,
+-- v2.rebuild_soccer_snapshot, v2.sincronizar_politica_competencias y
+-- v2.capture_* . Eso es exactamente "cambio de model_version o estado de
+-- publicacion" de tu lista de prioridad.
+--
+-- Revocadas las 41 de public/anon/authenticated, EXECUTE conservado para
+-- service_role. Verificado: 0 siguen abiertas. Ninguna funcion borrada.
+--
+-- SIN ROTURAS: gate_captura_prospectiva identico (A PASS, B FAIL(2), C INFO(4),
+-- D INFO(20), E PENDING(227), F PASS(16)); 293 corridas de cron en 20 min,
+-- todas succeeded.
+--
+-- =====================================================================
+-- ROLLBACK
+-- =====================================================================
+--   41 funciones:  select sql_rollback from v2.iss239_log;
+--   vistas fase A: alter view public.salud_alertas set (security_invoker=false);
+--                  grant select on public.v_objeto_accionable to anon, authenticated;
+--                  grant select on public.v_lab_pfair_ml_c1 to anon, authenticated;
