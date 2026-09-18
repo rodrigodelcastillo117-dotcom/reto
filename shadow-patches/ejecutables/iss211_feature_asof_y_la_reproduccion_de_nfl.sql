@@ -1,0 +1,198 @@
+-- ISS211 — feature_asof auditado, y la reproduccion de NFL PREREGISTRADA
+--
+-- ═════════════════════════════════════════════════════════════════════
+-- PARTE 1 — FEATURE_ASOF (punto 1 del mandato)
+-- ═════════════════════════════════════════════════════════════════════
+--
+-- ERROR DE ISS208 QUE ESTE PARCHE CORRIGE.
+-- feature_asof_de_pick usaba max(data_asof). Eso NO es el corte del snapshot que
+-- de verdad se publica: si el snapshot elegido por la vista de publicacion no es
+-- el de data_asof maximo, el candado temporal vigila OTRO snapshot que el que
+-- produjo la probabilidad. La version nueva ESPEJEA, literalmente, la regla de
+-- seleccion de cada vista:
+--
+--   FUTBOL   v_futpro_v2:  DISTINCT ON (espn_event_id) ORDER BY computed_at DESC
+--            -> data_asof de la fila con computed_at maximo.
+--            La CTE NO filtra model_version (la identidad se revisa despues en
+--            canonical_identity_ok), asi que aqui tampoco se filtra.
+--   BEISBOL  v_mlb_publication_v1: LATERAL (... ORDER BY cached_at DESC LIMIT 1)
+--            con fetch_success. MEDIDO: mlb_stats_cache tiene 1,423 filas y 1,423
+--            eventos, o sea 1 fila por evento, asi que max() y DISTINCT ON
+--            coinciden. Se escribe con el mismo orden igual.
+--   NFL      v_nfl_publication_v1: DISTINCT ON (espn_event_id)
+--            ORDER BY decision_time DESC, built_at DESC, con JOIN a auth por
+--            model_version. Aqui SI se filtra por el autorizado.
+--
+-- PRUEBAS, todas corridas:
+--
+-- P1 ESPEJEA LA PUBLICACION
+--    feature_asof_de_pick == data_asof declarado por la vista de publicacion:
+--      soccer   138 de 138   discrepancias 0
+--      baseball  30 de  30   discrepancias 0
+--      football  32 de  32   discrepancias 0
+--
+-- P2 ESTRICTAMENTE ANTERIOR AL EVENTO
+--    motor_futbol_calibrado  414 filas, 414 con corte, 414 estrictamente antes,
+--      0 posteriores o iguales, margen minimo 2d 16:30, maximo 62d 21:50,
+--      61 cortes distintos, mas viejo 2026-09-09 18:45, mas nuevo 2026-09-17 19:30
+--    motor_mlb_cuantitativo   82 filas,  82 con corte,  82 estrictamente antes,
+--      0 posteriores o iguales, margen minimo 22:54:54, maximo 2d 08:33,
+--      29 cortes distintos, mas viejo 2026-09-17 14:27:59, mas nuevo 2026-09-18 01:15:05
+--    0 cortes en el futuro en los dos deportes.
+--
+-- P3 NO USA now() NI NINGUN OTRO RELOJ
+--    Sobre el cuerpo EJECUTABLE con los comentarios recortados (914 caracteres):
+--      now()                false
+--      current_timestamp / clock_timestamp / localtimestamp / current_date /
+--      statement_timestamp / transaction_timestamp   false
+--      max()                false
+--      interval             false
+--    OJO METODOLOGICO: medir esto sobre el texto CON comentarios da un falso
+--    positivo, porque el comentario donde documento "antes usaba max()" contiene
+--    la palabra. Es el mismo error que ya me pasó en fuente_viva_del_objeto.
+--
+-- P4 NO USA UN SNAPSHOT POSTERIOR
+--    Dentro del model_version autorizado:
+--      football  32 eventos,   652 snapshots del modelo, 0 con corte posterior al
+--                elegido, 0 con corte posterior al kickoff. (Habia 6,610 snapshots
+--                de OTROS model_version, todos del retador retirado; por eso el
+--                conteo sin filtrar daba 212 y era enganoso.)
+--      soccer   138 eventos, 9,828 snapshots, 0 con corte posterior al elegido,
+--                0 con corte posterior al kickoff.
+--
+-- P5 PRUEBA ADVERSARIAL DE LOOKAHEAD
+--    A) Plantar por SQL directo un snapshot de futbol con la etiqueta del cerebro
+--       AUTORIZADO, computed_at mas nuevo (para que fuera el elegido) y data_asof
+--       DOS HORAS DESPUES del kickoff:
+--       RECHAZADO por la compuerta de escritura. Mensaje literal:
+--       "RETO/soccer_prediction_v2: escritura rechazada. Ninguna funcion declarada
+--        como escritora de esta tabla aparece en la pila. ... Falsificar el
+--        model_version no sirve: se verifica QUIEN escribe, no solo que etiqueta
+--        trae."
+--    B) El predicado aislado con feature_asof POSTERIOR al evento:
+--       NO ELEGIBLE, reason_code = SIN_LINAJE_MEDIDO, temporalidad_medida = false.
+--    C) Control positivo, feature_asof ANTERIOR al evento:
+--       ELEGIBLE, reason_code = OK, temporalidad_medida = true.
+--       (Sin este control, B no probaria nada: un predicado siempre-falso tambien
+--        habria dado NO ELEGIBLE.)
+--
+-- LIMITACION QUE DECLARO, porque el predicado NO la cubre:
+--   feature_asof < evento_at NO detecta que alguien sustituya el corte por now().
+--   Para un partido futuro, now() TAMBIEN es anterior al evento. El predicado se
+--   dejaria enganar. Lo que si lo detecta es exigir que el valor EXISTA GUARDADO
+--   en la tabla de origen: un now() calculado al vuelo no casa con ninguna fila.
+--   Por eso se agrega public.gate_feature_asof_es_real() con tres frentes:
+--     FEATURE_ASOF_NO_ALMACENADO        PASS 0 de 496 evaluados
+--     FEATURE_ASOF_SIN_RELOJ           PASS
+--     FEATURE_ASOF_ESPEJEA_PUBLICACION PASS 0 de 200 comparados
+--
+-- LINAJE COMPLETO, ejemplos reales
+--   event_id | snapshot usado | computed_at del snapshot | feature_asof | evento_at | margen
+--   401873932 | f6701c93-2a3f-4136-8c52-c3c69ab1bfe7 | 2026-09-18 00:34:51 | 2026-09-13 17:15:00 | 2026-09-18 17:00:00 | 4d 23:45
+--   401874503 | 4a0bf618-d0e9-4af7-bd5b-f80fe8873cde | 2026-09-18 00:34:51 | 2026-09-13 12:00:00 | 2026-09-18 17:00:00 | 5d 05:00
+--   401816984 | ec250dc9-9ce6-45e5-ba52-19c303732011 | 2026-09-17 23:45:05 | 2026-09-17 23:45:05 | 2026-09-18 22:40:00 | 22:54:54
+--   401816985 | 5db2d5b3-e905-41a6-981f-a0d9804633cb | 2026-09-17 23:45:05 | 2026-09-17 23:45:05 | 2026-09-18 22:40:00 | 22:54:54
+--   401872934 | 401872934|2026-09-18 00:17:00 | 2026-09-18 00:17:00 | 2026-09-13 17:00:00 | 2026-09-20 17:00:00 | 7d
+--   401872933 | 401872933|2026-09-18 00:17:00 | 2026-09-18 00:17:00 | 2026-09-13 17:00:00 | 2026-09-20 17:00:00 | 7d
+--
+--   Lectura de los tres patrones, que son distintos A PROPOSITO:
+--   * En MLB feature_asof == computed_at, porque el corte ES la lectura del cache
+--     de estadisticas: mlb_one_brain_v2 se evalua al momento sobre ese cache.
+--   * En futbol el corte va 4-5 dias antes del computed_at: los rasgos son la
+--     forma acumulada hasta el ultimo partido jugado de cada equipo.
+--   * En NFL el corte va 7 dias antes: la NFL juega una vez por semana, asi que
+--     el ultimo dato disponible es la jornada anterior (2026-09-13 es domingo).
+--   Ninguno de los tres es now(), y los tres son anteriores al evento.
+--
+-- ═════════════════════════════════════════════════════════════════════
+-- PARTE 2 — NFL: PREREGISTRACION DE LA REPRODUCCION (punto 2 del mandato)
+-- ═════════════════════════════════════════════════════════════════════
+--
+-- Esto se escribe y se comitea ANTES de correr nada. Una sola corrida.
+--
+-- LO QUE EL SELLO DICE (v2.nfl_hybrid_model_config_v1.validation_evidence y
+-- v2.nfl_model_validation_gate, sellados 2026-09-15 14:17:01 UTC):
+--   target                : ganador del partido en Moneyline (P(gana local))
+--   alcance               : MONEYLINE_ONLY, spread_total_authorized = false
+--   seleccion de parametros: "Elo K/HFA/carry selected on 2021-2023 history only;
+--                            no market probabilities used"
+--   rama temprana         : Elo con K=40, HFA=40 Elo, carry entre temporadas 0.60,
+--                           mientras CUALQUIERA de los dos equipos lleve <4
+--                           partidos de temporada regular en curso
+--   rama madura           : delega en nfl_form_ml_v1 cuando LOS DOS llevan >=4
+--   holdout temprano      : 2024      n=64  brier 0.25069  acc 54.69%  gap 4.42pp
+--                           2025      n=63  brier 0.20533  acc 68.25%  gap 6.54pp
+--                           2026 sem1 n=16  brier 0.24309  acc 56.25%  gap 5.42pp
+--                           TOTAL     n=143 brier 0.22986  referencia 0.25
+--   holdout maduro        : n=123 brier 0.21033 logloss 0.60897 acc 69.92% gap 4.79pp
+--   nota del propio sello : "2024 was approximately neutral vs 0.25; aggregate
+--                            holdout still improves. Bridge is deliberately
+--                            limited to early season."
+--   market_used_in_probability = false
+--
+-- CONSISTENCIA INTERNA, verificada a mano antes de correr nada:
+--   64 + 63 + 16 = 143  OK
+--   (64*0.25069 + 63*0.20533 + 16*0.24309)/143 = 32.869/143 = 0.229853
+--   contra el 0.22986 sellado. Cuadra a redondeo. El agregado no esta inflado.
+--
+-- LO QUE EL SELLO NO TIENE, y el dueno pidio:
+--   * IC95 de la diferencia contra 0.25 -> NO ESTA. Ni en el gate ni en el config.
+--   * logloss de la rama temprana       -> NO ESTA (solo el de la rama madura).
+--   * conteo de fuga temporal            -> NO ESTA como numero; solo la frase de
+--     seleccion "2021-2023 history only".
+--   * NO EXISTE NINGUNA TABLA con las 143 predicciones fila por fila. Busque
+--     nfl.*(holdout|oos|valid|eval|backtest|forward) en public y en v2: lo unico
+--     que hay es public.nfl_backtest (que es de otro modelo) y el propio gate con
+--     un JSON resumido. Por lo tanto el n=143 NO ES REPRODUCIBLE tal como esta
+--     guardado, y eso es un hallazgo, no un detalle de formato.
+--
+-- HIPOTESIS PRIMARIA, UNA SOLA:
+--   H1: reproduciendo la rama temprana con los hiperparametros sellados sobre el
+--       historico almacenado, la diferencia de Brier contra 0.25 tiene un IC95
+--       que CRUZA CERO, es decir la ventaja contra un volado NO es distinguible
+--       de cero con n=143.
+--   Razon para preregistrarla asi: 143 partidos es poco y una de las tres
+--   rebanadas (2024, n=64) ya sale PEOR que el volado. Si el IC95 no cruzara
+--   cero, H1 queda falsada y lo escribo igual.
+--
+-- CONFIGURACION UNICA, declarada antes de correr:
+--   fuente            : v2.team_history_event, espn_endpoint='football/nfl',
+--                       1,738 partidos con marcador, 2021-08-06 a 2026-09-15,
+--                       orden (game_date, espn_event_id)
+--   Elo               : rating inicial 1500; K=40; ventaja de local 40 puntos Elo
+--                       sumados al rating del local;
+--                       P(local) = 1/(1+10^((R_visita-(R_local+40))/400))
+--   frontera de temporada: primer partido en o despues del 1 de agosto de cada
+--                       anio. En la frontera: R <- 1500 + 0.60*(R-1500)
+--   que actualiza el rating: TODOS los partidos de la tabla. La tabla no trae
+--                       tipo_temporada, asi que no puedo excluir pretemporada ni
+--                       postemporada. SE DECLARA como desviacion.
+--   proxy de "partidos de temporada regular en curso": partidos del equipo desde
+--                       el 1 de septiembre de la temporada en curso. Agosto se
+--                       considera pretemporada y no cuenta.
+--   holdout temprano  : partidos donde CUALQUIERA de los dos equipos lleva <4
+--                       partidos de temporada regular en curso, restringido a
+--                       septiembre-diciembre de 2024, septiembre-diciembre de 2025
+--                       y 2026-09-10 a 2026-09-16 (semana 1 de 2026)
+--   metricas          : n, Brier, acierto, logloss, y la diferencia media contra
+--                       0.25 con IC95 normal pareada (media +- 1.96*sd/sqrt(n))
+--
+-- DESVIACIONES QUE YA SE QUE VOY A TENER, declaradas antes:
+--   D1 v2.team_history_event NO trae temporada, tipo_temporada ni semana. El
+--      sello habla de "current-season regular games" y yo solo puedo aproximarlo
+--      por fecha. Eso puede mover el conteo de cada rebanada.
+--   D2 public.nfl_partidos SI trae temporada/tipo/semana, pero SOLO desde 2025.
+--      La rebanada de 2024 (n=64, la unica peor que el volado) NO se puede
+--      reconstruir con metadatos reales: no existen en la base.
+--   D3 El sello no dice si la pretemporada actualiza el Elo. Elegi que si,
+--      porque la tabla no permite separarla, y lo declaro.
+--   Consecuencia: si mis n por rebanada no dan 64 / 63 / 16, NO voy a ajustar la
+--   configuracion hasta que cuadren. Reporto la diferencia. Ajustar hasta cuadrar
+--   es exactamente la seleccion post-hoc que el dueno prohibio.
+--
+-- CRITERIO DE ACEPTACION DE LA REPRODUCCION, antes de verla:
+--   REPRODUCIDA          : los tres n coinciden exactos y los tres Brier a +-0.005
+--   PARCIALMENTE         : al menos una rebanada coincide en n y Brier a +-0.005
+--   NO REPRODUCIBLE      : ninguna rebanada coincide
+--   En los tres casos el IC95 que yo calcule es un numero nuevo y valido sobre MI
+--   reproduccion, y se reporta con su n.
