@@ -1,0 +1,41 @@
+-- ISS201 · Validacion PAREADA: crossleague contra Dixon-Coles, y contra adivinar
+--
+-- CONJUNTO PAREADO (mismas condiciones para los dos motores)
+--   n = 96 partidos, presentes bajo AMBAS etiquetas
+--   prediccion emitida ANTES del kickoff (snapshot_at < kickoff) y temporal_safe
+--   resultado final verificable (outcome_idx no nulo)
+--   11 ligas, del 2026-09-10 al 2026-09-17
+--   mercado 1X2, tres salidas, baseline uniforme = 1/3 cada una (Brier 0.66667)
+--
+-- METRICAS SOBRE EL MISMO CONJUNTO
+--                          crossleague    Dixon-Coles    uniforme
+--   Brier                     0.62989        0.67040      0.66667
+--   Log loss                  1.04934        1.11444          --
+--   Accuracy                   46.88%         47.92%          --
+--
+-- BOOTSTRAP PAREADO, 3000 remuestreos
+--   Dixon-Coles menos crossleague:  +0.04051  IC95 [+0.00049, +0.08032]
+--   crossleague menos uniforme:     -0.03678  IC95 [-0.09636, +0.02025]
+--
+-- LECTURA HONESTA, CON SUS DOS FILOS
+--   1. Entre los DOS motores, crossleague gana: el intervalo de la diferencia
+--      queda entero por encima de cero. Desconectar el Dixon-Coles esta
+--      respaldado por el dato pareado.
+--   2. PERO el limite inferior es 0.00049. Es un pelo. Con otra semilla podria
+--      cruzar el cero. Lo digo en vez de repetir el bootstrap hasta que salga
+--      un numero mas comodo: eso seria escoger la semilla que me conviene.
+--   3. Y sobre ESTE subconjunto de 96, crossleague NO es concluyentemente mejor
+--      que adivinar: su intervalo contra el uniforme cruza el cero.
+--      La afirmacion "crossleague le gana a adivinar" se sostiene sobre el
+--      conjunto completo de n=161 (IC95 [-0.1036, -0.0128]), no sobre estos 96.
+--      Son dos muestras distintas y hay que decir cual respalda que.
+--   4. El Dixon-Coles gana en accuracy (47.92% contra 46.88%). Acertar mas veces
+--      el favorito no es lo mismo que tener mejores probabilidades: pierde en
+--      Brier y en log loss, que son las que miden la probabilidad. Queda dicho
+--      porque es el unico numero que lo favorece y esconderlo seria trampa.
+--
+-- LO QUE ESTA MEDICION NO CUBRE, Y NO SE VA A FINGIR QUE SI
+--   - calibracion por decil
+--   - desglose por liga y por ventana temporal (n=96 en 11 ligas no da)
+--   - comparacion contra cuotas sin vig: no hay captura de cuotas pareada con
+--     estas observaciones, asi que no se puede hacer sin inventarla
