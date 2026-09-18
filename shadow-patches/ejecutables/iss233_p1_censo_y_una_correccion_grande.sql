@@ -1,0 +1,91 @@
+-- ISS233 — P1: CENSO DE LIGAS, Y UNA CORRECCION GRANDE A MI PROPIO DIAGNOSTICO.
+--
+-- =====================================================================
+-- ANTES DE EMPEZAR A INGERIR: ESTABA EQUIVOCADO
+-- =====================================================================
+-- Te dije: "36 ligas bloqueadas por falta de datos. Brasil, Argentina, Japon,
+-- Corea, Colombia, Chile no estan ingestadas. Ningun estimador arregla eso."
+--
+-- ES FALSO. Los datos SI estan. Estan en el OTRO proveedor.
+--
+-- Censo en v2.iss233_censo_liga, sobre las 73 ligas que el motor necesita:
+--   estado                          n    obs API-Football   partidos ESPN
+--   BLOQUEADA_FALTA_INGESTA        40        22,085             172
+--   RESCATABLE_CON_DATOS_ACTUALES  11         5,559          21,968
+--   YA_SERVIBLE                    22         4,528          12,996
+--
+-- Las "bloqueadas" tienen CINCO VECES mas observaciones domesticas que las ya
+-- servibles. Lo que no tienen es historico de partidos en ESPN, que es la
+-- fuente que mi tuberia de phi2 exigia.
+--
+-- Las que pediste, una por una:
+--   liga                       lid   endpoint        obs API-F  equipos  ESPN
+--   Brasil Serie A              71   soccer/bra.1      2,220      15       0
+--   Argentina Liga Profesional 128   soccer/arg.1      2,105      18       0
+--   Colombia Primera A         239   soccer/col.1      1,905      11       0
+--   Ecuador Liga Pro           242   soccer/ecu.1      1,557      12       0
+--   Peru Primera Division      281   soccer/per.1      1,278      11       0
+--   Uruguay Primera Division   268   soccer/uru.1        762       9       0
+--   Japon J1 League             98   soccer/jpn.1        475       5       0
+--   Corea K League 1           292   soccer/kor.1        435       3       0
+--   Chile                       --   no aparece en el censo: esa si falta.
+--
+-- Cobertura 2022-01 .. 2026-09 en todas. No es un hueco de datos.
+--
+-- =====================================================================
+-- LA MEDICION QUE LO DEMUESTRA
+-- =====================================================================
+-- Misma construccion de puentes de ISS224, cambiando UNA sola cosa: la forma
+-- domestica se lee de v2.soccer_domestic_observation (API-Football) en vez de
+-- exigir >=15 partidos en historico_partidos_espn.
+--
+--   familia               puentes   pares   ligas   desde        hasta
+--   LIBERTADORES            156       15      12   2023-08-02   2026-09-18
+--   UEFA                     57       34      29   2023-10-05   2026-09-17
+--   AFC                      32       10      16   2023-09-19   2026-09-16
+--   COPA_DOMESTICA/OTRO      17        9      18   2025-06-22   2026-09-16
+--
+-- Libertadores: 0 -> 156 puentes.  AFC: 0 -> 32 puentes.
+-- Cero ingesta nueva. Cero fuente nueva. Cero invencion.
+--
+-- Es la TERCERA vez en esta sesion que una conclusion mia de "faltan datos"
+-- resulta ser un defecto de tuberia:
+--   1. "70 SECURITY DEFINER abiertas"      -> eran 546 (mire solo v2)
+--   2. "arregle las vistas sin invoker"    -> arregle 3 de 215
+--   3. "faltan 36 ligas por ingerir"       -> estan, en el otro proveedor
+-- El patron es el mismo: medi sobre una rebanada y reporte el total.
+--
+-- =====================================================================
+-- LO QUE ESTO CAMBIA EN P1
+-- =====================================================================
+-- P1 NO es un proyecto de ingesta de seis paises. Se parte en dos:
+--
+--   P1-a (barato, ya medido): que la derivacion de membresia y de puentes
+--        acepte API-Football como fuente domestica. Desbloquea Libertadores
+--        y AFC de inmediato. Es tuberia, no datos.
+--
+--   P1-b (sigue siendo ingesta real, pero con otro objetivo): la cobertura de
+--        API-Football en esas ligas es PARCIAL. Solo trae los equipos que
+--        aparecen en competencia continental: 15 de Brasil, 18 de Argentina,
+--        3 de Corea, 5 de Japon. Alcanza para PUENTES, no para dar picks de un
+--        Brasil-Brasil entre dos equipos no cubiertos. Ingerir sirve para
+--        COBERTURA DE PRODUCTO de esas ligas, que es un objetivo distinto del
+--        que te vendi.
+--
+-- NO ejecuto P1-a todavia: cambiar la fuente de rasgos exige preregistro nuevo
+-- y holdout nuevo (el de ISS224 ya se gasto). Lo dejo medido y preregistrable.
+--
+-- =====================================================================
+-- CONTRATO DE INGESTA (para P1-b, cuando se autorice)
+-- =====================================================================
+-- canonical_event_id | provider | provider_event_id | league_id | team_id |
+-- competition_id | season | event_time | status | score | ingested_at | data_asof
+-- Reglas ya fijadas por ti y respetadas aqui:
+--   - membresia de division PUNTO EN EL TIEMPO, nunca la division actual;
+--   - resultado historico y feature prepartido en columnas separadas;
+--   - orden estricto por event_time, actualizar solo despues del resultado;
+--   - tabla de laboratorio sin acceso anon/authenticated, con RLS, sin vistas
+--     publicas, sin consumidores productivos.
+--
+-- ROLLBACK
+--   drop table if exists v2.iss233_censo_liga;
