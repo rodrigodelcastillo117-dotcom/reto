@@ -1,0 +1,168 @@
+-- ISS212 — Matriz adversarial de RLS (punto 3) y regresion de las 80 (punto 4)
+--
+-- ═════════════════════════════════════════════════════════════════════
+-- PUNTO 3 — MATRIZ ADVERSARIAL CON DOS USUARIOS REALES
+-- ═════════════════════════════════════════════════════════════════════
+-- Resultados fila por fila en v2.iss212_matriz_rls. 35 pruebas: 34 PASS y 1
+-- HALLAZGO (la revision de logs, que no es pass/fail sino un hecho).
+--
+-- No use usuarios de prueba inventados. Use DOS USUARIOS REALES con identidad de
+-- auth, porque un usuario sintetico no prueba el aislamiento contra datos reales:
+--   A = rodelcast  uid 0c631a09-03db-4cc1-8140-eb1e7a4363a7  (19 picks, 53 parlays, 7 notifs)
+--   B = el dos     uid acef8d26-af9e-439f-b7e5-4e5dc44ad1b1  (17 picks,  0 parlays, 0 notifs)
+-- La sesion se simula con set_config('role','authenticated') y
+-- set_config('request.jwt.claims', {"sub":<uid>,"role":"authenticated"}), que es
+-- de donde auth.uid() y apodo_de_la_sesion() sacan la identidad.
+-- Los UPDATE y DELETE se miden y SE REVIERTEN a proposito: dentro del bloque se
+-- lanza una excepcion ZZ_ROLLBACK_INTENCIONAL despues de leer row_count, para que
+-- si la RLS hubiera fallado no se borrara nada real.
+--
+-- SELECT, por actor y tabla (propio / ajeno visible):
+--   A picks                19 / 0    PASS
+--   B picks                17 / 0    PASS
+--   A parlays              53 / 0    PASS
+--   B parlays               0 / 0    PASS
+--   A score_notifications   7 / 0    PASS
+--   B score_notifications   0 / 0    PASS
+--
+-- UPDATE y DELETE sobre fila AJENA:
+--   A y B en picks y parlays     0 filas afectadas / 0 borradas   PASS
+--   A y B en score_notifications RECHAZADO: permission denied     PASS
+--
+-- INSERT con el apodo AJENO — Y UNA CORRECCION DE MI PROPIO VEREDICTO:
+--   Primera corrida: ACEPTADO, y lo marque FAIL como fuga de escritura.
+--   ESTABA EQUIVOCADO. Me faltaba medir QUE se guardo. El disparador BEFORE
+--   INSERT trg_apodo_dueno_picks -> public.asignar_apodo_del_dueno reescribe
+--   new.apodo con el apodo del dueno de la sesion; su propio comentario dice
+--   "se ignora lo que haya mandado el cliente".
+--   Segunda corrida, midiendo el apodo guardado con RETURNING:
+--     A intenta crear un pick de "el dos" -> guardado con apodo = rodelcast  PASS
+--     B intenta crear un pick de rodelcast -> guardado con apodo = el dos     PASS
+--   No se puede crear un pick a nombre de otro. La politica "Auth users own picks"
+--   ademas tiene with_check identico al using (lo verifique en pg_policies), asi
+--   que hay dos capas.
+--
+-- ANON:
+--   picks, parlays, score_notifications        RECHAZADO: permission denied  PASS
+--   v_picks_usuario_historial                  RECHAZADO: permission denied for table picks  PASS
+--     (es una vista security_invoker sobre picks; que anon no pueda leerla es lo
+--      correcto, y authenticated si puede y ve solo lo suyo)
+--
+-- VISTA DERIVADA, por actor:
+--   A y B en v_picks_usuario_historial: 0 filas ajenas  PASS
+--
+-- SECURITY DEFINER:
+--   apodo_de_la_sesion() con el JWT de A -> "rodelcast"  PASS
+--   apodo_de_la_sesion() con el JWT de B -> "el dos"     PASS
+--   Resuelve la identidad desde el JWT, no desde un parametro que el cliente pueda
+--   mandar. Esa es la razon de que el predicado de todas las politicas sea seguro.
+--
+-- RPC invocables:
+--   reto_picks_hoy, get_oportunidades_hoy, construir_parlay_del_dia
+--   NO EJECUTABLES por anon, las tres. SECURITY DEFINER = true.  PASS
+--
+-- SERVICE_ROLE (conserva solo lo necesario):
+--   ve las 42 picks, 68 parlays y 7 notificaciones por rolbypassrls=true,
+--   verificado en pg_roles. Sin eso no funcionan la autocalificacion ni la
+--   reconciliacion.  PASS
+--   Y SE LE QUITA lo que no necesita: TRUNCATE, TRIGGER y REFERENCES en las tres
+--   tablas, tanto a service_role como a authenticated. TRUNCATE borra la tabla
+--   entera SALTANDOSE la RLS; TRIGGER permite instalar disparadores; REFERENCES
+--   crear llaves foraneas. Ninguno hace falta para operar.
+--   Privilegios finales:
+--     picks / parlays        authenticated: SELECT INSERT UPDATE DELETE
+--                            service_role : SELECT INSERT UPDATE DELETE
+--     score_notifications    authenticated: SELECT INSERT UPDATE
+--                            service_role : SELECT INSERT UPDATE DELETE
+--
+-- REGRESION QUE ISS209 INTRODUJO Y AQUI SE CORRIGE:
+--   El "revoke all privileges ... from anon, public" sobre score_notifications le
+--   quito tambien el UPDATE a authenticated, porque ese privilegio venia por
+--   PUBLIC. La politica score_notif_dueno_update existia pero sin privilegio
+--   detras, asi que MARCAR UNA NOTIFICACION COMO VISTA quedaba roto. La matriz lo
+--   detecto como "RECHAZADO: permission denied" en el UPDATE. Se repone el
+--   privilegio; la politica sigue acotando a que solo el dueno pueda.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- REVISION DE LOGS: vulnerabilidad posible contra acceso observado
+-- ─────────────────────────────────────────────────────────────────────
+-- VULNERABILIDAD POSIBLE, confirmada por analisis de politicas:
+--   con qual = true en "Auth read all picks", "Auth read all parlays" y
+--   score_notif_auth_select, cualquier usuario autenticado podia leer TODAS las
+--   filas y TODAS las columnas de las tres tablas. Las politicas permisivas se
+--   SUMAN, asi que la politica por dueno no servia de nada mientras existiera la
+--   abierta.
+--
+-- ACCESO OBSERVADO, confirmado por pg_stat_statements:
+--   De ~1,591 llamadas de cliente a esas tres tablas, TODAS menos una familia
+--   llevan un filtro explicito apodo = $1 puesto por el frontend, asi que solo
+--   devolvieron filas del propio usuario:
+--     score_notifications WHERE apodo = $1   1,302 llamadas
+--     picks WHERE apodo = $1                     83 + 9
+--     parlays WHERE apodo = $1                   83 + 9
+--     picks / parlays con apodo = $1 y proyecciones parciales  52 + 52 + 52 + 1
+--   La UNICA excepcion, y es real:
+--     SELECT picks.updated_at FROM picks WHERE resultado = $1
+--     ORDER BY created_at ASC LIMIT $2 OFFSET $3
+--     53 llamadas, 53 filas (1 por llamada), SIN filtro por apodo.
+--     Bajo la politica vieja podia devolver el updated_at del pick de CUALQUIER
+--     usuario. Es una lectura cruzada real, pero de UNA sola columna de tipo
+--     timestamp, no del contenido de las apuestas.
+--
+-- NO DETERMINABLE: de quien era esa fila en cada una de las 53 llamadas.
+--   pg_stat_statements no guarda los valores de los parametros ni la identidad del
+--   usuario, solo el rol. No hay auditoria fila por fila de SELECT en Postgres.
+--
+-- CAVEAT: pg_stat_statements cubre solo la ventana desde el ultimo reset y
+--   desaloja entradas. Lo anterior es una COTA INFERIOR de lo que corrio, no un
+--   censo completo.
+--
+-- ESCALA: 6 usuarios en total, 5 con identidad de auth.
+--
+-- ═════════════════════════════════════════════════════════════════════
+-- PUNTO 4 — REGRESION DE LAS 80 SUPERFICIES CERRADAS
+-- ═════════════════════════════════════════════════════════════════════
+-- Ventana: desde 2026-09-18 01:50 UTC (cierre de ISS209) hasta 02:45 UTC.
+--
+-- CIFRA GLOBAL: 758 corridas de cron, 134 jobs distintos.
+--   fallidas                        13
+--   fallidas por PERMISOS            0
+--   fallidas por RLS o politica      0
+--   fallidas por statement timeout  13
+--
+-- Los 13 timeouts son de TRES jobs, y NINGUNO empezo a fallar con ISS209:
+--   motor-cache-refrescar             1 fallo despues | 31 fallos ANTES, primer fallo 2026-09-11
+--   phi-extension-30m                 2 fallos despues | 35 fallos ANTES, primer fallo 2026-09-16
+--   reto-global-candidate-snapshot-v1 10 fallos despues | 150 fallos ANTES, primer fallo 2026-09-15
+--   Los tres mueren en "canceling statement due to statement timeout" dentro de
+--   fn_crossleague_features_training_asof, fn_soccer_team_form_context_v2 y
+--   mlb_resolve_espn_team_id_v1. Es un problema REAL de rendimiento que precede a
+--   este parche por dias, y queda declarado como pendiente que NO es de ISS209.
+--
+-- POR AREA, todas con 0 fallos:
+--   FAVORITOS                 favoritos_bien_pagados() devuelve 10 candidatos y
+--                             reto_registrar_favoritos corre sin error (publica 0,
+--                             que es el fail-closed economico, no un error)
+--   AUTOCALIFICACION parlays  26 exitos / 0 fallos
+--   AUTOCALIFICACION mlb      26 exitos / 0 fallos
+--   NOTIFICACIONES            69 exitos / 0 fallos
+--   CLV                       23 exitos / 0 fallos
+--   SCANNER (scan/momios)     26 exitos / 0 fallos
+--   EDGE FUNCTIONS            167 exitos / 0 fallos (jobs que hacen net.http_post
+--                             a functions/v1)
+--   TARJETAS (cache)          28 exitos / 0 fallos
+--   ESCRITURAS DEL DUENO      probadas en la matriz: A y B insertan, actualizan y
+--                             borran lo propio; el INSERT con apodo ajeno se
+--                             reescribe al dueno
+--   SERVICE_ROLE              ve y escribe todo por bypassrls
+--
+-- CERO DEPENDENCIA ROTA: 0 fallos por permisos y 0 por RLS en 758 corridas.
+--
+-- ROLLBACK
+--   v2.iss209_superficie_a_cerrar guarda relacion, clase, rls_previa,
+--   politicas_cliente_previas y cerrada_at.
+--   Privilegios quitados en este parche:
+--     grant truncate, trigger, references on public.picks, public.parlays,
+--       public.score_notifications to authenticated, service_role;
+--   Privilegio repuesto:
+--     grant update on public.score_notifications to authenticated;  (ya aplicado)

@@ -85,3 +85,10 @@ select * from v2.escritor_autorizado order by tipo, objeto;
 -- IC95 [-0.03873,+0.00088] contra 0.25, que CRUZA CERO, medido en una
 -- reproduccion preregistrada de n=144. 0 filas publicadas, 572 de tablero con
 -- P_RETO_NO_DISPONIBLE.
+
+-- ISS212 (2026-09-18). Matriz adversarial de RLS y regresion de las 80.
+--   v2.iss212_matriz_rls: 35 pruebas, 34 PASS + 1 HALLAZGO (revision de logs).
+--   Regresion: 758 corridas de cron, 134 jobs, 0 fallos por permisos, 0 por RLS,
+--   13 por statement timeout en 3 jobs que ya fallaban dias antes de ISS209.
+--   Corregida una regresion mia: score_notifications habia perdido el UPDATE de
+--   authenticated, asi que marcar una notificacion como vista estaba roto.
