@@ -1,0 +1,211 @@
+-- ISS207 — El precio deja de ELEGIR y de ORDENAR
+--
+-- Los cuatro gates PRECIO_* del dueno, uno por uno, con lo que se encontro y lo
+-- que se hizo. Regla que se aplica en todos: la SELECCION y el ORDEN salen de
+-- P_RETO; la cuota se usa DESPUES de P_RETO para EV, CLV y staking (regla 3 del
+-- dueno); sin P_RETO valido no hay EV, Kelly, stake, parlay ni recomendacion
+-- (regla 4). Lo que el precio SI puede hacer es apagar el DINERO. Lo que no
+-- puede hacer es borrar un pick del modelo de la superficie.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- HALLAZGO DE METODO: los tres inventarios eran FOTOS, no mediciones
+-- ─────────────────────────────────────────────────────────────────────
+-- public.ruta_precio_hallazgo, .ruta_precio_taint y .ruta_precio_segunda_mano
+-- guardan lineas de codigo con un veredicto puesto a mano el 2026-09-12. Nada
+-- las volvia a comparar contra el codigo vivo. Resultado medido:
+--
+--   ruta_precio_hallazgo      7 PRESENTE  / 23 AUSENTE / 16 OBJETO_INEXISTENTE
+--   ruta_precio_taint        83 PRESENTE  / 21 AUSENTE / 12 OBJETO_INEXISTENTE
+--   ruta_precio_segunda_mano 42 PRESENTE  /  3 AUSENTE /  0 OBJETO_INEXISTENTE
+--
+-- O sea: 22 de los 30 hallazgos marcados VIOLACION_CANDADO apuntaban a lineas
+-- que YA NO EXISTEN. Ejemplos concretos: el "order by monto_cand desc" de
+-- reto_picks_hoy__base (ISS195 lo cambio a argmax P_RETO), toda la lista de
+-- v_super_pick (ISS206 la retiro), y el WHERE de picks_recomendados_hoy_raw que
+-- exigia odds_verificadas. Tres FAIL de fantasmas.
+--
+-- Por eso lo primero de este parche no es un arreglo, es un MEDIDOR:
+--   public.fuente_viva_del_objeto(text)   -> texto vivo del objeto, SIN comentarios
+--   public.linea_sigue_viva(text,text)    -> la linea sigue en el codigo, si/no
+--   public.reverificar_ruta_precio()      -> escribe estado_en_codigo en las tres
+--                                            tablas y mueve a CORREGIDO_EN_CODIGO
+--                                            lo que ya no existe. No borra nada:
+--                                            la razon original queda detras de
+--                                            "|| HALLAZGO ORIGINAL:".
+--   cron ruta-precio-reverificar '25 5 * * *' (jobid 545) para que no vuelva a
+--   quedarse vieja.
+--
+-- ERROR MIO EN LA PRIMERA VERSION DEL MEDIDOR, y por que importa: no quitaba los
+-- comentarios. El comentario donde YO documento "antes habia ORDER BY ev_pct
+-- DESC" contenia la linea del hallazgo, asi que documentar el arreglo lo
+-- resucitaba: get_oportunidades_hoy salia PRESENTE por su propio comentario.
+-- fuente_viva_del_objeto ahora recorta '--' hasta fin de linea, con la limitacion
+-- declarada en su propio comentario.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- GATE #9  PRECIO_SEGUNDA_MANO_VIOLACION_ABIERTA   FAIL -> PASS
+-- ─────────────────────────────────────────────────────────────────────
+-- Objeto: reto_registrar_favoritos, lineas 44 y 45.
+--   linea 45  coalesce(f.falta,'') not ilike 'ventaja de%'
+--     'falta' con valor "ventaja de..." describe el DESACUERDO DEL MODELO CONTRA
+--     EL PRECIO. Ese renglon suprimia favoritos por no tener suficiente ventaja
+--     contra el mercado: el criterio prohibido. Estaba LATENTE (falta = NULL en
+--     las 10 filas de hoy). SE ELIMINO, para que no despierte.
+--   linea 44  where f.info_completa
+--     El hallazgo de ISS116 decia que suprimia 50 de 68 favoritos cuya unica
+--     falta era el precio. MEDIDO HOY: favoritos_bien_pagados() devuelve 10
+--     filas, las 10 con info_completa=true, y 3 de ellas SIN momio. info_completa
+--     dejo de significar "tiene precio". El subgate vivo
+--     FAVORITOS_SUPRIMIDOS_POR_FALTA_DE_PRECIO mide 0.
+--     Veredicto NO_ES_VIOLACION, con la medicion, no con un argumento.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- GATE #11  PRECIO_DECIDE_VIOLACION_ABIERTA   FAIL (27) -> PASS (0)
+-- ─────────────────────────────────────────────────────────────────────
+-- get_oportunidades_hoy(integer)
+--   ANTES: WHERE (calibrar_probabilidad(prob/100) * momio - 1) > 0  y
+--          ORDER BY ev_pct DESC. El precio borraba picks y rankeaba. Ademas
+--          aplicaba calibrar_probabilidad() ENCIMA de una probabilidad que ya
+--          sale calibrada del cerebro canonico: segunda calibracion sin autoridad.
+--   AHORA: sin filtro por EV, orden por P_RETO, sin recalibrar. El EV se publica
+--          como 'ev_pct_informativo' con su nota.
+--
+-- get_partidos_hoy_top(integer)
+--   ANTES: dos WHERE (prob/100*momio-1) > 0 y un ORDER BY por esa aritmetica,
+--          escrito SIN la palabra "ev" en ninguna parte -- por eso el detector
+--          persigue la FORMA y no el nombre. El badge contaba "picks +EV".
+--   AHORA: el mejor pick de cada partido es el de mayor P_RETO, el badge cuenta
+--          picks canonicos, el EV se informa.
+--
+-- construir_parlay_del_dia__base(text,text,integer)
+--   ANTES: WHERE (prob/100*momio-1) > 0 y ORDER BY tier, EV DESC.
+--   AHORA: seleccion y orden por P_RETO. Kelly sigue dimensionando el monto
+--          (eso es staking, permitido). Si el EV no es positivo el monto es 0 y
+--          se dice, pero los legs no se borran.
+--
+-- construir_parlay_v2__base(text,text,integer)
+--   ANTES: tres veces el precio. (1) filtro por EV calibrado. (2) exigia que el
+--          leg cayera en un "nicho rentable", y el nicho se define por
+--          (liga, mercado, RANGO DE MOMIO): el bucket de precio decidia que legs
+--          podian existir; el nicho "sangrante" los eliminaba. (3) ORDER BY
+--          COALESCE(nicho_roi, liga_roi) DESC, ev_pct DESC.
+--   AHORA: seleccion y orden por P_RETO. El ROI de nicho y de liga se consultan
+--          y se informan por leg, y el nicho sangrante sale como ADVERTENCIA
+--          contada en 'legs_en_nicho_sangrante', pero ninguno filtra ni ordena.
+--          Se quito tambien la segunda calibracion.
+--
+-- reto_picks_hoy__base(text)   -- LA SUPERFICIE PRINCIPAL
+--   El orden ya era argmax P_RETO desde ISS195; eso no cambia.
+--   ANTES: cuando el bloqueo era ECONOMICO -- veredicto de Kelly NO APOSTAR, EV
+--          no positivo, stake bajo el minimo, stake que no cabe en el techo de
+--          cartera, limite de exposicion alcanzado, o veto de RONGOL -- la
+--          categoria salia 'descartado' y el pick DESAPARECIA. El texto al
+--          usuario era "El precio no compensa la probabilidad real".
+--   AHORA: bandera bloqueo_economico = motivo_bloqueo in (kelly, ev_negativo,
+--          bajo_minimo, rongol). Cuando es cierta: categoria
+--          'ventaja_insuficiente', monto_autorizado 0, puede_apostar false, y el
+--          texto dice "El modelo mantiene este pick con P_RETO de X%. Lo que NO
+--          alcanza es el precio... El pick sigue publicado; lo que se apaga es
+--          el dinero". Solo descartan los motivos NO economicos: sin_modelo,
+--          abstencion, partido_fantasma, muestra_chica, sin_datos.
+--   POR QUE RONGOL ENTRO A LA CLASE ECONOMICA: su bloqueo duro exige
+--          lecciones_aprendidas.rango_momio = el tramo del momio, o sea esta
+--          segmentado POR RANGO DE PRECIO. Es gestion de riesgo y puede apagar
+--          el dinero, no borrar el pick.
+--   Las lineas 88, 89, 93 y 94 (recorrido de capacidad 0/1 del allocator) se
+--   reclasifican DIMENSIONAMIENTO_ECONOMICO: deciden si cabe el stake completo,
+--   no si el pick existe.
+--
+-- picks_recomendados_hoy_raw: el WHERE que exigia odds_verificadas y >= 4 YA NO
+--   EXISTE en la vista viva. CORREGIDO_EN_CODIGO, sin tocar nada.
+--
+-- v_super_pick y veredicto_vivo: ver mas abajo.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- GATE #12  PRECIO_POR_ALIAS_VIOLACION_ABIERTA   FAIL -> PASS
+-- ─────────────────────────────────────────────────────────────────────
+-- Los 8 hallazgos eran de reto_picks_hoy__base. Dos (lineas 76 y 112) apuntaban
+-- a lineas que ya no existen. Los seis restantes quedaron
+-- DIMENSIONAMIENTO_ECONOMICO por lo de arriba. El subgate vivo
+-- ORDEN_CANONICO_SALE_DE_KELLY ya estaba en PASS: el ORDER BY es P_RETO.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- GATE #10  PRECIO_DECIDE_P0_SIN_CLASIFICAR   SIGUE FAIL
+-- ─────────────────────────────────────────────────────────────────────
+-- NO SE CIERRA EN ESTE PARCHE Y NO FINJO QUE SI.
+-- Tras refrescar el inventario contra el codigo de hoy
+-- (refrescar_ruta_precio_inventario() -> 273 objetos, 1,475 lineas, 98 con senal
+-- no esquivable), quedan 269 lineas con severidad P0_EL_PRECIO_DECIDE y
+-- veredicto NULL, repartidas en 92 objetos: 145 en 55 funciones con exposicion
+-- directa, 74 en 15 funciones sin exposicion directa y 50 en 22 vistas.
+-- Clasificarlas exige leerlas una por una y NO voy a ponerles una etiqueta por
+-- categoria para que el gate pase. Las familias que se ven de entrada:
+--   * los propios gates y pruebas (gate_precio_por_alias, gate_precio_no_decide,
+--     gate_goles_esperados, pruebas_selector_limpio, invariantes_temporales)
+--     -> candidatas a FALSO_POSITIVO_DETECTOR;
+--   * medicion retrospectiva (get_performance_breakdown__base,
+--     actualizar_memoria_rendimiento, ai_performance_*, v_ai_learning_summary,
+--     refresh_liga_intelligence, evidencia_capturar, clv_capturar_cierre)
+--     -> candidatas a MEDICION_RETROSPECTIVA;
+--   * dimensionamiento (kelly_stake__base, tamano_apuesta__base,
+--     decision_pick_v1, auditar_ev_pick) -> DIMENSIONAMIENTO_ECONOMICO;
+--   * y las que de verdad hay que revisar porque SELECCIONAN:
+--     generar_parlay_seguro, reto_parlay_lab_v2,
+--     v_reto_parlay_candidate_pool_v2_fast, mejor_oportunidad_hoy_v2__base,
+--     reto_lo_mejor_editorial_v2, devils_advocate*, motor_valor_partido,
+--     poisson_picks_edge, v_picks_premium, revisar_apuesta__base.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- HALLAZGO GRANDE QUE NO ESTABA EN LA LISTA: veredicto_vivo ERA OTRO CEREBRO
+-- ─────────────────────────────────────────────────────────────────────
+-- public.veredicto_vivo(text,text,numeric), ejecutable por anon y por
+-- authenticated, llamaba DIRECTAMENTE a public.motor_probabilidades (futbol),
+-- public.motor_mlb y public.motor_nfl -- tres motores legacy que NO son los
+-- cerebros canonicos -- mas public.motor_cache. Y su veredicto ENTRA/NO ENTRA lo
+-- concedia el EV contra el precio en tres ventanas:
+--     v_estable := (v_ev > 0 and (c_cor*cuota-1) > 0 and (c_lar*cuota-1) > 0)
+-- Reescrita: la probabilidad sale EXCLUSIVAMENTE de public.v_pick_canonico. Si
+-- ahi no hay P_RETO para ese partido y ese mercado devuelve NO_DISPONIBLE. El
+-- veredicto lo da el ESTADO DEL MODELO (es_pick), no el EV; el EV se informa.
+--
+-- public.veredicto_pick, sus DOS sobrecargas, leia destacados_cache y publicaba
+-- como razon para apostar, textual: "Le ganamos al mercado por X puntos ya
+-- quitando el Y% que cobra la casa". Eso es ventaja contra el mercado como
+-- motivo, prohibido. Y destacados_cache lo llena refrescar_destacados desde
+-- public.motor_del_partido, que tampoco es el cerebro canonico.
+-- Reescritas: el veredicto lo da SIEMPRE el cerebro canonico via veredicto_vivo;
+-- destacados_cache se adjunta como 'contexto_legacy' con una nota que dice
+-- exactamente lo que es y que no puede dar ni quitar un pick. La sobrecarga de
+-- tres argumentos ahora delega en la de cuatro para que no puedan divergir.
+--
+-- ─────────────────────────────────────────────────────────────────────
+-- PRUEBAS (corridas, resultados reales)
+-- ─────────────────────────────────────────────────────────────────────
+-- T1  linea_sigue_viva detecta bien: 'rongol' PRESENTE; 'order by monto_cand',
+--     v_super_pick y picks_recomendados_hoy_raw AUSENTES.                  OK
+-- T2  get_oportunidades_hoy(36) -> total 0, orden 'P_RETO_DESC'.           OK
+-- T3  construir_parlay_del_dia__base -> 0 legs, aviso que dice que es
+--     fail-closed y no falta de precio.                                    OK
+-- T4  construir_parlay_v2__base -> 0 legs, aviso que explica que se quito el
+--     requisito de nicho rentable y por que.                               OK
+-- T5  veredicto_vivo sobre un evento real -> prob_fuente P_RETO_CANONICO,
+--     veredicto NO_APUESTA, motivo_modelo SIN_MODEL_VERSION, 76.8% del
+--     cerebro canonico motor_mlb_cuantitativo.                             OK
+-- T6  veredicto_pick delega y devuelve lo mismo.                           OK
+-- T7  reverificar_ruta_precio() -> 7/83/42 PRESENTE en las tres tablas.     OK
+-- T8  Hallazgos abiertos: hallazgo 30->0, taint 8->0, segunda_mano 2->0.    OK
+--     Corregidos en codigo registrados: 22 + 2 + 1. Nada borrado.
+-- T9  gate_precio_no_decide:
+--       PRECIO_DECIDE_VIOLACION_ABIERTA  FAIL(27) -> PASS(0)
+--       PRECIO_NO_BORRA_PICKS            nuevo, PASS(0)  [medicion viva]
+--       RUTA_PRECIO_REVERIFICADA         nuevo, PASS
+--       PRECIO_DECIDE_P0_SIN_CLASIFICAR  FAIL(269)  sigue abierto, declarado
+-- T10 gate_precio_por_alias: los cinco subgates PASS.
+-- T11 gate_precio_de_segunda_mano: los cuatro subgates PASS.
+--
+-- ROLLBACK
+-- Las definiciones previas de v_super_pick y v_picks_para_parlay estan en
+-- v2.apagado_reversible. Las funciones reescritas se recuperan del git de este
+-- repo. reverificar_ruta_precio() no borra filas: para volver atras basta
+-- reponer el veredicto anterior, que sigue textual dentro de la razon despues de
+-- "|| HALLAZGO ORIGINAL:".

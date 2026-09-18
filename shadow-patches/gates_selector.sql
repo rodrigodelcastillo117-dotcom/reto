@@ -44,3 +44,12 @@ select * from v2.escritor_autorizado order by tipo, objeto;
 -- Prueba adversarial de la barrera de NFL (v2.fn_nfl_legacy_predicciones_failclosed):
 -- cuatro contrabandos en una fila, los cuatro rechazados. Ver T7 en
 -- shadow-patches/ejecutables/iss206_nfl_cinco_cerebros_y_el_precio_como_probabilidad.sql
+
+-- ISS207 (2026-09-18). El precio deja de elegir y de ordenar.
+--   gate_precio_de_segunda_mano / PRECIO_SEGUNDA_MANO_VIOLACION_ABIERTA  FAIL(2)  -> PASS(0)
+--   gate_precio_no_decide      / PRECIO_DECIDE_VIOLACION_ABIERTA         FAIL(27) -> PASS(0)
+--   gate_precio_por_alias      / PRECIO_POR_ALIAS_VIOLACION_ABIERTA      FAIL(8)  -> PASS(0)
+--   gate_precio_no_decide      / PRECIO_DECIDE_P0_SIN_CLASIFICAR         FAIL(269) sigue abierto
+--   NUEVOS subgates de medicion viva en gate_precio_no_decide:
+--     PRECIO_NO_BORRA_PICKS      PASS(0)  -- ningun pick descartado por motivo economico
+--     RUTA_PRECIO_REVERIFICADA   PASS     -- los inventarios se comparan contra el codigo vivo
