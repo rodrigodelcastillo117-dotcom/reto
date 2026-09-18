@@ -75,3 +75,13 @@ select * from v2.escritor_autorizado order by tipo, objeto;
 -- 80 relaciones cerradas, 58 politicas de cliente borradas, RLS deny-by-default en
 -- 63 tablas. Fuga corregida: parlays, picks y score_notifications dejaban a
 -- cualquier autenticado leer los datos de todos.
+
+-- ISS211 (2026-09-18). feature_asof y autoridad de NFL por rama.
+--   NUEVO public.gate_feature_asof_es_real():
+--     FEATURE_ASOF_NO_ALMACENADO        PASS(0 de 496)
+--     FEATURE_ASOF_SIN_RELOJ            PASS
+--     FEATURE_ASOF_ESPEJEA_PUBLICACION  PASS(0 de 200)
+-- NFL pasa a fail-closed total: la rama que publicaba (ELO_HISTORICAL_PRIOR) tiene
+-- IC95 [-0.03873,+0.00088] contra 0.25, que CRUZA CERO, medido en una
+-- reproduccion preregistrada de n=144. 0 filas publicadas, 572 de tablero con
+-- P_RETO_NO_DISPONIBLE.

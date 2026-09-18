@@ -196,3 +196,114 @@
 --   NO REPRODUCIBLE      : ninguna rebanada coincide
 --   En los tres casos el IC95 que yo calcule es un numero nuevo y valido sobre MI
 --   reproduccion, y se reporta con su n.
+
+-- ═════════════════════════════════════════════════════════════════════
+-- PARTE 2 — RESULTADO DE LA CORRIDA UNICA (preregistrada en el commit e348655)
+-- ═════════════════════════════════════════════════════════════════════
+--
+-- Reproduccion guardada fila por fila en v2.iss211_nfl_reproduccion, para que
+-- cualquiera pueda recontar. Esta es la tabla que el sello original NO tenia.
+--
+-- POR REBANADA, mio contra el sello:
+--   rebanada    n mio | n sello | brier mio | brier sello | dif      | coincide
+--   2024          64  |   64    | 0.24689   | 0.25069     | 0.00380  | SI
+--   2025          64  |   63    | 0.21155   | 0.20533     | 0.00622  | NO
+--   2026_week1    16  |   16    | 0.24596   | 0.24309     | 0.00287  | SI
+--   acierto mio: 2024 60.94%, 2025 70.31%, 2026 sem1 75.00%
+--   logloss mio: 2024 0.68745, 2025 0.61339, 2026 sem1 0.68871
+--
+-- VEREDICTO CONTRA EL CRITERIO PREDECLARADO: PARCIALMENTE REPRODUCIDA.
+--   Dos de tres rebanadas coinciden en n exacto y en Brier a +-0.005, incluida la
+--   de 2024, que es la unica que el propio sello admite como "aproximadamente
+--   neutral contra 0.25". La de 2025 da un partido mas y 0.0062 de diferencia en
+--   Brier, dentro de lo que explican mis tres desviaciones declaradas (sobre todo
+--   D1: aproximar "partidos de temporada regular en curso" por fecha).
+--   NO ajuste la configuracion para hacerlas cuadrar.
+--
+-- AGREGADO SOBRE MI REPRODUCCION (n=144):
+--   Brier modelo            0.23108
+--   Brier referencia        0.25000
+--   diferencia media       -0.01892
+--   sd de la diferencia     0.12126
+--   error estandar          0.01010
+--   IC95                   [-0.03873, +0.00088]   <-- CRUZA CERO
+--   logloss                 0.65468  contra 0.69315 de un volado  (mejor)
+--   acierto                 66.67%
+--
+--   H1 QUEDA CONFIRMADA: con n=144 la ventaja contra un volado NO es
+--   distinguible de cero. El limite superior es +0.00088, o sea por un pelo, pero
+--   cruza. Un punto estimado sin IC95 no es una validacion.
+--
+-- CALIBRACION MEDIDA (tramos de confianza):
+--   0.500-0.598  n=73  dice 54.83%  entrega 67.12%  brecha 12.29pp  INFRACONFIADO
+--   0.601-0.700  n=54  dice 64.41%  entrega 66.67%  brecha  2.26pp
+--   0.702-0.788  n=16  dice 73.55%  entrega 62.50%  brecha 11.05pp
+--   0.855-0.855  n= 1  dice 85.53%  entrega 100.0%  brecha 14.47pp
+--   Con tramos de n>=20 el maximo es 12.29pp. El sello declara 6.54pp: casi la
+--   mitad de lo que yo mido, y en el tramo MAS POBLADO.
+--
+-- FUGA TEMPORAL: cero por construccion. El Elo es secuencial; el rating de cada
+--   partido se calcula con los anteriores y se actualiza despues. No hay ninguna
+--   lectura de resultados futuros. La tabla v2.iss211_nfl_reproduccion guarda
+--   r_home y r_away previos al partido para que se pueda verificar.
+--
+-- ═════════════════════════════════════════════════════════════════════
+-- CONSECUENCIA: LA AUTORIDAD DE NFL PASA A SER POR RAMA
+-- ═════════════════════════════════════════════════════════════════════
+-- HALLAZGO QUE OBLIGA A ESTO: las 652 filas publicadas de nfl_hybrid_ml_v1 son
+-- TODAS de provenance->>branch = 'ELO_HISTORICAL_PRIOR', semanas 2 a 4, con 1
+-- partido de temporada en curso por equipo. Es decir: lo que NFL publicaba hoy
+-- era exactamente la rama que no pasa al 95%. La rama que SI tiene habilidad
+-- demostrada (la madura, n=123, Brier 0.21033, brecha 4.79pp) no estaba sirviendo
+-- ni una fila, porque solo entra cuando los dos equipos llevan >=4 partidos.
+--
+-- Nueva tabla v2.nfl_branch_release_authority, una fila por rama:
+--   ELO_HISTORICAL_PRIOR   publish_authorized=false  OOS_NOT_SIGNIFICANT
+--     n=144, Brier 0.23108, dif -0.01892, IC95 [-0.03873,+0.00088],
+--     logloss 0.65468, brecha 12.29pp
+--     criterio de reingreso: limite SUPERIOR del IC95 por debajo de 0 y brecha
+--     maxima <= 7.5pp en tramos con n>=20
+--   CURRENT_FORM           publish_authorized=true   OOS_VALIDATED
+--   MATURE_MODEL_NATIVE    publish_authorized=true   OOS_VALIDATED
+--     (las dos etiquetas de la rama madura, para no depender de cual escriba el
+--      builder). IC95 en NULL A PROPOSITO: no existe la tabla de 123 predicciones
+--      fila por fila y los rasgos no se pueden reconstruir, asi que NO lo estimo.
+--      La cota derivada queda en el JSON de evidencia, marcada como cota.
+--
+-- v_nfl_publication_v1 parchada con disciplina de exactamente-una-vez: se agrega
+--   AND EXISTS (SELECT 1 FROM v2.nfl_branch_release_authority ba
+--                WHERE ba.branch = (s_1.provenance->>'branch') AND ba.publish_authorized)
+--
+-- ESTADO DE NFL DESPUES, MEDIDO:
+--   v_nfl_publication_v1        32 -> 0 filas
+--   nfl_reto_modelo             32 -> 0 filas
+--   nfl_tablero con P_RETO      32 -> 0    |  sin P_RETO  540 -> 572
+--   nfl_lock_semana             15 -> 0 filas
+--   v_prediccion_reto_canonico  15 -> 0 filas de nfl
+--   nfl_predicciones: mejor_pick 32 -> 0, entradas canonicas 32 -> 0,
+--     entradas con la llave 'probabilidad' 0, entradas con
+--     prob_implicita_mercado_pct 1,134. El precio existe y se llama precio.
+--
+-- LOS SEIS CAMINOS DE NFL, Y DONDE TERMINA CADA UNO
+--   1 nfl_hybrid_ml_v1 rama madura   AUTORIZADO, 0 snapshots hoy, entra sola en la semana 5
+--   2 nfl_hybrid_ml_v1 rama temprana NO PUBLICABLE, 672 snapshots, bloqueada por rama
+--   3 nfl_form_ml_v1 (COMPONENTE)    816 snapshots, ninguna vista de produccion los lee
+--   4 nfl-2026.09.2 (retador)        6,091 snapshots, RETIRADO, cron 469 apagado
+--   5 nfl_predecir -> nfl_predicciones  1,134 entradas de precio, 0 probabilidades
+--   6 nfl_opinion_modelo (FPI)       256 filas, solo en contexto, etiquetado NO PICK
+--   SALIDA UNICA: v_nfl_publication_v1 -> nfl_reto_modelo -> nfl_tablero ->
+--                 {nfl_tablero_semana, v_prediccion_reto_canonico, nfl_lock_semana}
+--                 0 filas publicadas, 572 de tablero con P_RETO_NO_DISPONIBLE.
+--
+-- PRECIO NO-VIG COMO MODELO, BAJO NINGUN ALIAS: verificado. 0 entradas con la
+-- llave 'probabilidad' en nfl_predicciones; las 1,134 de precio llevan
+-- prob_implicita_mercado_pct; prob_fuente del tablero solo toma MODELO_RETO o
+-- P_RETO_NO_DISPONIBLE; v_prediccion_reto_canonico declara prob_source =
+-- reto_modelo (el model_version real) y no 'nfl_points_lattice_v2'.
+--
+-- ROLLBACK
+--   delete from v2.nfl_branch_release_authority where branch='ELO_HISTORICAL_PRIOR';
+--   o bien update ... set publish_authorized=true  -- reabre la rama temprana
+--   y v_nfl_publication_v1 vuelve a publicar sin tocar la vista, porque el EXISTS
+--   consulta la tabla. La reproduccion fila por fila queda en
+--   v2.iss211_nfl_reproduccion y no se borra.
