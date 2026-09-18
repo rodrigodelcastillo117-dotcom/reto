@@ -1,0 +1,89 @@
+-- ISS222. Semantica de gates separada, y la prueba del backlog de phi.
+--
+-- ==========================================================================
+-- 1. POR QUE EL GATE ANTERIOR ERA ENGANOSO
+-- ==========================================================================
+-- Un solo gate mezclaba cinco cosas distintas y por eso daba un FAIL permanente:
+--   - perdidas que eran una EXCLUSION del dueno (Sudamericana);
+--   - perdidas ANTERIORES a que el arreglo existiera (aprobaciones del 16-sep);
+--   - dias EN CURSO cuyos partidos no han terminado;
+--   - fallo de CAPTURA (no se guardo prediccion antes del evento);
+--   - fallo del MODELO (se guardo, pero no produjo probabilidad).
+-- Los dos ultimos son problemas reales y distintos. Los tres primeros no son
+-- perdida.
+--
+-- Nuevas piezas declarativas:
+--   v2.captura_barrera                  fecha desde la que se evalua cada deporte
+--   v2.competencia_excluida_cobertura   lo que el dueno excluyo explicitamente
+--   v2.normalizar_motivo_perdida(text)  POLICY_NOT_APPROVED | PHI_NOT_SERVABLE |
+--                                       SAMPLE_BELOW_MINIMUM | DATA_INCOMPLETE |
+--                                       ERROR_TECNICO | OTRO
+--
+-- denominador = eventos_totales - excluidos - pre_barrera - pendientes
+--
+-- GATES SEPARADOS (public.gate_captura_prospectiva):
+--   A_CAPTURA_PREEVENTO        PASS(0)
+--   B_COBERTURA_MODELO         FAIL(2)   <- real y accionable
+--   C_INFO_EXCLUDED            INFO(4)
+--   D_INFO_HISTORICAL          INFO(20)
+--   E_PENDIENTE_NO_FINALIZADO  PENDING(227)
+--   F_FRESCURA                 PASS(16)
+--
+-- B exige denominador >= 5 para no declarar FAIL sobre un dia con n=1.
+--
+-- TABLA NUEVA (v2.captura_prospectiva_diaria), estado real:
+--  fecha      dep       tot exc pre pend den cap rdy captura%  cobertura%  motivos
+--  2026-09-16 soccer     23   2   3    0  18  18  12   100.00      66.67   PHI 5, SAMPLE 1
+--  2026-09-17 soccer     13   0   0    0  13  13  10   100.00      76.92   PHI 2, SAMPLE 1
+--  2026-09-18 soccer     14   1   0   12   1   1   0   100.00       0.00   PHI 1   (n=1)
+--  2026-09-17 baseball    7   0   0    0   7   7   7   100.00     100.00   -
+--  2026-09-18 baseball    9   0   0    7   2   2   2   100.00     100.00   -
+--
+-- POLICY_NOT_APPROVED desaparecio del denominador: 17+3 eventos quedaron como
+-- pre-barrera y 4 de Sudamericana como excluidos. La causa dominante que QUEDA
+-- es una sola: PHI_NOT_SERVABLE.
+--
+-- ==========================================================================
+-- 2. PRUEBA DEL BACKLOG DE PHI, Y MI PREDICCION ERA FALSA
+-- ==========================================================================
+-- En ISS221 escribi que phi "ya esta corriendo" y que iba a desbloquear los 8
+-- eventos. MEDIDO AHORA, ESO ES FALSO.
+--
+--   ligas pendientes iniciales ........ 44
+--   ligas procesadas .................. 39
+--   ligas pendientes ahora ............  5
+--   corridas del cron (05:07 a 07:37) .. 6, TODAS succeeded, 7 a 28 s
+--   ligas con fit_status = PASS ........  0
+--   ligas instaladas en crossleague_league_strength .. 24 (las de antes, ninguna nueva)
+--   n_usable de las 39: min 0, max 19, promedio 2.4
+--   umbral p_min_usable ................ 20
+--   ligas que alcanzarian el minimo .....  0 de 39
+--
+-- Lo que SI se demostro del mecanismo, que era lo que el dueno pidio probar:
+--   - ninguna liga se marca completa si fallo: las 39 quedan INSUFFICIENT_SAMPLE
+--     y NO entran a crossleague_league_strength;
+--   - no hay repeticion infinita: intentos = 1 en las 39, y cada corrida toma
+--     ligas DISTINTAS;
+--   - el backlog drena: 44 -> 5;
+--   - la duracion baja (28, 26, 20, 13, 9, 7 s) porque quedan menos pendientes.
+--
+-- Lo que NO se logra, y hay que decirlo: drenar el backlog NO instala phi. El
+-- cuello no es el cron, es la MUESTRA CRUZADA: 2.4 observaciones de puente en
+-- promedio contra un minimo de 20. PHI_NOT_SERVABLE no se va a limpiar sola.
+-- Esa muestra solo crece cuando equipos de esas divisiones juegan competencias
+-- cruzadas (copas europeas), asi que es acumulacion lenta de temporada, no un
+-- bug que se pueda parchar.
+--
+-- CONSECUENCIA PARA EL OBJETIVO DE >=99%: con phi como esta, la cobertura de
+-- futbol se estanca alrededor de 67-77%. Subirla exige una de estas tres, y
+-- ninguna es "bajar el umbral":
+--   (a) acumular observaciones cruzadas (lento, natural);
+--   (b) un estimador de fuerza de liga con su propia validacion para divisiones
+--       sin puente suficiente (modelo nuevo, preregistrado);
+--   (c) declarar esas competencias fuera de alcance, que es lo que NO quiero
+--       hacer sin que el dueno lo decida.
+--
+-- ROLLBACK: drop table v2.captura_barrera, v2.competencia_excluida_cobertura;
+--   drop function v2.normalizar_motivo_perdida(text);
+--   restaurar v2.medir_captura_prospectiva y public.gate_captura_prospectiva
+--   desde el historial de git (ISS221).

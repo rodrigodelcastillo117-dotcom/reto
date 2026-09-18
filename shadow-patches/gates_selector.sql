@@ -204,3 +204,15 @@ select * from v2.escritor_autorizado order by tipo, objeto;
 -- Cobertura de futbol: 38.89% -> 56.52% -> 76.92%. MLB: 100% los dos dias.
 -- ISS219 VERIFICADO EN PRODUCCION: phi 04:37 succeeded 40s, motor-cache 04:34
 -- succeeded 15s y 04:19 succeeded 23s. Antes fallaban a los 120s.
+
+-- ISS222 (2026-09-18). Gates de captura SEPARADOS, y la prueba del backlog phi.
+--   A_CAPTURA_PREEVENTO        PASS(0)
+--   B_COBERTURA_MODELO         FAIL(2)  soccer 09-16 66.67%, 09-17 76.92%
+--   C_INFO_EXCLUDED            INFO(4)   Sudamericana
+--   D_INFO_HISTORICAL          INFO(20)  pre-barrera
+--   E_PENDIENTE_NO_FINALIZADO  PENDING(227)
+--   F_FRESCURA                 PASS(16)
+-- BACKLOG PHI: 44 -> 5 pendientes, 39 procesadas, 6 corridas todas succeeded
+-- (7-28 s), CERO ligas instaladas. n_usable promedio 2.4 contra un minimo de 20;
+-- 0 de 39 alcanzarian el umbral. MI PREDICCION DE ISS221 ERA FALSA: drenar el
+-- backlog no instala phi. El cuello es la muestra cruzada, no el cron.
