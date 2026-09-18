@@ -1,0 +1,159 @@
+-- ISS224 — phi v2 jerarquico: construccion, backtest y VEREDICTO.
+-- Preregistro: bce8983, shadow-patches/preregistro/iss224_phi_v2_jerarquico.md
+-- Holdout abierto UNA vez el 2026-09-18. hash 94218bf34d161bf3c18420fba6b48c08
+--
+-- VEREDICTO: NO PROMOVIDO. Pasa PC1, PC2, PC3. Falla PC4 y PC5.
+-- El challenger queda en shadow, declarado RETADOR_DECLARADO, sin consumidores.
+--
+-- =========================================================================
+-- 1. LO QUE ENCONTRE ANTES DE MODELAR, Y QUE VALE MAS QUE EL MODELO
+-- =========================================================================
+--
+-- (a) EL 70% DE MIS PUENTES NO ERAN PUENTES.
+--     v2.soccer_coverage_job.domestic_league_id es la division ACTUAL de cada
+--     equipo, un solo valor. Aplicada a partidos de 2023 marca como
+--     "cross-league" partidos jugados DENTRO de una liga de una sola division.
+--       aparentes .................. 1,981
+--       artefacto ascenso/descenso . 1,378  (70%)
+--       amistosos .................. 22
+--       puente real ................ 581
+--     Un partido jugado en soccer/eng.4 es entre dos equipos de League Two.
+--     No puede ser un puente. Se construyo v2.phi2_membresia: membresia
+--     punto-en-el-tiempo derivada de la competicion de cada partido.
+--     1,854 filas (equipo, temporada, division), 564 equipos, 25 divisiones,
+--     93 equipos que cambiaron de division. Cero fuentes externas.
+--
+-- (b) LA CAUSA REAL DE PHI_NOT_SERVABLE NO ES EL ESTIMADOR, ES LA INGESTA.
+--     De las 67 ligas para las que el motor necesita phi:
+--       con historico ESPN de una sola division ..... 23
+--       SIN historico ESPN .......................... 44
+--       ya servibles con v1 ......................... 22
+--       rescatables con los datos que ya hay .........  9
+--       bloqueadas por falta de datos ................ 36
+--     Las 36 son Brasil, Argentina, Japon, Corea, Colombia, Chile y demas:
+--     sus ligas domesticas no estan ingestadas. Por eso Libertadores y AFC
+--     aportan CERO puentes usables, no por politica.
+--     NINGUN estimador arregla eso. Es trabajo de ingesta.
+--
+-- (c) POR QUE v1 NO SERVIA LAS SEGUNDAS DIVISIONES.
+--     Dos causas medidas, ninguna de muestra:
+--       1) v2.fn_fit_phi_extension exige que la liga RIVAL ya tenga phi
+--          servible. Anclaje codicioso: los puentes contra ligas no instaladas
+--          se tiran enteros.
+--       2) lee la forma del equipo de v2.soccer_domestic_observation
+--          (API_FOOTBALL), que para divisiones bajas esta vacia:
+--          EFL League One tiene 127 observaciones ahi y 6,972 partidos en ESPN.
+--     Championship, League One y League Two tenian 68, 78 y 66 puentes desde
+--     siempre. Nunca les falto muestra.
+--
+-- =========================================================================
+-- 2. EL ESTIMADOR
+-- =========================================================================
+-- Misma forma funcional que v1 (a0, batt, bdef, home_adv, rho CONGELADOS del
+-- registro sellado). Lo unico que cambia es la estimacion:
+--   theta_L = mu_pais(L) + delta_tier(L) + u_L,  u_L ~ N(0, tau^2)
+-- MAP por Newton amortiguado sobre todas las ligas a la vez, derivadas por
+-- diferencias centradas sobre el objetivo Dixon-Coles exacto.
+-- Determinista: orden fijo, sin semilla, paralelismo apagado.
+-- Convergencia: 125 iteraciones, 1.7 s, max|delta| < 1e-4.
+--
+-- Dos cosas que costaron tiempo y quedan escritas para no repetirlas:
+--   - numeric mata: el exp() de precision arbitraria subia el costo por
+--     iteracion de 0.45 s a 2.8 s. En float8, 125 iteraciones en 1.7 s.
+--   - v2.fn_dist_from_lambda tarda 41 ms por partido. Reimplementada
+--     set-based en float8 concuerda con la sellada a 5e-6 y es 5x mas rapida.
+--
+-- =========================================================================
+-- 3. VALIDACION WALK-FORWARD
+-- =========================================================================
+-- 5 folds trimestrales expansivos, entrenamiento 320 -> 810 puentes.
+-- 18 combinaciones (tau x tau_c x halflife), 90 corridas, 87 convergidas,
+-- 10,080 predicciones. Ganadora por log loss agregado:
+--   tau=0.35  tau_c=0.30  halflife=730   logloss 0.941276
+-- HONESTO: la ganadora esta en el BORDE de la rejilla en tau y en halflife.
+-- El optimo podria estar fuera. NO se amplio la rejilla despues de ver el
+-- resultado. La rejilla estaba preregistrada y se respeta.
+--
+-- =========================================================================
+-- 4. HOLDOUT SELLADO (abierto una sola vez)
+-- =========================================================================
+-- n=241, evaluables 226 (las 15 restantes tocan ligas no servibles).
+--
+--   Brier    v2 0.538461   base(theta=0) 0.591255   dif -0.052794
+--   LogLoss  v2 0.920291   base          0.989394   dif -0.069103
+--   Accuracy v2 0.6239
+--   IC95 bootstrap pareado (10,000 replicas, semilla 224):
+--     dBrier   [-0.089105, -0.015738]   NO cruza cero
+--     dLogLoss [-0.122493, -0.012581]   NO cruza cero
+--
+--   Donde v1 tambien sirve (n=177):
+--     Brier v2 0.564318  vs  v1 0.575488   dif -0.011170  (v2 mejor)
+--
+--   Por competencia:
+--     COPA_DOMESTICA  n= 49  dBrier -0.1786   <- EFL Cup, Coppa Italia, etc.
+--     UEFA            n=102  dBrier -0.0313
+--     CONCACAF        n= 75  dBrier +0.0001   <- no aporta NADA
+--     AFC             n=  0
+--     LIBERTADORES    n=  0
+--
+--   Calibracion: ECE 0.0523. El fallo esta concentrado en la banda 0.40-0.50
+--   (p media 0.454, observado 0.603, n=73): el modelo es POCO confiado ahi.
+--   Eso es coherente con el sesgo de empate de Dixon-Coles, que ya esta
+--   abierto como pendiente #26.
+--
+-- =========================================================================
+-- 5. CRITERIOS PREREGISTRADOS — resultado sin reinterpretar
+-- =========================================================================
+--   PC1 dBrier IC95 < 0 ................................ PASA
+--   PC2 logloss < baseline ............................. PASA
+--   PC3 no degrada donde v1 sirve (<= +0.005) .......... PASA (-0.0112)
+--   PC4 ECE <= 0.05 .................................... FALLA (0.0523)
+--   PC5 ligas servibles > 23 ........................... FALLA (19)
+--
+-- => NO PROMOVIDO. 0.0523 no es 0.05. No se toca el criterio despues de medir.
+--
+-- =========================================================================
+-- 6. LA HIPOTESIS PRIMARIA NO SE CONFIRMO
+-- =========================================================================
+-- Preregistre: "el partial pooling produce estimaciones servibles para ligas
+-- con menos de 20 puentes directos". ESO NO PASO.
+-- Las 4 ligas que v2 gana sobre v1 (Championship, League One, League Two,
+-- LaLiga2) tenian 68, 78, 66 y 35 puentes. Nunca estuvieron por debajo de 20.
+-- Las que si estan por debajo siguen sin servirse:
+--   2. Bundesliga  15 puentes  semiancho 0.280  PHI_UNCERTAIN
+--   Serie B        17          0.290            PHI_UNCERTAIN
+--   Ligue 2        13          0.330            PHI_UNCERTAIN
+--   Pro League KSA  3          0.470            PHI_UNCERTAIN
+-- Lo que rescato esas 4 divisiones no fue la jerarquia: fue corregir la
+-- identidad punto-en-el-tiempo y leer la forma de la fuente que si tiene datos.
+-- El partial pooling ayuda, pero no es lo que movio la aguja.
+--
+-- =========================================================================
+-- 7. ROLLBACK
+-- =========================================================================
+-- Nada de esto participa en produccion. Para borrarlo entero:
+--   drop table if exists v2.phi2_holdout_puntos, v2.phi2_estimacion,
+--     v2.phi2_cv, v2.phi2_cv_fold, v2.phi2_ajuste, v2.phi2_puente,
+--     v2.phi2_membresia, v2.phi2_registro;
+--   drop function if exists v2.phi2_fit(timestamptz,float8,float8,int,int,int);
+--   drop function if exists v2.phi2_eval(jsonb,timestamptz,timestamptz,text);
+--   drop function if exists v2.phi2_perfil(jsonb,timestamptz,float8,float8,int);
+--   drop function if exists v2.phi2_puntuar(jsonb,text);
+--   drop function if exists v2.phi2_cv_correr(int);
+--   delete from v2.cerebro_autorizado
+--    where model_version in ('league_strength_hierarchical_v2','nfl_elo_challenger_v2');
+-- El candado de EXECUTE (seccion aparte, iss224_candado) NO se revierte con
+-- esto: es una correccion de seguridad independiente.
+--
+-- =========================================================================
+-- 8. SIGUIENTE EXPERIMENTO SI ESTE FALLA (y fallo)
+-- =========================================================================
+-- En orden de impacto medido, no de gusto:
+--   1. INGESTA de ligas domesticas faltantes (Brasil, Argentina, Japon, Corea,
+--      Colombia, Chile). Desbloquea 36 ligas y es lo unico que puede hacer
+--      servibles Libertadores y AFC. No es modelado.
+--   2. Correccion del sesgo de empate (pendiente #26). El ECE fallo por 0.0023
+--      y el fallo esta en la banda del empate. Es el candidato directo a PC4.
+--   3. Puente B (movimiento de equipos entre divisiones, 93 equipos). Era la
+--      variante v2b preregistrada y no se llego a medir.
+-- Cada uno exige preregistro nuevo y HOLDOUT NUEVO: este ya se gasto.
