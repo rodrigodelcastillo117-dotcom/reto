@@ -156,3 +156,17 @@ select * from v2.escritor_autorizado order by tipo, objeto;
 -- 502 filas evaluadas). Encenderlos exigiria inventar una fila en
 -- public.calibradores, que es justo lo prohibido.
 -- BATERIA COMPLETA: 40 funciones gate_*, CERO FAIL productivos.
+
+-- ISS218 (2026-09-18). Item 4: RLS adversarial. FUGA REAL ENCONTRADA.
+-- NUEVO public.gate_rls_no_se_esquiva():
+--   VISTA_DE_CLIENTE_SALTA_RLS_DE_TABLA_DE_USUARIO  FAIL(3) -> PASS(0)
+--   SECURITY_DEFINER_SIN_SEARCH_PATH                FAIL(8) -> PASS(0)
+--   PRIVILEGIO_POR_DEFECTO_ABRE_FUNCIONES_NUEVAS    FAIL(2) -> PASS(0)
+--   FUNCIONES_EJECUTABLES_POR_CLIENTE               INFO(1291)  <- sigue abierto
+-- public.bankroll_curva, legible por authenticated y con security_invoker
+-- apagado, devolvia al usuario A 117 filas de las cuales 37 eran de OTRO USUARIO.
+-- Una vista sin security_invoker corre como su dueno y salta RLS. Mi matriz de
+-- ISS212 no lo vio porque probo tablas, no vistas. Despues del arreglo: A 79/0,
+-- B 17/0. Acceso cruzado observado en logs: ninguno (cota inferior).
+-- Causa raiz del EXECUTE abierto: el privilegio por defecto de Supabase concede
+-- EXECUTE a anon y authenticated en cada funcion nueva. Cerrado para las nuevas.
