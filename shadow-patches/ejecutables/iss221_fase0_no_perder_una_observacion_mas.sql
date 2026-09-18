@@ -1,0 +1,91 @@
+-- ISS221 — FASE 0. Dejar de perder muestra prospectiva.
+--
+-- La muestra perdida NO se recupera: un partido ya jugado no se puede volver a
+-- predecir sin fuga. Por eso esto va antes que cualquier auditoria larga.
+--
+-- ==========================================================================
+-- LA PREGUNTA QUE PEDISTE: 138 tarjetas pero solo 30 observaciones validas
+-- ==========================================================================
+-- MEDIDO sobre soccer_canonical_v2:
+--   253 eventos con prediccion
+--    56 ya jugados            <- el cerebro empezo el 15-sep; el resto es futuro
+--    30 validos
+--    26 perdidos
+--     0 perdidos por captura tardia
+--    26 perdidos por temporal_safe = false
+--
+-- Y temporal_safe es, literalmente:
+--   (model_status='READY' and data_asof is not null and data_asof <= now())
+-- O sea NO se perdieron por un problema temporal. Se perdieron porque el modelo
+-- NUNCA produjo probabilidad: salio DATA_INCOMPLETE. Corrijo aqui lo que dije
+-- antes: no era "captura tardia" ni "snapshot tardio". La captura preevento es
+-- del 100% todos los dias, en los dos deportes.
+--
+-- DESGLOSE EXACTO DE LOS 26, con su veredicto:
+--
+--  NO_APPROVED_SOCCER_POLICY .................. 16
+--    espn_48 (EFL Cup) 5, espn_17 (AFC Champions) 4, espn_137 (Coppa Italia) 2,
+--    conmebol_libertadores 1  -> 12 eventos, TODOS calculados ANTES de que las
+--    aprobaciones del dueno entraran (2026-09-16 15:41:45). Perdida historica de
+--    una sola vez, ya cerrada: no se repite.
+--    conmebol_sudamericana 4  -> de esos, 2 calculados DESPUES de la aprobacion.
+--    Esos NO son un defecto: el dueno dijo "SUDAMERICANA NO" explicitamente.
+--    Exclusion correcta y permanente.
+--    CORRIJO OTRA COSA QUE DIJE ANTES: Libertadores SI esta autorizada
+--    ("LIBERTADORES SI"). Solo Sudamericana esta excluida. Habia generalizado mal
+--    a "todo CONMEBOL".
+--
+--  DOMESTIC_LEAGUE_PHI_NOT_SERVABLE_ASOF ....... 8
+--    uefa_europa_league 4, espn_48 3, conmebol_libertadores 1.
+--    Con muestras SANAS (20 a 63 partidos). Lo unico que falta es la fuerza de
+--    liga phi, que no se instala porque el cron phi-extension-30m llevaba
+--    39 corridas fallando. ES EL MISMO CRON QUE ARREGLE EN ISS219. Ahi esta el
+--    vinculo causal directo entre un cron roto y muestra perdida.
+--
+--  HOME/AWAY_DOMESTIC_SAMPLE_BELOW_15 .......... 2
+--    Arranque de temporada. Se cura solo con las jornadas.
+--
+-- ==========================================================================
+-- MLB
+-- ==========================================================================
+--   17-sep: 7 elegibles, 7 capturados preevento, 7 finalizados, 7 calificables -> 100%
+--   18-sep: 9 elegibles, 9 capturados preevento, 2 finalizados, 2 calificables -> 100%
+-- MLB no esta perdiendo nada. Sus 9 observaciones validas son pocas porque el
+-- cerebro empezo a capturar el 17-sep, no porque se pierda cobertura.
+--
+-- ==========================================================================
+-- EL INSTRUMENTO
+-- ==========================================================================
+-- v2.captura_prospectiva_diaria + v2.medir_captura_prospectiva(dias)
+-- cron captura-prospectiva-diaria (07:20 UTC).
+--
+-- fecha      | deporte  | ele | cap | fin | cal | per | pct    | causa
+-- 2026-09-15 | soccer   |  18 |  18 |  18 |   7 |  11 |  38.89 | NO_APPROVED_SOCCER_POLICY 11
+-- 2026-09-16 | soccer   |  23 |  23 |  23 |  13 |  10 |  56.52 | POLICY 4, PHI 5, SAMPLE 1
+-- 2026-09-17 | soccer   |  13 |  13 |  13 |  10 |   3 |  76.92 | PHI 2, SAMPLE 1
+-- 2026-09-18 | soccer   |  14 |  14 |   2 |   0 |   2 |   0.00 | POLICY 1, PHI 1  (n=2, dia en curso)
+-- 2026-09-17 | baseball |   7 |   7 |   7 |   7 |   0 | 100.00 | -
+-- 2026-09-18 | baseball |   9 |   9 |   2 |   2 |   0 | 100.00 | -
+--
+-- La cobertura de futbol va 38.89 -> 56.52 -> 76.92 conforme entraron las
+-- aprobaciones. Lo que queda es phi, y phi ya esta corriendo.
+--
+-- NUEVO public.gate_captura_prospectiva():
+--   CAPTURA_PREEVENTO_INCOMPLETA   PASS(0)   <- cero eventos sin snapshot previo
+--   COBERTURA_CALIFICABLE_BAJO_99  FAIL(4)   <- honesto: todavia no llegamos a 99%
+--   CAPTURA_PROSPECTIVA_FRESCA     PASS(16)
+--   CAUSAS_DE_PERDIDA_ABIERTAS     INFO(26)  <- con desglose vivo por causa
+--
+-- ==========================================================================
+-- VERIFICACION DE QUE ISS219 FUNCIONO EN PRODUCCION (no en mi mano)
+-- ==========================================================================
+-- cron.job_run_details, corridas reales despues del parche:
+--   phi-extension-30m (524)   04:37  succeeded  40 s   (antes: failed 120 s)
+--   motor-cache-refrescar(310) 04:34 succeeded  15 s   (antes: failed 120 s)
+--   motor-cache-refrescar(310) 04:19 succeeded  23 s
+-- Los ultimos fallos fueron 04:07 y 04:10, previos al parche.
+--
+-- ROLLBACK: drop table v2.captura_prospectiva_diaria;
+--   drop function v2.medir_captura_prospectiva(integer);
+--   drop function public.gate_captura_prospectiva();
+--   select cron.unschedule('captura-prospectiva-diaria');

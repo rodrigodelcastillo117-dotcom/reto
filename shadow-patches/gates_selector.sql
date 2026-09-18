@@ -188,3 +188,19 @@ select * from v2.escritor_autorizado order by tipo, objeto;
 --   Muestra historica: POSIBLE en futbol (existe fn_crossleague_features_training_asof)
 --   con la limitacion de que historico_partidos_espn es backfill; IMPOSIBLE en MLB
 --   (mlb_stats_cache se sobrescribe y no hay funcion as-of de beisbol).
+
+-- ISS221 (2026-09-18). FASE 0: no perder una observacion mas.
+-- NUEVO public.gate_captura_prospectiva():
+--   CAPTURA_PREEVENTO_INCOMPLETA   PASS(0)
+--   COBERTURA_CALIFICABLE_BAJO_99  FAIL(4)   <- abierto y honesto
+--   CAPTURA_PROSPECTIVA_FRESCA     PASS(16)
+--   CAUSAS_DE_PERDIDA_ABIERTAS     INFO(26)
+-- RESPUESTA A "138 tarjetas pero 30 observaciones": de 253 eventos con
+-- prediccion solo 56 se han jugado (el cerebro arranco el 15-sep). De esos 56,
+-- 30 validos y 26 perdidos, y CERO por captura tardia: los 26 son model_status
+-- DATA_INCOMPLETE. 16 por politica de competencia (12 historicos ya cerrados,
+-- 4 de Sudamericana que es exclusion correcta del dueno), 8 por phi no servible
+-- (el mismo cron que arregle en ISS219) y 2 por muestra de arranque.
+-- Cobertura de futbol: 38.89% -> 56.52% -> 76.92%. MLB: 100% los dos dias.
+-- ISS219 VERIFICADO EN PRODUCCION: phi 04:37 succeeded 40s, motor-cache 04:34
+-- succeeded 15s y 04:19 succeeded 23s. Antes fallaban a los 120s.
