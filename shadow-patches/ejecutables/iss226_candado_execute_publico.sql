@@ -1,0 +1,67 @@
+-- ISS226 — CORRIJO UNA AFIRMACION MIA DE ISS218, Y CIERRO EL AGUJERO DE VERDAD.
+--
+-- QUE DIJE EN ISS218
+-- Que la causa raiz de las ~1,291 funciones ejecutables por cliente eran los
+-- privilegios por defecto (pg_default_acl para el rol postgres en el esquema
+-- public, objtype 'f', con anon y authenticated), y que quitarlos la cerraba.
+--
+-- ESO ERA FALSO. Prueba, hecha hoy con una funcion desechable:
+--
+--   pg_default_acl para public/postgres/f ya estaba en:
+--     {postgres=X/postgres, service_role=X/postgres}       <- sin anon
+--
+--   create function public.zz_prueba_acl_pub_224() ...
+--     acl resultante: {=X/postgres, postgres=X/postgres, service_role=X/postgres}
+--     has_function_privilege('anon', ..., 'EXECUTE') = TRUE
+--
+-- El "=X/postgres" es PUBLIC. anon y authenticated heredan EXECUTE por PUBLIC,
+-- y en esta instalacion
+--   ALTER DEFAULT PRIVILEGES ... REVOKE EXECUTE ON FUNCTIONS FROM PUBLIC
+-- no lo impide. Lo probe tambien en v2 dejando el default ACL con la MISMA
+-- forma que el de public: la funcion nueva seguia naciendo con "=X/postgres".
+--
+-- Descartado por medicion, no por intuicion: no hay ningun event trigger de
+-- Supabase que conceda EXECUTE a PUBLIC. Los siete existentes son de pg_cron,
+-- pg_graphql, pg_net, los watchers de PostgREST y mi tg_candado_temporal.
+--
+-- ESTADO REAL MEDIDO HOY EN v2
+--   funciones en v2 ............................ 151
+--   ejecutables por anon ....................... 134
+--   de esas, SECURITY DEFINER .................. 70   <- las que importan:
+--       corren como su dueno y saltan RLS de las tablas base.
+--
+-- EL ARREGLO QUE SI FUNCIONA
+-- Un event trigger en ddl_command_end que le quita EXECUTE a PUBLIC a toda
+-- funcion creada o reemplazada en public y v2, y le deja EXECUTE a service_role.
+--
+--   create event trigger tg_funcion_nueva_sin_public
+--     on ddl_command_end when tag in ('CREATE FUNCTION','ALTER FUNCTION')
+--     execute function public.tg_funcion_nueva_sin_public();
+--
+-- VERIFICADO despues de instalarlo, con funciones desechables nuevas en los
+-- dos esquemas:
+--   acl {postgres=X/postgres, service_role=X/postgres}
+--   anon=false  authenticated=false  service_role=true
+-- Las cuatro funciones de prueba quedaron borradas; residuos = 0.
+--
+-- ALCANCE, A PROPOSITO LIMITADO
+--   - solo afecta funciones creadas o reemplazadas DE AQUI EN ADELANTE;
+--   - NO toca ninguna de las 134 firmas existentes. El dueno pidio no revocar
+--     todavia las UNKNOWN que puedan ser del frontend, y eso se respeta;
+--   - no cambia SECURITY DEFINER ni search_path de nada;
+--   - service_role conserva EXECUTE, asi que crons y Edge Functions siguen.
+--
+-- EFECTO SECUNDARIO ACEPTADO
+-- Una RPC nueva del frontend nacera cerrada y necesitara un GRANT explicito.
+-- Es fail-closed a proposito: es preferible una RPC que no responde hasta que
+-- alguien la autoriza, a 1,291 funciones abiertas que nadie autorizo nunca.
+--
+-- LO QUE SIGUE ABIERTO, SIN MAQUILLAR
+-- Las 134 funciones de v2 ya existentes siguen ejecutables por anon, y 70 de
+-- ellas son SECURITY DEFINER. El candado detiene la hemorragia; no cura la
+-- herida. Cerrarlas exige la clasificacion CRON_ONLY / INTERNAL_ONLY /
+-- ADMIN_ONLY / SHADOW_ONLY / RETIRED, que es FASE 1 y sigue pendiente.
+--
+-- ROLLBACK
+--   drop event trigger if exists tg_funcion_nueva_sin_public;
+--   drop function if exists public.tg_funcion_nueva_sin_public();
