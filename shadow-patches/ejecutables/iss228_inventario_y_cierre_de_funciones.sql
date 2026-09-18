@@ -1,0 +1,166 @@
+-- ISS228 — P0: INVENTARIO Y CIERRE DE LAS FUNCIONES SECURITY DEFINER ABIERTAS.
+--
+-- =====================================================================
+-- 0. CORRIJO EL NUMERO QUE TE DI. NO ERAN 70.
+-- =====================================================================
+--                          total   cliente-ejecutable   SECDEF + cliente
+--   public ..............  1,341         1,160               476
+--   v2 ..................    150           133                70
+--   TOTAL ...............  1,491         1,293              546
+-- Las 70 que reporte eran SOLO el esquema v2. El numero real es 546.
+--
+-- =====================================================================
+-- 1. INVENTARIO  (v2.iss228_inventario_funcion, 546 filas)
+-- =====================================================================
+-- Columnas: esquema | firma | owner | EXECUTE public | anon | authenticated |
+-- service_role | search_path | escribe | datos_privados | sql_dinamico |
+-- http_o_secretos | valida_dueno | recibe_identidad | consumidor_funcion |
+-- consumidor_vista | consumidor_cron | consumidor_trigger | consumidores_total |
+-- llamadas | prioridad | riesgo | decision | acl_previo | revocada_at
+--
+-- Senales medidas sobre las 546:
+--   escriben ................................ 230
+--   tocan datos privados .................... 241
+--   SQL dinamico ............................  4
+--   HTTP / secretos / vault .................  45
+--   search_path sin fijar ...................  0
+--   son funciones de trigger ................ 35
+--   sin consumidor en BD .................... 179
+--   sin llamadas en la ventana .............. 314
+--
+-- SOBRE "llamadas 30d": NO EXISTEN. pg_stat_statements se reseteo el
+-- 2026-09-17 04:52, asi que la ventana real es de ~30 HORAS, no 30 dias.
+-- Por eso "sin uso observado" es evidencia DEBIL y no se uso como unico
+-- criterio para revocar nada que pudiera ser del frontend.
+--
+-- =====================================================================
+-- 2. DOS FALSOS POSITIVOS MIOS, DECLARADOS
+-- =====================================================================
+-- Mi primer detector buscaba literalmente 'auth.uid' en el cuerpo y reporto
+-- "536 de 546 sin validacion de dueno". ERA FALSO.
+--
+-- Casi te reporte como vulnerabilidad critica de escritura de dinero:
+--   public.registrar_ajuste_manual(p_apodo, p_monto, ...)
+--   public.registrar_movimiento_cuenta(p_apodo, p_monto, ...)
+-- Las lei antes de afirmarlo. Las dos empiezan con:
+--   v_ident := public.resolver_identidad_economica(p_apodo);
+--   if not (v_ident->>'ok')::boolean then ... rechaza ...
+--   p_apodo := v_ident->>'apodo';        -- sobreescribe el parametro
+-- Y resolver_identidad_economica clasifica el contexto desde el JWT real y
+-- session_user (anota explicitamente que application_name no se usa porque el
+-- cliente lo fija a voluntad), y devuelve IDENTIDAD_AJENA_RECHAZADA si un USER
+-- pasa un apodo que no es el suyo. Solo INTERNAL puede pasar un apodo ajeno.
+-- NO HAY IDOR DE DINERO. La puerta esta bien construida.
+-- Lo mismo con agregar_favorito, que usa usuario_economico_actual().
+--
+-- Arreglo del detector: cierre transitivo (3 niveles) sobre quien referencia
+-- auth.uid o request.jwt.claims, directa o indirectamente, en
+-- v2.iss228_valida_identidad. Resultado: 151 funciones validan identidad
+-- (13 directas, 78 a un salto, 55 a dos, 5 a tres).
+--
+-- Numeros VERDADEROS tras el arreglo, sobre las 546:
+--   validan identidad ................................ 93
+--   reciben identidad por parametro y NO validan ..... 30
+--   de esas, ESCRIBEN ................................  7
+--   de esas, seguian abiertas .........................  5
+-- Las 5 se leyeron una por una y se cerraron (seccion 4).
+--
+-- =====================================================================
+-- 3. CLASIFICACION  (reglas auditables, no a ojo)
+-- =====================================================================
+--   INTERNAL_ONLY .......... 205   llamada por otra funcion o vista
+--   CRON_ONLY .............. 103   consumidor_cron>0 y consumidor_vista=0
+--   UNKNOWN ................  74   sin evidencia; NO se toca sin Lovable
+--   UNKNOWN_HIGH_RISK ......  73   SECDEF + datos privados + sin consumidor interno
+--   TRIGGER_ONLY ...........  35   funcion de trigger: un cliente no la puede usar
+--   ADMIN_ONLY .............  32   auditoria / diagnostico / gate / reparacion
+--   INGESTA_INTERNA ........  17   familia *_pedir / pedir_*: hacen HTTP saliente
+--   SHADOW_ONLY ............   5
+--   RETIRED ................   2
+--   SIN_GATE_DE_IDENTIDAD ..   5   (reclasificadas desde las anteriores)
+--
+-- INGESTA_INTERNA se separo a proposito: un anon podia disparar llamadas
+-- salientes ilimitadas contra cuotas de pago. Eso es abuso de costo, no solo
+-- higiene.
+--
+-- =====================================================================
+-- 4. REVOCADAS: 254, por firma exacta
+-- =====================================================================
+--   TRIGGER_ONLY, RETIRED, SHADOW_ONLY, INGESTA_INTERNA, CRON_ONLY,
+--   ADMIN_ONLY, SIN_GATE_DE_IDENTIDAD ...... 199
+--   UNKNOWN_HIGH_RISK sin uso observado .....  55
+--                                             ---
+--                                             254
+--
+-- NO se revoco: INTERNAL_ONLY (205), UNKNOWN (74) ni UNKNOWN_HIGH_RISK con
+-- llamadas observadas (18). Pediste no revocar todavia las UNKNOWN que puedan
+-- ser del frontend, y se respeta.
+--
+-- Las 5 de SIN_GATE_DE_IDENTIDAD, leidas una por una:
+--   public.crear_batalla(p_reto_por, p_reto_contra, ...)  suplantacion, 0 usos
+--   v2.build_fantasy_projection_snapshot_v2(p_apodo, ...)
+--   v2.capture_fantasy_recommendation_v3(p_apodo, ...)
+--   v2.grade_fantasy_recommendations_v3(p_apodo, ...)     calificar es del backend
+--   v2.publish_verified_external_roster_v1(p_snapshot_id)
+-- Ninguna debe ser invocable por cliente. Cerradas fail-closed.
+--
+-- UN ERROR MIO EN EL CAMINO, Y COMO SALIO
+-- La primera version de v2.iss228_revocar hacia
+--   revoke execute ... from anon, authenticated
+-- y NADA MAS. Tras 254 revocaciones, las SECDEF abiertas solo bajaron de 546 a
+-- 508. Causa: PUBLIC conservaba EXECUTE y anon lo hereda. Es EXACTAMENTE el
+-- error de ISS218 que yo mismo documente y volvi a cometer. Corregido a
+--   revoke ... from public; revoke ... from anon, authenticated;
+--   grant execute ... to service_role;
+-- y reejecutado en pasada de reparacion sobre las 254.
+--
+-- ANTES -> DESPUES, verificado en el catalogo:
+--   SECDEF cliente-ejecutables .......... 546 -> 292
+--   cliente-ejecutables en total ...... 1,293 -> 1,039
+--   revocadas que siguen abiertas ..........  0
+--
+-- NO SE ROMPIO NADA, verificado despues:
+--   cron.job_run_details ultimos 40 min: 564 corridas, TODAS succeeded, 0 fallos
+--   gate_captura_prospectiva: A PASS, B FAIL(2), C INFO(4), D INFO(20),
+--     E PENDING(227), F PASS(16)  -- identico a antes
+--
+-- =====================================================================
+-- 5. ROLLBACK PROBADO
+-- =====================================================================
+-- v2.iss228_revocacion_log guarda, por firma: ACL antes, ACL despues y el SQL
+-- exacto de reversion. Rollback total:
+--   do $$ declare r record; begin
+--     for r in select sql_rollback from v2.iss228_revocacion_log loop
+--       execute r.sql_rollback; end loop; end $$;
+-- Rollback de una sola firma:
+--   select sql_rollback from v2.iss228_revocacion_log where firma = '...';
+--
+-- =====================================================================
+-- 6. ADVISORS DE SUPABASE, EJECUTADOS. Y OTRA CORRECCION A ISS218.
+-- =====================================================================
+--   ERROR  rls_disabled_in_public ....................... 142 tablas
+--   ERROR  security_definer_view ........................ 129 vistas
+--   WARN   function_search_path_mutable ................. 304 funciones
+--   WARN   authenticated_security_definer_executable .... 251
+--   WARN   anon_security_definer_executable ............. 188
+--   WARN   materialized_view_in_api ....................   10
+--   WARN   extension_in_public ...........................  3
+--   WARN   auth_leaked_password_protection ...............  1
+--   INFO   rls_enabled_no_policy .........................  94 tablas
+--
+-- EN ISS218 ARREGLE 3 VISTAS SIN security_invoker Y LO PRESENTE COMO CERRADO.
+-- QUEDAN 129. Esa es la misma via por la que encontre la fuga real de 37 filas.
+-- No es "higiene pendiente": es el mismo vector, abierto 129 veces.
+--
+-- Sobre search_path: mi inventario dice 0 sin fijar y el advisor dice 304. Las
+-- dos cosas son ciertas y miden distinto: de las 546 SECDEF cliente-ejecutables,
+-- 0 tienen search_path mutable. Las 304 son el resto del universo de funciones.
+--
+-- =====================================================================
+-- 7. LO QUE SIGUE ABIERTO, SIN MAQUILLAR
+-- =====================================================================
+--   292 SECDEF siguen cliente-ejecutables (205 INTERNAL_ONLY + 74 UNKNOWN + 18)
+--   142 tablas en public sin RLS  <- ERROR, y activarla sin politicas rompe lecturas
+--   129 vistas SECURITY DEFINER   <- ERROR, mismo vector de la fuga de ISS218
+--   25 funciones que reciben identidad y no validan dueno y solo LEEN
+--   la ventana de pg_stat_statements es de 30 horas, no de 30 dias
