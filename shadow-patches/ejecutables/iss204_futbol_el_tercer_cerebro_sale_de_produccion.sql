@@ -1,0 +1,68 @@
+-- ISS204 · Futbol: el tercer cerebro sale de la cadena de produccion
+--
+-- ===========================================================================
+-- INVENTARIO COMPLETO DE fut_predicciones (lo que faltaba)
+-- ===========================================================================
+-- Mis "0 lecturas en 19 horas" eran de la TABLA. Estaban incompletas: la tabla
+-- es alcanzable desde el front a traves de SUS VISTAS. Via pg_depend:
+--
+--   mv_fut_precio_snapshot ......... sin grant
+--   rongol_tablero ................. anon,authenticated  · nadie mas la lee
+--   sistema_tablero ................ anon,authenticated  · la lee panel_salud
+--   v_analisis_fut_completo ........ anon,authenticated  · la lee picks_premium
+--   v_incoherencia_modelo_soccer ... anon,authenticated  · la leen mis gates
+--   v_linaje_p_reto ................ anon,authenticated
+--   v_picks_futbol_calibrado ....... anon,authenticated  · LA LEE v_pick_canonico
+--
+-- La ultima es la que importaba: v_picks_futbol_calibrado alimentaba
+-- v_pick_canonico, que es lo que leen Favoritos, reto_picks_hoy__base,
+-- revisar_apuesta__base y seleccionar_picks_seguro_valor. O sea: el tercer
+-- cerebro SI estaba en produccion, por la misma clase de cadena indirecta que en
+-- MLB. Decir que no tenia consumidores habria sido falso.
+--
+-- Repositorio backend: cero codigo de aplicacion lo referencia (solo un reporte
+-- de auditoria y mis propias notas de parches).
+--
+-- ===========================================================================
+-- LA MIGRACION, Y POR QUE NO ESCONDE PARTIDOS
+-- ===========================================================================
+-- v_picks_futbol_calibrado traia 1415 filas... de solo 20 EVENTOS, porque
+-- expandia SIETE mercados con muchas lineas cada uno:
+--   BTTS, Corners, Doble Oportunidad, Moneyline, Over/Under, Tarjetas, Total Equipo
+-- De esos siete, solo Moneyline tiene cerebro canonico. Over/Under quedo RETIRADO
+-- por evidencia (ISS194). BTTS existe pero NO esta probado. Corners, Tarjetas,
+-- Doble Oportunidad y Total Equipo no tienen modelo ninguno.
+--
+-- La version canonica cubre los 138 eventos que publica el cerebro. Los 20 de la
+-- vieja estan TODOS dentro de esos 138. No se esconde nada: se cubre 7 veces mas.
+--
+-- ANTES / DESPUES
+--   filas ................ 1415 -> 414
+--   eventos ................. 20 -> 138
+--   mercados .................. 7 -> 1 (Moneyline)
+--   ev_pct / edge_pct ... presentes -> NULL (el precio no decide)
+--   v_pick_canonico ....... 255 -> 528 filas
+--   duplicados ................ 0
+--   probabilidades fuera de rango 0
+--
+-- ===========================================================================
+-- APAGADO REVERSIBLE DEL ESCRITOR
+-- ===========================================================================
+--   cron agente-fut-analizar        active=true -> false
+--   cron agente-fut-analizar-pico   active=true -> false
+-- Registrados en v2.apagado_reversible con su ultima escritura y el comando
+-- exacto para revivirlos. NO se borro la tabla, ni una fila, ni la funcion.
+--
+-- Lo que queda leyendo fut_predicciones son superficies de analisis y salud
+-- (sistema_tablero/panel_salud, v_analisis_fut_completo/picks_premium,
+-- rongol_tablero) mas mis propios gates. Esas quedan con datos congelados en la
+-- ultima escritura, que es reversible en un comando. Ninguna esta en la cadena
+-- canonica de picks.
+--
+-- ===========================================================================
+-- ROLLBACK EXACTO
+-- ===========================================================================
+--   create or replace view public.v_picks_futbol_calibrado as
+--     select * from public.v_picks_futbol_calibrado_legacy_v0;
+--   select cron.alter_job((select jobid from cron.job where jobname='agente-fut-analizar'), active := true);
+--   select cron.alter_job((select jobid from cron.job where jobname='agente-fut-analizar-pico'), active := true);
