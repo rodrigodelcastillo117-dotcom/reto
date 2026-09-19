@@ -1,0 +1,194 @@
+-- =====================================================================
+-- ISS251 -- RECONCILIACION DEL SALDO (punto 3 del mandato)
+-- Rama: claude/eager-noether-s7p33g   Proyecto: wpiztubmmmzclhlprgpd
+--
+-- Encargo: "Traza get_bankroll_real y las otras funciones monetarias hasta
+-- cada movimiento que suman. Explica, con IDs y componentes del calculo, el
+-- -3801.21 observado durante la prueba y el 0.00 en el estado normal."
+-- =====================================================================
+
+
+-- ---------------------------------------------------------------------
+-- 1. LA CADENA COMPLETA
+-- ---------------------------------------------------------------------
+-- get_bankroll_real(user_apodo)                 SECDEF, authenticated
+--   -> get_bankroll_real__base(apodo_scope(user_apodo))   SECDEF, interna
+--
+-- apodo_scope(p_in):
+--     select case when auth.uid() is not null
+--                 then (select apodo from usuarios where user_id = auth.uid())
+--                 else p_in end
+--   El parametro del cliente se IGNORA si hay sesion. Correcto: el apodo que
+--   manda el cliente no es prueba de propiedad.
+--
+-- get_bankroll_real__base(user_apodo):
+--     c := reto_desde(user_apodo)                  -- corte temporal
+--     bankroll = (select bankroll_inicial from usuarios where apodo = user_apodo)
+--              + sum(picks.ganancia_neta   where apodo=user_apodo
+--                      and resultado in ('ganado','perdido','retirado')
+--                      and created_at >= c)
+--              + sum(parlays.ganancia_neta where ... same ...)
+--              + sum(ajustes_cuenta.monto  where apodo=user_apodo and created_at >= c)
+--
+-- reto_desde(p) -> reto_desde__base(apodo_scope(p)):
+--     coalesce((select reto_inicio_at from usuarios where apodo = p), '-infinity')
+--
+-- LOS CUATRO SUMANDOS SE UNEN POR TEXTO (apodo = user_apodo), y el CORTE
+-- TEMPORAL TAMBIEN SE BUSCA POR TEXTO. Esto es lo que hace que la toma de
+-- apodo no solo exponga un saldo, sino que CAMBIE la aritmetica.
+
+
+-- ---------------------------------------------------------------------
+-- 2. EL 0.00 EN ESTADO NORMAL -- EXACTO, NO ES UN FALLO
+-- ---------------------------------------------------------------------
+-- rodelcast: bankroll_inicial = 5000
+--            reto_inicio_at   = 2026-09-02 17:21:07.259364+00  (el corte)
+--
+--   bankroll_inicial                              +5000.00
+--   picks dentro del corte    (n=8)               +3155.00
+--   parlays dentro del corte  (n=21)              +5343.14
+--   ajustes dentro del corte  (n=8)              -13498.14
+--                                                ----------
+--   TOTAL                                             0.00   <- coincide con la RPC
+--
+-- Los 8 ajustes dentro del corte, con ID:
+--   079df221-49ca-4f62-b46f-a4fc7ac2ecac   +6000.00  bono, descripcion "Error"
+--   f83a2b1d-3a6e-45b3-ad09-9dd609a070d9   -6126.00  sync a $6000 (05 sep)
+--   0693d366-3282-4c1d-aa55-9fa84aee6077   -1452.55  sync a $4547.45 (05 sep)
+--   5395edb0-9921-457f-b920-8cfea7e93670   +2141.92  sync a $4435 (09 sep)
+--   01f3b4a5-f618-4984-b568-0c3f3f99e181   -2150.51  sync a $17500 (10 sep)
+--   5f359de6-6b51-4e06-b7e5-91923bcfddc5  -17000.00  sync a $0 (12 sep)
+--   3669f998-e266-4160-b342-3c60eacc6676   +5000.00  sync a $5000 (18 sep)
+--   3b351935-3755-49d8-825f-5466c11737be      +89.00  sync a $5089 (18 sep)
+--                                        -----------
+--                                          -13498.14
+--
+-- Y quedan 2 ajustes FUERA del corte, que por eso no suman:
+--   51aaacf8-5625-4f09-a118-a8360179520a   +1009.99  (01 sep)
+--   eb43988f-7ed3-4c8b-ab16-b6648d5b440c  +10491.32  (02 sep 04:11) user_id NULL
+--                                        -----------
+--                                          +11501.31
+--
+-- POR QUE 0.00 Y NO 5089 -- la pregunta que importa
+-- La ultima sincronizacion (18 sep 04:12) dejo el saldo en 5089.00 por
+-- construccion: su descripcion dice "+89.00 desde $5000.00". Despues de esa
+-- hora se calificaron dos apuestas, y solo dos:
+--   pick   94f52938-5fc2-4bf6-92ca-64bfa4e9c13b  "Mas de 7.5"  perdido  -3089.00  (19 sep 06:40)
+--   parlay 70cfb59d-4e9a-46b0-a39b-91d8b75d1946                perdido  -2000.00  (18 sep 21:03)
+--                                                                      ----------
+--                                                                       -5089.00
+--   5089.00 - 3089.00 - 2000.00 = 0.00
+--
+-- El 0.00 es el saldo correcto: se sincronizo a 5089 y se perdieron 5089 en
+-- dos apuestas. No es una regresion de ISS243, ni de ISS246, ni del trigger de
+-- apodo. La coincidencia de que la perdida iguale exactamente la ultima
+-- sincronizacion es aritmetica, no un artefacto.
+
+
+-- ---------------------------------------------------------------------
+-- 3. EL -3801.21 DE LA PRUEBA -- EXACTO TAMBIEN
+-- ---------------------------------------------------------------------
+-- En la reproduccion de ISS245, B ('el dos') se habia quedado con el apodo
+-- 'rodelcast'. Entonces get_bankroll_real devolvio -3801.21. Descomposicion:
+--
+-- Al pasar el apodo a reto_desde__base, el corte se lee de la fila de B:
+--     'el dos'.reto_inicio_at = NULL  ->  coalesce(...) = '-infinity'
+-- EL CORTE TEMPORAL DESAPARECE. Con c = -infinity entra TODO el historico:
+--
+--   bankroll_inicial de 'el dos'                   +2500.00
+--   picks    TODOS de apodo 'rodelcast' (n=19)     -8234.77   (3155.00 - 11389.77)
+--   parlays  TODOS de apodo 'rodelcast' (n=52)     +3930.39
+--   ajustes  TODOS de apodo 'rodelcast' (n=10)     -1996.83   (11501.31 - 13498.14)
+--                                                 ----------
+--   TOTAL                                          -3801.21   <- coincide exacto
+--
+-- CONSECUENCIA QUE NO HABIA VISTO EN ISS245: la toma de apodo no solo deja a B
+-- "ver el saldo de A". Le deja ver una cifra que NI A PUEDE VER, porque disuelve
+-- el reinicio del reto de A y suma 11 picks y 31 parlays anteriores al corte.
+-- La llave de texto no solo decide de quien son las filas: decide que ventana
+-- temporal se aplica. Por eso migrar la propiedad a una llave inmutable tiene
+-- que incluir reto_inicio_at, no solo las filas.
+
+
+-- ---------------------------------------------------------------------
+-- 4. LAS PRUEBAS REVERTIDAS NO DEJARON RASTRO -- VERIFICADO
+-- ---------------------------------------------------------------------
+-- FILAS: conteos iguales a los previos.
+--   picks 43, parlays 70, ajustes_cuenta 10, usuarios 6,
+--   fantasy_roster_semanal 2, parlay_builder_log 71, apodo_historial 30
+--
+-- SECUENCIAS: ninguna. Las tablas que toque (picks, parlays, ajustes_cuenta,
+--   usuarios, parlay_builder_log, fantasy_roster_semanal) tienen id de tipo
+--   uuid, sin secuencia asociada (pg_depend no devuelve ninguna). No hay huecos
+--   posibles. Si hubieran sido serial, los habria: nextval no es transaccional.
+--
+-- EFECTOS EXTERNOS: pg_net 0.20.0 esta instalado y dos triggers llaman a Edge
+--   Functions con net.http_post:
+--     notify_new_usuario            AFTER INSERT ON usuarios
+--       -> functions/v1/notificar-nuevo-usuario
+--     trigger_analizar_partido_async AFTER INSERT ON picks/parlays/pit_picks
+--       -> functions/v1/analizar-partido
+--   Mis pruebas SI insertaron en usuarios (registrar_perfil) y en picks.
+--   Por que no salio ninguna llamada:
+--     a) net.http_post encola en net.http_request_queue mediante un INSERT
+--        ordinario, que es transaccional. El worker de pg_net corre en otro
+--        backend y por MVCC no puede ver una fila no confirmada. Al revertir,
+--        la peticion nunca se hace visible y nunca se envia.
+--     b) El INSERT de prueba en picks no llevaba espn_event_id, y el trigger
+--        hace RETURN NEW cuando es NULL: ni siquiera llego a encolar.
+--   MEDIDO: net.http_request_queue = 0 filas pendientes; 0 respuestas que
+--   mencionen 'nuevo usuario' en las ultimas 2 horas (de 1391 respuestas
+--   totales, todas de los crons normales).
+--
+-- LIMITE HONESTO: (a) es un argumento de MVCC mas la medicion de la cola. No
+-- puedo descartar con certeza absoluta una version futura de pg_net que use un
+-- canal no transaccional. Con pg_net 0.20.0 y la cola vacia, la evidencia
+-- apunta a que no salio nada.
+
+
+-- ---------------------------------------------------------------------
+-- 5. FILAS DE DINERO AMBIGUAS -- MARCADAS, NO ATRIBUIDAS
+-- ---------------------------------------------------------------------
+-- Registro en v2.iss251_dinero_ambiguo, sin tocar ninguna fila original:
+--
+--   ajustes_cuenta  1 fila   +10491.32  user_id NULL, atribucion solo por texto
+--     eb43988f-7ed3-4c8b-ab16-b6648d5b440c  'cierre_casa', cierre de Stake y
+--     apertura en PlayDoIt. Es la fila que A no ve por RLS (ninguna politica la
+--     alcanza con user_id NULL).
+--   picks           6 filas   +1773.97  apodo en cuarentena
+--   parlays        15 filas   -6613.32  apodo en cuarentena
+--
+-- AFECTAN A ALGUN SALDO VIVO: 0. Ninguna. Demostrado porque get_bankroll_real
+-- solo se puede invocar con el apodo de una sesion, y un apodo en cuarentena no
+-- tiene usuario vivo con auth que lo invoque; y la fila de ajustes ambigua cae
+-- FUERA del corte de rodelcast.
+--
+-- Las 21 filas en cuarentena pertenecen al apodo 'rongo', que SI es una fila
+-- viva de usuarios pero sin auth uid (activo=false). Su dueno no es acreditable
+-- por llave inmutable, solo por texto. Se marca ambiguo y NO se atribuye.
+--
+-- DATO DE FONDO, y es el mas importante de este punto:
+--   picks   43 filas -> NO tienen columna user_id
+--   parlays 70 filas -> NO tienen columna user_id
+-- El 100% de la atribucion de picks y parlays es por texto. No hay nada que
+-- "reconciliar" contra una llave inmutable porque la llave inmutable no existe
+-- en esas tablas. Eso es el punto 4 del mandato, no este.
+
+
+-- ---------------------------------------------------------------------
+-- 6. HALLAZGO ADICIONAL, DECLARADO SIN TOCAR
+-- ---------------------------------------------------------------------
+-- registrar_perfil(p_apodo text, p_bankroll numeric DEFAULT 1500) deja que el
+-- CLIENTE elija su propio bankroll_inicial en el alta, y bankroll_inicial es el
+-- primer sumando de get_bankroll_real. Un usuario nuevo puede declararse
+-- cualquier banca inicial. No lo cambio porque no se si es deliberado (el reto
+-- puede querer que cada quien declare su banca real) y porque tocar el alta sin
+-- poder probar el frontend es arriesgado. Queda declarado como decision tuya.
+
+
+-- ---------------------------------------------------------------------
+-- 7. ROLLBACK
+-- ---------------------------------------------------------------------
+-- Este parche no cambia ningun objeto de produccion. Solo crea la tabla de
+-- evidencia v2.iss251_dinero_ambiguo (sin acceso cliente).
+--   drop table if exists v2.iss251_dinero_ambiguo;
