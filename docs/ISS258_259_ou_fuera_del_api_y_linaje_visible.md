@@ -171,6 +171,52 @@ vista.
 
 ---
 
+## 2bis. ISS260 — `v_picks_futbol_calc`, y una correccion a mi propio hallazgo
+
+Siguiendo el rastro de `cuarentenaMercados.ts` llegue a otro contrato de picks de
+futbol: `v_picks_futbol_calc`. Medido: **63 filas = 40 Over/Under (prob media
+59.9%, ejemplo "Over 2.5") + 19 BTTS + 4 Moneyline**, con `apostable` en false en
+las 63.
+
+La vista YA traia `NOT pick_en_cuarentena('soccer','Over/Under',pick)`, pero esa
+cuarentena solo tapa **Under 3.5** (ver `esUnder35` en el frontend). Por eso
+"Over 2.5" pasaba entero. El mercado esta retirado completo, no una linea.
+
+**ISS260** agrega `AND mercado <> 'Over/Under'` y deja BTTS (19) y Moneyline (4)
+intactos.
+
+### Correccion: dije que esto se veia en pantalla. NO se ve.
+
+Escribi que esas 40 filas "se muestran en las superficies de descubrimiento".
+**Lo infieri de un comentario del frontend, no de una medicion.** Cuando fui a
+probarlo, la cadena entera resulto estar MUERTA:
+
+| Comprobacion | Resultado |
+|---|---|
+| `SELECT` como `anon` | **denegado** (42501) |
+| `SELECT` como `authenticated` | **denegado** (42501) |
+| Grants de `anon`/`authenticated` sobre la vista | INSERT, UPDATE, DELETE, TRUNCATE… **pero NO SELECT** |
+| Grants sobre `picks_futbol_cache` | **ninguno** para anon ni authenticated |
+| Alguna funcion SECDEF que anon/auth pueda ejecutar y lea la cache | **ninguna** |
+| Ultimo refresco exitoso de la cache | **2026-09-11 15:38:48 UTC** (8 dias 5 h) |
+| Cron 314 `picks-futbol-cache` | **`active = false`** (apagado) |
+| `refrescar_picks_futbol()` | **ROTA**: hace `insert … select *, now()`; la vista tiene 24 columnas (la 24 es `desacuerdo_vs_precio_pp`) y la cache tiene 24 pero la suya es `calculado_at`. 25 expresiones contra 24 destinos. |
+
+**Que la rotura NO es mia:** mi cambio no agrego ni quito columnas (reproduje las
+24 exactas), y el ultimo refresco exitoso es del **11 de septiembre**, 8 dias
+antes de esta sesion.
+
+Asi que ISS260 **no arreglo una fuga viva**: arreglo un contrato que, si alguien
+revive esa superficie, ya no publicara un mercado retirado. Es correcto y barato,
+pero no vale lo que yo dije que valia.
+
+**Lo que NO hice, a proposito:** no arregle la funcion de refresco ni reencendi el
+cron 314. Un cron apagado a mano es una decision de alguien, y esa superficie
+ademas trae `ev`, `score_valor` y `nivel` — justo el vocabulario que el dueno
+prohibio para decidir. Revivirla no me toca.
+
+---
+
 ## 3. Prediccion visible vs pick monetizable
 
 Medido 19:1x UTC:
