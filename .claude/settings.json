@@ -40,7 +40,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash /home/user/reto/.claude/hooks/supabase-project-guard.sh",
+            "command": "bash \"${CLAUDE_PROJECT_DIR:-/home/user/reto}/.claude/hooks/supabase-project-guard.sh\"",
             "timeout": 10,
             "statusMessage": "Comprobando project_id de Supabase"
           }

@@ -1,3 +1,8 @@
 
 # Permisos locales de Claude Code (no se comparten)
 .claude/settings.local.json
+
+# Bitacora de invocaciones de la guarda de project_id: es evidencia de
+# ejecucion, crece sola y es distinta en cada maquina. La prueba queda
+# transcrita en docs/ISS257_*.md, no el archivo vivo.
+.claude/hooks/guard-invocaciones.log
