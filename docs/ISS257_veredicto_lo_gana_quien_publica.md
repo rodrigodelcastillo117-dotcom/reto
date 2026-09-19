@@ -199,13 +199,93 @@ arreglo que el usuario todavia no veia.
 
 ---
 
-## 4. PENDIENTE — declarado, no maquillado
+## 4. PRIORIDAD 5 — Por que no hay picks publicables
+
+### El bloqueo es uno solo, y es el mismo para todos
+
+`v_pick_canonico`: **399 de 399 filas** tienen `es_pick = false` con **un unico** motivo,
+`SIN_CALIBRATION_VERSION`. No hay un segundo motivo. No es la puerta de Brier.
+
+La cadena es: `v_pick_canonico` -> `elegibilidad_no_economica_v1(...)` ->
+`calibracion_de_pick(fuente, deporte, mercado)` -> `motor_modelo_mapa.calibration_version`.
+
+Esa columna esta **NULL en las 4 filas del mapa**:
+
+| fuente | deporte | mercado | model_version | calibration_version |
+|---|---|---|---|---|
+| motor_mlb_cuantitativo | baseball | Moneyline | mlb_one_brain_v2 | **NULL** |
+| motor_mlb_cuantitativo | baseball | Over/Under | mlb_one_brain_v2 | **NULL** |
+| motor_nfl_hibrido | football | Moneyline | nfl_hybrid_ml_v1 | **NULL** |
+| motor_futbol_calibrado | soccer | Moneyline | soccer_canonical_v2 | **NULL** |
+
+### Y **NO** es un cable suelto
+
+La tentacion obvia es "pues conecta el calibrador". **No hay ninguno que conectar.** El
+registro versionado `public.calibracion_estado_v2` tiene `calibration_version` NULL en sus
+9 filas, y cada NULL trae su medicion:
+
+| deporte / mercado | estado | evidencia medida |
+|---|---|---|
+| soccer / Moneyline | `CALIBRACION_NO_JUSTIFICADA` | 30,876 filas. Calibrar **empeora** el Brier en −0.00058. El sesgo crudo es **0.00 pp EXACTO** (el motor ya esta insesgado) y calibrarlo lo desvia a −0.87 pp. No se declara RECHAZADA_OOS porque no existe prueba fuera de muestra. |
+| soccer / BTTS | `CALIBRACION_NO_JUSTIFICADA` | mejora +0.00075, no significativa (t=0.35) |
+| soccer / Over/Under | `CALIBRACION_NO_JUSTIFICADA` | empeora −0.00032 |
+| soccer / Doble Oportunidad | `CALIBRACION_NO_JUSTIFICADA` | empeora −0.00010 |
+| baseball / Moneyline | `CALIBRACION_RECHAZADA_OOS` | walk-forward sobre 1,056 juegos: **pierde en 3 de 3 ventanas**. Brier raw 0.24732 contra cal 0.24850; el sesgo empeora de −0.41 a −1.49 pp |
+| football / * | `SIN_MODELO` | `nfl_backtest` VACIO (0 filas), 0 picks de NFL resueltos |
+
+**Conclusion honesta: la app no publica picks porque la calibracion se probo y se RECHAZO
+con evidencia, no porque algo este desconectado.** Poner un `calibration_version` hoy seria
+exactamente "inventar un calibrador".
+
+### La decision que si es del dueno (yo no la tomo)
+
+Hay una asimetria real que vale la pena que el dueno vea, y **no la toco**:
+
+En soccer/Moneyline la medicion dice que el motor **ya esta insesgado** (sesgo crudo 0.00 pp
+exacto) y que calibrarlo lo **empeora**. Es decir: se le exige un `calibration_version` a un
+modelo que **no necesita calibracion**. Eso puede ser un defecto del contrato de
+elegibilidad, no del modelo.
+
+Las dos salidas legitimas son:
+
+- **(a)** construir un calibrador que demuestre mejora **fuera de muestra**. Hoy ninguno la
+  demuestra; en MLB ya se intento y perdio 3 de 3.
+- **(b)** cambiar la regla para que un modelo con sesgo demostradamente nulo pueda ser
+  elegible **sin** calibrador, registrando esa exencion como version.
+
+**(b) baja un umbral y toca dinero, asi que no es mia.** La dejo medida y nombrada.
+Lo que **no** voy a hacer es poner una version de calibracion inventada para que la puerta
+abra: eso convierte un bloqueo honesto en un permiso falso.
+
+### Aparte: la puerta de Brier, para cuando la calibracion deje de ser el tapon
+
+Aunque se resolviera lo anterior, estos son los modelos que **hoy** pasarian y no pasarian
+`brier_vs_naive_upper95 < 0` (scope GLOBAL):
+
+| deporte | mercado | modelo | n | upper95 | puerta |
+|---|---|---|---|---|---|
+| baseball | Moneyline | mlb_runtime_a7fb15853076 | 64 | −0.0047 | **PASA** |
+| baseball | Moneyline | mlb_one_brain_v2 | 24 | +0.0067 | NO PASA |
+| soccer | 1X2 | crossleague_v1 (prior) | 198 | −0.0084 | **PASA** |
+| soccer | 1X2 | **soccer_canonical_v2 (el que publica)** | 66 | **+0.0194** | **NO PASA** |
+| soccer | BTTS | soccer_canonical_v2 | 66 | +0.0031 | NO PASA |
+| soccer | Over/Under | todos los caminos | 14–184 | +0.0488 a +0.1838 | NO PASA |
+| football | Moneyline / Spread / Total | nfl-2026.09.2 | 16 | +0.1095 / +0.2629 / +0.2804 | NO PASA |
+| hockey | Moneyline | nhl_elo_v1_k12_h25 | 863 | +0.0099 | NO PASA |
+
+El que publica futbol **no pasa la puerta todavia**, y le faltan partidos, no calidad: su
+diff (−0.0497) es mejor que el del prior (−0.0481) con n=66 contra 198. **Lo que falta es
+temporada jugada, no un umbral mas bajo.**
+
+---
+
+## 5. PENDIENTE — declarado, no maquillado
 
 | # | Pendiente | Estado |
 |---|---|---|
 | 1 | `v_futpro_publication_v3` sigue entregando `p_over`/`p_under` en 116 filas aunque O/U este retirado. Ninguna pantalla los pinta, pero la API los ofrece. Hay que decidir si se anulan en la vista (como ya se hizo en `v_tarjeta_soccer_v1`) o si se documentan como diagnostico. **No los toco sin decidirlo explicitamente: anular columnas de un contrato publico es un cambio de contrato.** | PENDIENTE |
 | 2 | `mejor_pick` viaja por la API nombrando un mercado no canonico en 102/121 con probabilidad mas alta en 101/121. Hoy no lo pinta nadie, pero es una trampa cargada para la proxima pantalla que lo lea. | PENDIENTE |
-| 3 | `top_only_authoritative` = false en 117/117: por eso las superficies de "top pick" salen vacias. Falta diagnosticar por que. | PENDIENTE |
+| 3 | ~~`top_only_authoritative` = false en 117/117~~ — **NO es un defecto.** En `v_futpro_publication_v3` la columna es el literal `false AS top_only_authoritative`: esta apagada a proposito, igual que `money_authorized`. Corrijo mi propio encuadre anterior: no hay nada que arreglar aqui. | CERRADO |
 | 4 | En la lista de FUT Pro, `TresPorcentajesSoccer` se renderiza con `compacto`, y en ese modo **no** se muestra la linea "Probabilidades del modelo de RETO. Son analisis, no una recomendacion de apuesta." Solo aparece en el detalle. Es frontend: **es de Lovable, no mio.** | PENDIENTE (Lovable) |
 | 5 | Probar FUT Pro, Favoritos, Scanner y en-vivo en el Remix real, escritorio y movil, con capturas. **BLOQUEADO:** el Remix esta detras de login (`LoginScreen.tsx`) y no tengo credenciales. No las invento. Pedir un usuario de prueba, o correr la suite `vitest` del proyecto, que ya trae `crossScreenCanonical.test.ts` y `favoritosMismaTarjeta.test.ts` justo para el mismo-P_RETO-en-todas-las-superficies. | BLOQUEADO |
 | 6 | El Remix **no tiene espejo en GitHub.** `rodrigodelcastillo117-dotcom/reto13` es el proyecto original, no el remix: le faltan `canonicalPick.ts` y `MatchSheetV2.tsx`. Todo lo de frontend se leyo por MCP de Lovable a HEAD `3a7bbf1`. | INFORMATIVO |
