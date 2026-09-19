@@ -1,0 +1,188 @@
+-- =====================================================================
+-- ISS253/254 -- LOS CINCO CRONS QUE FALLABAN, Y UN DEFECTO DE IDENTIDAD EN MLB
+-- Rama: claude/eager-noether-s7p33g   Proyecto: wpiztubmmmzclhlprgpd
+--
+-- Punto de partida medido: de 20909 corridas de cron en 24 h, 20904 OK y 5 FALLIDAS.
+-- Cinco fallos, tres causas distintas. Ninguna era "flake".
+-- =====================================================================
+
+
+-- ---------------------------------------------------------------------
+-- FALLO 1 -- refresh-liga-intelligence
+--   "ON CONFLICT DO UPDATE command cannot affect row a second time"
+-- ---------------------------------------------------------------------
+-- CAUSA: refresh_liga_intelligence_cache agrupaba por (liga, deporte) pero la
+-- tabla destino tiene ON CONFLICT (liga). Si una liga aparece con dos deportes,
+-- el mismo 'liga' se propone dos veces en un solo INSERT y Postgres aborta.
+--
+-- Y la liga que lo provocaba delata un defecto de datos de fondo:
+--     MLB  ->  '⚾ Baseball'  y  '⚾ Béisbol'   (dos etiquetas, 23 picks)
+--
+-- pick_learning_data tenia SEIS escrituras de deporte con DOS pares duplicados:
+--     ⚽ Fútbol 407 | 🎾 Tenis 94 | ⚾ Béisbol 44 | ⚾ Baseball 3
+--     🏈 Football 5 | 🏈 Futbol Americano 1
+-- mientras picks estaba limpia (3 valores canonicos). Motivo: picks tiene el
+-- trigger normalize_deporte y pick_learning_data NO TENIA NINGUN TRIGGER.
+--
+-- Y el normalizador tampoco habria servido: su CASE solo contempla 'baseball' y
+-- 'football'. 'beisbol' y 'futbol americano' caian en el ELSE y se conservaban
+-- tal cual.
+--
+-- ARREGLO (cuatro piezas):
+--   1. normalize_deporte: se anade translate() para quitar acentos y se amplian
+--      las listas con beisbol/mlb, futbol americano/americano/nfl, baloncesto/nba,
+--      nhl. Solo anade correspondencias; no cambia ninguna existente.
+--   2. Se cuelga el trigger en pick_learning_data, que no tenia ninguno.
+--   3. Backfill de las dos etiquetas duplicadas. Es normalizacion de ETIQUETA,
+--      no cambio de valor: el deporte es el mismo. Estado previo guardado en
+--      v2.iss253_deporte_antes.
+--   4. La funcion agrupa por liga y elige el deporte por moda
+--      (mode() within group), determinista. Asi el cron no vuelve a caer aunque
+--      reaparezca una etiqueta duplicada.
+--
+-- VERIFICADO: 6 etiquetas -> 4 canonicas; 0 ligas con dos deportes;
+--   select * from refresh_liga_intelligence_cache()  ->  23 ligas, sin error.
+--
+-- DECLARADO SIN TOCAR: quedan duplicados de NOMBRE DE LIGA que si afectan al
+-- modelo: 'Champions League' (6 picks) frente a 'UEFA Champions League' (62), y
+-- una liga literalmente llamada 'Desconocida' con 9 picks. pick_learning_data
+-- tampoco tiene normalizador de liga. Es otro trabajo, no lo mezclo aqui.
+
+
+-- ---------------------------------------------------------------------
+-- FALLO 2 -- limpieza-nocturna
+--   "deadlock detected ... while deleting tuple in relation live_scores"
+-- ---------------------------------------------------------------------
+-- CAUSA: el job borraba de live_scores con un DELETE ... WHERE, que toma los
+-- bloqueos en el orden del plan. Hay CINCO crons mas escribiendo esa tabla
+-- (sync-live-5min, sync-dia-30min, espejo-apifootball-live, snapshot-odds,
+-- mlb-enrich-diario). sync-live-5min corre cada 5 minutos: la colision estaba
+-- garantizada, no era mala suerte.
+--
+-- ARREGLO: el job pasa a ser public.limpieza_nocturna(), y los dos DELETE sobre
+-- live_scores toman los bloqueos en orden determinista y sin esperar:
+--     delete from live_scores where id in (
+--       select l.id from live_scores l where <cond> order by l.id
+--       for update skip locked)
+-- SKIP LOCKED es lo correcto aqui: es una limpieza, no una operacion critica.
+-- Lo que este ocupado se limpia la noche siguiente. Ademas cada paso queda
+-- aislado en su propio bloque de excepcion y se registra en
+-- v2.iss253_limpieza_log, para que un fallo no tumbe los otros nueve pasos.
+-- cron.alter_job(32, command => 'select public.limpieza_nocturna()')
+--
+-- VERIFICADO ejecutandola: 10 pasos, 10 OK, sin deadlock. Y limpio 185 filas de
+-- live_scores que llevaban atascadas desde que el deadlock empezo a fallar.
+
+
+-- ---------------------------------------------------------------------
+-- FALLO 3 -- motor-cache-horizonte-largo (statement timeout en MLB)
+-- FALLOS 4 y 5 -- auditoria-ciclo-retiro-1 y -2 (statement timeout)
+-- ---------------------------------------------------------------------
+-- CAUSA COMUN, y no era el tamano de los datos:
+--   mlb_batazos      29858 filas / 6 MB
+--   historico_partidos_espn 47099 filas
+--   mlb_stats_cache   1423 filas
+-- El problema es que v_mlb_contacto_equipo REAGREGA TODO mlb_batazos en una CTE
+-- cada vez que se la consulta, y refrescar_motor_cache(240) la consulta una vez
+-- por partido. Medido con EXPLAIN ANALYZE: 113.5 ms por evaluacion, con Seq Scan
+-- de las 29858 filas. Por ~480 evaluaciones son mas de 50 s solo en eso.
+-- Igual con v_mlb_id_puente y v_mlb_nombre_espn, que hacen DISTINCT ON y mode()
+-- sobre 47k filas en cada llamada a mlb_resolve_espn_team_id_v1.
+--
+-- ARREGLO: tres matviews en el esquema v2 (fuera del API, sin grants de cliente)
+-- con la MISMA SQL, e indices; y las tres vistas publicas pasan a leer de ellas,
+-- conservando exactamente el contrato de columnas:
+--     v2.mv_mlb_contacto_equipo  (uk mlb_game_pk,lado_bateador; ix espn_team_id,fecha desc)
+--     v2.mv_mlb_id_puente        (uk team_espn_id; ix team_mlb_id)
+--     v2.mv_mlb_nombre_espn      (uk team_espn_id; ix nombre)
+--     public.refrescar_matviews_mlb()  con REFRESH ... CONCURRENTLY
+--     cron 'refrescar-matviews-mlb' cada 20 min (jobid 548)
+--
+-- MEDIDO, misma consulta antes y despues:
+--     antes:   Execution Time 113.461 ms   Seq Scan sobre mlb_batazos
+--     despues: Execution Time   1.312 ms   Index Scan sobre la matview
+--     87x mas rapido.
+-- gate_linaje_de_writers, que antes agotaba los 120 s, ahora tarda 5.98 s.
+
+
+-- ---------------------------------------------------------------------
+-- DEFECTO DE IDENTIDAD EN MLB, encontrado al materializar (ISS254)
+-- ---------------------------------------------------------------------
+-- El indice unico de la matview fallo:
+--     "Key (mlb_game_pk, lado_bateador)=(824514, away) is duplicated"
+-- Eso no era un problema del indice: era un defecto real de datos que la vista
+-- llevaba escondiendo.
+--
+-- MEDIDO: 128 mlb_game_pk estan puenteados a VARIOS espn_event_id (5 de ellos a
+-- tres). Al reves, 0: ningun espn_event_id apunta a dos game_pk.
+--
+-- CAUSA, con datos en la mano -- SON DOBLES JORNADAS:
+--     game_pk 823357  Pirates vs Brewers  2026-07-11 16:05  7-6   espn 401889917
+--     game_pk 823357  Pirates vs Brewers  2026-07-11 20:15  3-2   espn 401816115
+--     game_pk 824490  Reds vs Guardians   2026-07-28 17:40  5-6   espn 401901849
+--     game_pk 824490  Reds vs Guardians   2026-07-28 23:10  2-0   espn 401816295
+-- Mismos equipos, mismo dia, DOS partidos distintos, y a los dos se les asigno
+-- el MISMO mlb_game_pk. El puente se construyo por (fecha, equipos) y colisiona
+-- en cada doubleheader.
+--
+-- EFECTO EN EL MODELO: los batazos de UN partido se replicaban en hasta tres
+-- partidos, atribuyendo velocidad de salida, hard-hit% y barrel% a equipos y
+-- fechas que no les corresponden. La vista devolvia 1094 filas con 122
+-- duplicadas.
+--
+-- POR QUE NO LO "RESUELVO" ELIGIENDO UNO: raw_data de mlb_stats_cache solo trae
+--     gamePk, homeTeamId, awayTeamId, homePitcherId, awayPitcherId, venueName
+-- NO trae gameDate, ni gameNumber, ni bandera de doubleHeader. Sin hora ni
+-- numero de juego no hay evidencia para decidir cual espn_event_id es cual, y
+-- atribuir batazos al partido equivocado es peor que no tenerlos.
+--
+-- DECISION: FALLAR CERRADO. La matview solo incluye game_pk con UN unico
+-- espn_event_id (HAVING count(distinct ...) = 1). Resultado: 844 filas limpias,
+-- 0 duplicadas. Los 128 ambiguos quedan registrados en
+-- v2.iss254_mlb_puente_ambiguo con sus eventos, equipos y fechas. No se borra
+-- nada.
+--
+-- ARREGLO DE FONDO, PENDIENTE: la ingesta que escribe mlb_stats_cache.mlb_game_pk
+-- tiene que resolver dobles jornadas usando gameNumber/doubleHeader de la API de
+-- MLB, y reingestar esos 128. Eso es cambio de Edge Function, no de SQL.
+
+
+-- ---------------------------------------------------------------------
+-- LA CAUSA RAIZ DEL CRON DE AUDITORIA, aparte del rendimiento
+-- ---------------------------------------------------------------------
+-- Hay dos sobrecargas de correr_gates:
+--     correr_gates(int,int)   -> SI hacia set_config('statement_timeout','240000')
+--     correr_gates(text,text) -> NO lo hacia
+-- auditar_ciclo_retiro usa la segunda, asi que heredaba el limite de 2 min.
+-- Los 43 gates suman 82.9 s medidos, mas el resto de la auditoria: se pasaba.
+-- ARREGLO: se anade la misma linea a la sobrecarga (text,text), igualandola a su
+-- hermana. Los 43 gates corren todos (0 errores, medidos uno a uno en
+-- v2.iss254_gate_tiempo; los mas lentos: gate_btts_no_monetizable 11.6 s,
+-- gate_feature_asof_es_real 11.4 s, gate_coherencia_soccer_v2 8.5 s).
+--
+-- NO VERIFICADO TODAVIA, y lo digo: no puedo ejecutar la auditoria completa por
+-- MCP porque el cliente corta a los 60 s y cancela la consulta. La tabla
+-- v2.auditoria_ciclos_retiro sigue con una sola fila (la linea base del 18-sep).
+-- El parche esta aplicado; la confirmacion llegara con la corrida programada de
+-- las 04:10 / 09:10 UTC. Hasta entonces: ARREGLO APLICADO, NO CONFIRMADO.
+--
+-- Dato aparte que queda abierto: la linea base registra gates_fail = 17.
+-- Diecisiete gates en fallo. No los he investigado aun.
+
+
+-- ---------------------------------------------------------------------
+-- ROLLBACK
+-- ---------------------------------------------------------------------
+-- cron.unschedule('refrescar-matviews-mlb');
+-- drop function if exists public.refrescar_matviews_mlb();
+-- create or replace view public.v_mlb_contacto_equipo as <SQL original, en el doc>;
+-- create or replace view public.v_mlb_id_puente as <SQL original>;
+-- create or replace view public.v_mlb_nombre_espn as <SQL original>;
+-- drop materialized view if exists v2.mv_mlb_contacto_equipo cascade;
+-- drop materialized view if exists v2.mv_mlb_id_puente cascade;
+-- drop materialized view if exists v2.mv_mlb_nombre_espn cascade;
+-- drop trigger if exists trg_normalize_deporte_pick_learning on public.pick_learning_data;
+-- -- y restaurar normalize_deporte, refresh_liga_intelligence_cache,
+-- -- correr_gates(text,text) y el command del jobid 32 a sus versiones previas,
+-- -- todas transcritas en este documento y en el commit anterior.
+-- -- Las etiquetas de deporte se pueden revertir desde v2.iss253_deporte_antes.
