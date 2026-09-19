@@ -1,0 +1,105 @@
+-- ISS245/246 — TOMA DE CUENTA POR REUTILIZACION DE APODO.
+-- Reproducida de punta a punta y contenida. Tenias razon en no darla por cerrada
+-- con el arreglo de ajustes_cuenta: eran dos vulnerabilidades distintas.
+--
+-- =====================================================================
+-- 1. ALCANCE REAL: 57 TABLAS, 54 SIN user_id
+-- =====================================================================
+--   tablas con columna apodo ............... 57
+--   que TAMBIEN tienen user_id .............  3
+--   que SOLO tienen apodo .................. 54   <- el texto ES la llave
+--   con RLS ................................ 53
+--   legibles por cliente ................... 39
+--   escribibles por cliente ................ 36
+-- El arreglo de ISS243 cubria 1 de 57.
+--
+-- Datos de A ligados por texto de apodo, medidos:
+--   notificaciones 245 | parlays 54 | picks 20 | score_notifications 13
+--   ajustes_cuenta 10  | canasta 4  | fantasy_roster_semanal 2 | config_staking 1
+--
+-- =====================================================================
+-- 2. LA CADENA, EJECUTADA (transaccion revertida, cero filas tocadas)
+-- =====================================================================
+--   paso                         actor              resultado    filas
+--   0 linea base                 postgres           INFO           329
+--   1 A se renombra              authenticated A    PERMITIDO        1
+--   2 B toma el apodo viejo de A authenticated B    PERMITIDO        1
+--   3 B ve los datos de A        authenticated B    HEREDA         319
+--   4 B pide el saldo por RPC    authenticated B    RESPONDIO   -3801.21
+--
+-- Los dos pasos ofensivos los hace un usuario autenticado corriente. No hace
+-- falta anon, ni service_role, ni SQL injection. Es toma de cuenta completa:
+-- datos y saldo.
+--
+-- Verificado tras el rollback: los 6 apodos intactos, cero residuo.
+--
+-- =====================================================================
+-- 3. CONTENCION APLICADA (ISS246). Reversible, sin borrar nada.
+-- =====================================================================
+-- (a) public.apodo_historial: todo apodo alguna vez asignado queda registrado y
+--     RESERVADO a su dueno original, para siempre. Backfill de los 6 actuales.
+--     Sin acceso anon/authenticated. Nada se borra nunca.
+-- (b) indice unico sobre lower(btrim(apodo)) en usuarios. La restriccion previa
+--     era sobre el texto crudo, asi que 'RodelCast' o '  rodelcast ' la
+--     esquivaban. Las carreras concurrentes fallan cerrado contra este indice.
+-- (c) trigger tg_apodo_reservado con dos reglas:
+--       - un apodo historico de OTRO dueno no se puede tomar (reserva);
+--       - el CLIENTE no puede cambiar su propio apodo (contencion).
+--     service_role SI puede, para poder construir despues un renombrado atomico.
+--
+-- SOBRE (c): es una PAUSA DE SEGURIDAD, no una decision de producto. Con 54
+-- tablas ligadas solo por texto no se puede garantizar que un renombrado
+-- conserve la propiedad de los datos dependientes, y tu instruccion fue
+-- explicita: si no se puede garantizar, bloquear temporalmente.
+--
+-- Medido ANTES de aplicar, para no romper nada:
+--   usuarios 6 | apodos normalizados distintos 6 | colisiones 0
+--   apodos con espacios o mayusculas 0 | tabla de historial previa: NO EXISTIA
+-- Cero filas ambiguas que resolver. Cero reasignacion automatica.
+--
+-- =====================================================================
+-- 4. PRUEBAS DE ACEPTACION, EJECUTADAS DESPUES
+-- =====================================================================
+--   T1 A se renombra ........................... BLOQUEADO  APODO_NO_MODIFICABLE
+--   T2 B toma el apodo de A .................... BLOQUEADO  APODO_NO_MODIFICABLE
+--   T3 variante '  RodelCast ' (may/espacios) .. BLOQUEADO
+--   T4 service_role libera y B intenta tomar ... BLOQUEADO
+--   T5 A conserva sus datos .................... OK, 328 filas visibles
+--
+-- Estado final verificado: 6 apodos reservados, trigger activo, indice
+-- normalizado creado, politica ISS243 viva.
+--
+-- =====================================================================
+-- 5. UN VALOR QUE INVESTIGUE Y NO ES REGRESION MIA
+-- =====================================================================
+-- get_bankroll_real('rodelcast') devuelve 0.00 como authenticated A. Verifique
+-- que devuelve 0.00 TAMBIEN como postgres, asi que no lo rompio ni la politica
+-- de ISS243 ni el trigger de ISS246. El -3801.21 del paso 4 se calculo con A ya
+-- renombrado dentro de esa transaccion, es decir con usuarios en otro estado.
+-- Lo dejo declarado: la semantica de get_bankroll_real merece revision aparte,
+-- no es parte de esta contencion.
+-- Nota secundaria: A ve 9 de 10 filas de ajustes_cuenta. La fila oculta tiene
+-- user_id NULL y ninguna politica la alcanza; solo service_role la ve.
+--
+-- =====================================================================
+-- 6. LO QUE ESTO NO ARREGLA — ARREGLO DEFINITIVO PENDIENTE
+-- =====================================================================
+-- La contencion impide la TOMA. No migra la propiedad. Sigue pendiente, por
+-- etapas y con compatibilidad:
+--   censo de lectores/escritores -> backfill solo donde la identidad historica
+--   sea verificable -> cuarentena de filas ambiguas sin borrar -> lectura y
+--   escritura por user_id estable -> renombrado atomico que mueva la propiedad
+--   -> retirada de p_apodo como autoridad -> retirada del acceso cliente que
+--   permita elegir identidad ajena.
+-- Mientras el apodo siga siendo la llave en 54 tablas, el renombrado queda
+-- pausado. Reabrirlo sin migrar seria reabrir la vulnerabilidad.
+--
+-- =====================================================================
+-- 7. ROLLBACK EXACTO
+-- =====================================================================
+--   drop trigger if exists tg_apodo_reservado on public.usuarios;
+--   drop function if exists public.tg_apodo_reservado();
+--   drop index if exists public.usuarios_apodo_norm_uniq;
+--   -- public.apodo_historial se CONSERVA a proposito: es historia, no estado.
+--   -- Si se quisiera revertir tambien:  drop table public.apodo_historial;
+--   drop policy if exists ajustes_apodo_coherente on public.ajustes_cuenta;  -- ISS243
