@@ -167,6 +167,13 @@ Nota justa para el modelo: `soccer_canonical_v2` no es peor. Su diff en 1X2 (−
 **mejor** que el del prior (−0.0481). Solo lleva 66 partidos, asi que su intervalo todavia
 es ancho. No esta desaprobado: esta **sin probar todavia**, que es distinto.
 
+> ⚠️ **CORRECCION (19:15:46 UTC del mismo dia).** Este parrafo ya no se sostiene. Con
+> 77 partidos el que publica va en diff −0.0259 y el prior en −0.0386: **ahora el
+> prior es el mejor de los dos**, y el Brier de `soccer_canonical_v2` EMPEORO al
+> crecer la muestra (0.6169 -> 0.6408 de 66 a 77 partidos). No lo maquillo: el
+> modelo no mejoro, se le noto mas. Lo unico que sigue siendo cierto es que **no
+> esta probado**, y por eso el arreglo de ISS257 sigue siendo el correcto.
+
 ### Gates despues del cambio
 
 ```
@@ -261,6 +268,12 @@ abra: eso convierte un bloqueo honesto en un permiso falso.
 
 Aunque se resolviera lo anterior, estos son los modelos que **hoy** pasarian y no pasarian
 `brier_vs_naive_upper95 < 0` (scope GLOBAL):
+
+> ⚠️ **ESTA TABLA QUEDO DESACTUALIZADA EL MISMO DIA.** Se midio ~18:00 UTC. A las
+> 19:15:46 UTC del 2026-09-19, con 11 partidos mas calificados, `crossleague_v1`
+> en 1X2 paso de n=198 / upper95 −0.0084 a **n=209 / upper95 +0.0001**: ya **NO
+> PASA**. Hoy **ningun** modelo de futbol pasa la puerta. Correccion completa, con
+> las cifras nuevas, en `docs/ISS258_259_ou_fuera_del_api_y_linaje_visible.md` §0.
 
 | deporte | mercado | modelo | n | upper95 | puerta |
 |---|---|---|---|---|---|
