@@ -1,0 +1,28 @@
+# Configuracion minima de ruff para Reto 13M.
+#
+# Por que existe: sin configuracion, ruff aplica sus reglas por defecto y saca
+# 187 hallazgos (34 en lab/, 153 en reto.py). Casi todos son E701/E702, varias
+# sentencias por linea, que es el estilo denso que este repo usa a proposito en
+# los ajustes numericos. Un linter que grita 187 veces por estilo preexistente
+# no se lee, y entonces no sirve para encontrar el bug que si importa.
+#
+# Se conserva la familia F (pyflakes): nombres no definidos, imports sin usar,
+# f-strings sin placeholder. Esos SI son defectos.
+# Se silencia lo cosmetico. No se reformatean 5278 lineas de codigo legado.
+
+target-version = "py311"
+line-length = 120
+
+[lint]
+select = ["F", "E9"]   # F = pyflakes (defectos reales); E9 = errores de sintaxis
+ignore = [
+  "E401",  # varios imports en una linea
+  "E701",  # varias sentencias por linea (dos puntos)
+  "E702",  # varias sentencias por linea (punto y coma)
+  "E741",  # nombres de variable ambiguos (l, I, O) -- usados en el algebra del modelo
+]
+
+[lint.per-file-ignores]
+# reto.py es la app legada de Streamlit. Se mantiene vigilada por F pero no se
+# reescribe: la app viva es el frontend de Lovable contra Supabase.
+"reto.py" = ["F841"]   # variable local asignada y no usada
