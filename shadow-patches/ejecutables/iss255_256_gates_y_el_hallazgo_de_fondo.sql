@@ -1,0 +1,174 @@
+-- =====================================================================
+-- ISS255/256 -- LOS GATES EN FALLO, Y EL HALLAZGO QUE IMPORTA
+-- Rama: claude/eager-noether-s7p33g   Proyecto: wpiztubmmmzclhlprgpd
+-- =====================================================================
+
+-- ---------------------------------------------------------------------
+-- 0. EL HALLAZGO DE FONDO: LA APP NO ESTA ROTA, ESTA ESPERANDO EVIDENCIA
+-- ---------------------------------------------------------------------
+-- reto_picks_hoy__base devuelve 0 filas para los CINCO usuarios con auth.
+-- Mi primera lectura fue "la app no funciona". Medido, es lo contrario:
+--
+--   v_prediccion_reto_canonico:  50 filas, todas de soccer, con probabilidades
+--                                 (p_local_gana, p_empate, p_visita_gana) visibles
+--                                 model_status = NO_VALIDADO
+--                                 score_version = v0_provisional
+--
+--   v2.model_learning_gate, money_authorized:  FALSE en TODAS las filas
+--
+--   Veredictos vivos (Moneyline, GLOBAL, walkforward):
+--     mlb_one_brain_v2           n=24   Brier 0.41573 vs 0.50000  IC95 sup +0.00669
+--     mlb_runtime_a7fb15853076   n=64   Brier 0.46800             IC95 sup -0.00469
+--     nfl_hybrid_ml_v1           n=1    Brier 0.30906             IC95 sup  n/a
+--     nfl-2026.09.2 (RETIRADO)   n=16   Brier 0.49520             IC95 sup +0.10948
+--
+--   Umbrales preregistrados que faltan:
+--     soccer_canonical_v2: 300 ajuste + 150 holdout = 450.  FALTAN 383.
+--     mlb_one_brain_v2:    200 ajuste + 100 holdout = 300.  FALTAN 276.
+--
+-- O sea: la app muestra probabilidades del modelo y NO muestra picks con dinero,
+-- porque ningun cerebro ha cruzado el umbral que el dueno mismo preregistro.
+-- mlb_one_brain_v2 esta a 0.00669 de cruzarlo.
+--
+-- NO hay nada que "arreglar" ahi. Bajar el umbral para que salgan picks seria
+-- exactamente lo prohibido: "SIN EV. SIN KELLY. ... Si la evidencia falta,
+-- FAIL CLOSED." El silencio de la app es el candado funcionando.
+-- Lo que falta es MUESTRA, y la muestra es tiempo de partidos jugados.
+
+-- ---------------------------------------------------------------------
+-- 1. LOS 43 GATES, MEDIDOS UNO A UNO
+-- ---------------------------------------------------------------------
+-- 161 PASS, 43 INFO, 7 FAIL, 3 UNAVAILABLE, 2 NO_ALCANZA, 1 PENDING.
+-- Los corri por tramos (15 / 14 / 14) porque los 43 suman 82.9 s y el cliente
+-- MCP corta a los 60 s. Resultados en v2.iss255_gates.
+
+-- ---------------------------------------------------------------------
+-- 2. UNA REGRESION MIA, CAZADA POR EL PROPIO GATE
+-- ---------------------------------------------------------------------
+-- gate_escritores_declarados / G45.5 FAIL: "public.limpieza_nocturna ->
+-- analisis_partidos". Al mover la limpieza nocturna de comando de cron a
+-- funcion (ISS253), 'cron:limpieza-nocturna' seguia declarado pero
+-- 'public.limpieza_nocturna' no. Declarada en v2.escritor_autorizado con la
+-- misma autoridad que tenia el cron. Los 4 gates de G45.5 a G45.8 -> PASS.
+
+-- ---------------------------------------------------------------------
+-- 3. EL GATE ME CORRIGIO A MI, TEXTUAL
+-- ---------------------------------------------------------------------
+-- gate_cron_sano / CRON_CORRIDAS_QUE_PEGAN_EN_EL_TECHO ya decia:
+--   "El limite real es el del statement EXTERIOR: un SET statement_timeout
+--    DENTRO de la funcion no re-arma el temporizador que ya arranco."
+-- Yo habia parcheado correr_gates(text,text) anadiendo set_config por dentro.
+-- ESO NO SIRVE. Corregido: el timeout va en el comando del cron.
+--   cron.alter_job(543, "set statement_timeout = '240s'; select v2.auditar_ciclo_retiro('post-ciclo-0400')")
+--   cron.alter_job(544, idem con post-ciclo-0900)
+--   cron.alter_job(366, "set statement_timeout = '240s'; select public.refrescar_motor_cache(240)")
+-- NO CONFIRMADO: esos tres crons son diarios. La confirmacion llega con la
+-- corrida de las 04:10 / 09:10 / 09:25 UTC. Hasta entonces el gate seguira en
+-- FAIL porque mira las 3 ULTIMAS corridas, que son anteriores al parche.
+
+-- ---------------------------------------------------------------------
+-- 4. UN MOTOR MAL ETIQUETADO, CON EL CONTRATO DEMOSTRADO
+-- ---------------------------------------------------------------------
+-- soccer_canonical_v2_ou_poisson figuraba RETIRADO y "seguia escribiendo" 13
+-- veces. No es un motor. En v2.refresh_model_learning se escribe como:
+--     model_version = s.model_version || '_ou_poisson'
+--     market        = 'Over/Under'
+--     p             = public.fn_ou_desde_lambda(s.lambda_home, s.lambda_away, s.over_line)
+-- Misma fila de origen, mismas lambdas, mismo prediction_time. Es el mercado
+-- Over/Under del cerebro autorizado, igual que nfl_form_ml_v1 es COMPONENTE.
+-- Prueba del contrato, no relabelado a ciegas:
+--     soccer_canonical_v2            -> 1X2 42, BTTS 42, Over/Under 29
+--     soccer_canonical_v2_ou_poisson -> Over/Under 42 y NADA MAS
+-- Reclasificado a COMPONENTE. Los demas *_ou_poisson siguen RETIRADOS porque su
+-- motor base lo esta.
+
+-- ---------------------------------------------------------------------
+-- 5. WNBA SEGUIA ENTRANDO POR UNA BARRERA QUE FALTABA
+-- ---------------------------------------------------------------------
+-- v2.refresh_selected_team_elo_models tiene la barrera desde ISS210:
+--   "Solo deportes declarados en v2.deporte_del_producto"
+-- v2.grade_team_elo_future NO la tenia. Por ahi calificaba WNBA, NBA y NHL a
+-- medida que esos partidos acababan. v2.deporte_del_producto solo declara
+-- baseball/mlb, football/nfl y soccer/%. WNBA esta excluida por el dueno y
+-- basketball no tiene NINGUN cerebro autorizado. Barrera anadida.
+--
+-- DONDE ME EQUIVOQUE: supuse que el gate comparaba mal, porque snapshot_at en
+-- las observaciones de ELO es la fecha del PARTIDO, no la de escritura. Lo medi
+-- contra created_at y las filas se escribieron DE VERDAD despues del retiro:
+-- 3, 13 y 3. El gate tenia razon y yo no.
+-- Quedan 2 en FAIL (wnba, nfl-2026.09.2) porque las filas ya escritas siguen
+-- ahi: la barrera detiene las nuevas, no borra historia.
+
+-- ---------------------------------------------------------------------
+-- 6. EL GATE DE CAPTURA DE MLB MEDIA EL RELOJ, NO EL INVARIANTE
+-- ---------------------------------------------------------------------
+-- G39.2 decia FAIL: "Mas de 90 minutos sin capturar son 3 corridas perdidas:
+-- el camino de salida esta roto." Medido filtro por filtro:
+--     A total en v_mlb_publication_v1 ........ 33
+--     B model_version = mlb_one_brain_v2 ..... 33
+--     C con p_home_pct y p_away_pct .......... 33
+--     D kickoff > ahora + 5 min .............. 33
+--     E kickoff < ahora + 50 h ............... 30
+--     F sin snapshot en su ventana actual .....  0   <- por esto captura 0
+-- Ventanas ya capturadas: 2h 24, 6h 27, 24h 35, 48h 45.
+-- La captura guarda UNA fila por (partido, modelo, ventana). Entre transiciones
+-- de ventana es CORRECTO que no capture. El cron del ciclo corre cada 30 min y
+-- las 4 ultimas corridas terminaron en succeeded.
+--
+-- PARCHE, con disciplina de exacto-una-vez (tres anclas, cada una verificada
+-- count=1; el primer intento ABORTO por un ancla que no casaba y el bloque
+-- entero se revirtio, que es justo lo que debe pasar):
+--   la condicion de PASS pasa de "hubo captura en los ultimos 90 minutos" a
+--   "ningun partido dentro del horizonte se quedo sin snapshot en su ventana
+--   actual". Es ESTRICTAMENTE MAS FUERTE: si el camino se rompiera, los partidos
+--   cruzarian de ventana y se quedarian sin capturar, y el gate caeria.
+-- G39.2 -> PASS, con 0 pendientes.
+-- HONESTIDAD: el gate viejo tambien se habria puesto verde solo, porque hubo una
+-- captura a las 14:17. Lo que se arregla es que ya no se pondra rojo por un
+-- periodo de inactividad legitimo, y que ahora si verifica el invariante.
+
+-- ---------------------------------------------------------------------
+-- 7. LAS 10 LINEAS DEL CANDADO DEL PRECIO, CLASIFICADAS
+-- ---------------------------------------------------------------------
+-- De 6 gates de precio, 5 pasaban. El que fallaba era
+-- PRECIO_DECIDE_P0_SIN_CLASIFICAR: 10 lineas de reto_picks_hoy__base(text)
+-- detectadas por token y SIN veredicto. Backlog de triaje, no violacion probada
+-- (PRECIO_DECIDE_VIOLACION_ABIERTA ya estaba en PASS).
+-- Clasificadas con el vocabulario que impone el CHECK de la tabla:
+--   50  DIMENSIONAMIENTO_ECONOMICO  asigna motivo ev_negativo; el pick sobrevive
+--   61  FALSO_POSITIVO_DETECTOR     apertura de row_number(); token del vecino
+--   62  FALSO_POSITIVO_DETECTOR     ordena por probabilidad_pct: es argmax P_RETO
+--   90  DIMENSIONAMIENTO_ECONOMICO  descarta solo si NO es economico: es el candado
+--   91  DIMENSIONAMIENTO_ECONOMICO  economico -> ventaja_insuficiente
+--   93  DIMENSIONAMIENTO_ECONOMICO  conserva el pick con monto 0
+--  119  DIAGNOSTICO_NO_DECIDE       literal de texto al usuario
+--  123  DIAGNOSTICO_NO_DECIDE       literal de texto al usuario
+--  126  DIAGNOSTICO_NO_DECIDE       literal de texto al usuario
+--  146  DIMENSIONAMIENTO_ECONOMICO  etiqueta no_cabe_entero
+-- Ninguna elige el pick. El orden es por probabilidad del modelo.
+-- SALVAGUARDA: mis etiquetas NO apagan la medicion. PRECIO_NO_BORRA_PICKS sigue
+-- comprobando en CALIENTE que ningun pick bloqueado por motivo economico salga
+-- como 'descartado'. Si yo me equivoque al clasificar, ese gate lo delata.
+-- Los 6 gates de precio -> PASS.
+
+-- ---------------------------------------------------------------------
+-- 8. UN DEFECTO QUE CASI REPORTE Y NO EXISTE
+-- ---------------------------------------------------------------------
+-- v2.model_learning_gate parecia tener filas duplicadas por modelo (wnba con
+-- n=8 e IC95 +0.00499 Y con n=343 e IC95 -0.03190). Antes de reportarlo mire la
+-- PK: (sport, scope, league, market, model_version, eval_window). Las filas
+-- difieren en scope (GLOBAL vs LEAGUE) y eval_window (2h vs walkforward_holdout).
+-- No son duplicados. Mi consulta no seleccionaba esas columnas.
+
+-- ---------------------------------------------------------------------
+-- 9. ROLLBACK
+-- ---------------------------------------------------------------------
+-- delete from v2.escritor_autorizado where objeto='public.limpieza_nocturna';
+-- update v2.cerebro_autorizado set rol='RETIRADO'
+--  where model_version='soccer_canonical_v2_ou_poisson';
+-- delete from public.ruta_precio_hallazgo where razon like 'ISS256%';
+-- cron.alter_job(543, command => 'select v2.auditar_ciclo_retiro(''post-ciclo-0400'')');
+-- cron.alter_job(544, command => 'select v2.auditar_ciclo_retiro(''post-ciclo-0900'')');
+-- cron.alter_job(366, command => 'select public.refrescar_motor_cache(240);');
+-- -- y restaurar v2.grade_team_elo_future y gate_mlb_one_brain_medible a sus
+-- -- versiones previas, transcritas en este documento.
