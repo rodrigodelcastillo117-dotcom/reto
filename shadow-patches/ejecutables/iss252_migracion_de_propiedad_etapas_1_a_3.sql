@@ -1,0 +1,150 @@
+-- =====================================================================
+-- ISS252 -- MIGRACION DE PROPIEDAD, ETAPAS 1-3 (punto 4 del mandato)
+-- Rama: claude/eager-noether-s7p33g   Proyecto: wpiztubmmmzclhlprgpd
+--
+-- "Asigna una llave estable y consistente de propietario. Haz backfill solo
+--  cuando el vinculo historico sea inequivoco. Migra lectores y escritores por
+--  etapas, con compatibilidad y pruebas A/B por ID."
+-- =====================================================================
+
+
+-- ---------------------------------------------------------------------
+-- 1. ELECCION DE LLAVE Y POR QUE ESE NOMBRE
+-- ---------------------------------------------------------------------
+-- La base ya tiene 'user_id' con DOS significados distintos:
+--     usuarios.user_id        = auth.uid()      (identidad de Supabase Auth)
+--     ajustes_cuenta.user_id  = usuarios.id     (identidad de perfil)
+-- Reutilizar ese nombre habria perpetuado la ambiguedad. Se introduce
+--     usuario_id uuid REFERENCES public.usuarios(id) ON DELETE SET NULL
+-- con indice, en las 13 tablas prioritarias. 'movimientos_cuenta' no existe.
+-- equipos_favoritos ya tenia clave uuid y se deja como esta.
+
+
+-- ---------------------------------------------------------------------
+-- 2. LA REGLA DE BACKFILL, Y EL CASO QUE LA OBLIGO
+-- ---------------------------------------------------------------------
+-- Antes de rellenar nada, busque si algun apodo VIVO habia pertenecido antes a
+-- otra cuenta. Dos coincidencias:
+--     'rongo'   -> 177 filas en respaldo_borrado_usuarios
+--     'el dos'  ->   1 fila en usuarios_archivados + 115 en respaldo_borrado
+--
+-- El caso 'el dos', con datos:
+--     cuenta ARCHIVADA  id 331eee6e-31b5-4eca-8a0b-d235d94b03a3
+--                       email pgpd95@gmail.com, user_id NULL
+--                       creada  2026-04-03, archivada 2026-08-14
+--     cuenta VIVA       id 12497a82-10c9-45c9-b1f1-301f52700152
+--                       email pgpd95@gmail.com, user_id acef8d26-...
+--                       creada  2026-08-29
+-- Mismo email y mismo apodo: casi con seguridad la misma persona que volvio a
+-- registrarse. Pero "casi con seguridad" no es inequivoco, y la instruccion es
+-- no atribuir por coincidencia de texto. Asi que NO se fusionan las identidades.
+--
+-- REGLA APLICADA, tablas con created_at (8):
+--     usuario_id := u.id  SOLO SI
+--       lower(btrim(u.apodo)) = lower(btrim(fila.apodo))
+--       AND u.user_id IS NOT NULL            -- dueno acreditable por auth
+--       AND fila.created_at >= u.created_at  -- la fila nacio DESPUES de la cuenta
+--     En cualquier otro caso queda NULL = ambiguo. No se inventa.
+--
+-- REGLA APLICADA, tablas sin created_at (5: canasta, config_staking,
+-- fantasy_roster_semanal, limites_usuario, user_stats_cache):
+--     son tablas de ESTADO ACTUAL (configuracion, roster, cache, limites), no
+--     de historial. Una fila describe el presente, asi que se atribuye al dueno
+--     vivo con auth uid, sin condicion temporal.
+
+
+-- ---------------------------------------------------------------------
+-- 3. RESULTADO DEL BACKFILL
+-- ---------------------------------------------------------------------
+--   tabla                    filas  resueltas  ambiguas   %
+--   clv_tracking               453        340       113  75.1
+--   notificaciones             445        393        52  88.3
+--   semana_bankroll            268         10       258   3.7
+--   parlays                     70         55        15  78.6
+--   picks                       43         37         6  86.0
+--   user_stats_cache            25          5        20  20.0
+--   score_notifications         13         13         0 100.0
+--   ajustes_cuenta              10         10         0 100.0   <- dinero
+--   canasta                      4          4         0 100.0
+--   push_subscriptions           3          3         0 100.0
+--   fantasy_roster_semanal       2          2         0 100.0
+--   limites_usuario              2          1         1  50.0
+--   config_staking               1          1         0 100.0
+--
+-- ajustes_cuenta queda al 100%, incluida la fila eb43988f que tenia user_id
+-- NULL y que en ISS251 marque ambigua: la resuelve la regla temporal, y es
+-- defendible porque el apodo 'rodelcast' NUNCA aparece en cuentas archivadas ni
+-- borradas, asi que no hay otra candidata. Lo digo explicitamente porque es una
+-- resolucion POR REGLA, no una prueba directa de propiedad.
+--
+-- Las ambiguas no se tocan y no desaparecen: quedan con usuario_id NULL, que es
+-- una marca explicita y consultable de "dueno no acreditado".
+
+
+-- ---------------------------------------------------------------------
+-- 4. ETAPA 2 -- ESPEJO AUTOMATICO, CERO CAMBIO DE COMPORTAMIENTO
+-- ---------------------------------------------------------------------
+-- public.tg_espejo_usuario_id() BEFORE INSERT OR UPDATE OF apodo en las 13
+-- tablas, con nombre 'zzzz_espejo_usuario_id' para correr al final:
+--     deriva usuario_id del apodo, y deja NULL si el apodo no tiene dueno
+--     acreditado.
+-- DELIBERADAMENTE **NO** toca new.apodo y **NO** usa auth.uid() como autoridad
+-- todavia. Esta etapa solo construye y mantiene el espejo. Si usara auth.uid()
+-- para reescribir el apodo en las 13 tablas, romperia las escrituras legitimas
+-- del sistema (notificaciones que un proceso crea PARA un usuario, filas con
+-- apodo de etiqueta como 'oraculo'). El traslado de autoridad es la etapa 4.
+
+
+-- ---------------------------------------------------------------------
+-- 5. ETAPA 3 -- PRUEBA A/B POR ID: 65 PRUEBAS, 64 IGUALES, 1 DISCREPANCIA
+-- ---------------------------------------------------------------------
+-- 13 tablas x 5 usuarios con auth = 65 comparaciones de
+--     count(*) where apodo = X   vs   count(*) where usuario_id = id(X)
+--
+-- 64 coinciden. La unica discrepancia NO es un fallo: es exactamente el arreglo
+-- funcionando.
+--     semana_bankroll / 'el dos':  por apodo 20 filas, por ID 3 filas
+-- Las 20 filas con apodo 'el dos', con fecha:
+--     semanas 1,2,3,4,5      abr-may 2026   usuario_id NULL
+--     semanas 20..31         may-ago 2026   usuario_id NULL   (17 en total)
+--     semana 34   2026-08-29 23:42          usuario_id 12497a82  <- tras el alta
+--     semana 35   2026-08-31 02:00          usuario_id 12497a82
+--     semana 36   2026-09-14 06:05          usuario_id 12497a82
+-- La cuenta viva nacio 2026-08-29 23:21. Las 17 primeras son de la cuenta
+-- ARCHIVADA, y coinciden exactamente con las 17 filas de semana_bankroll que
+-- respaldo_borrado_usuarios guarda para ese apodo.
+--
+-- TRADUCCION: hoy, leyendo por apodo, 'el dos' ve 17 semanas de banca que
+-- pertenecen a otra cuenta. Leyendo por usuario_id ve solo sus 3. La llave de
+-- texto no solo permite la toma de cuenta: ya esta mezclando historiales sin
+-- que nadie ataque nada.
+
+
+-- ---------------------------------------------------------------------
+-- 6. LO QUE FALTA (etapas 4 a 7, NO hechas)
+-- ---------------------------------------------------------------------
+-- 4. Trasladar la autoridad: escrituras que fijen usuario_id desde auth.uid()
+--    y apodo derivado del dueno, tabla por tabla, distinguiendo las de etiqueta.
+-- 5. Migrar los LECTORES. En particular get_bankroll_real__base, que hoy une
+--    los cuatro sumandos por texto Y busca el corte temporal por texto
+--    (reto_inicio_at). Mientras eso no cambie, el saldo sigue dependiendo del
+--    apodo. Es la pieza que mas importa y es la mas delicada: cambiarla altera
+--    cifras visibles, y sin frontend probado no puedo verificar el efecto.
+-- 6. Renombrado atomico que mueva la propiedad. Sigue PAUSADO.
+-- 7. Retirar p_apodo como autoridad en las RPC.
+--
+-- NO declaro cerrado el punto 4. Estan hechas las etapas 1, 2 y 3.
+
+
+-- ---------------------------------------------------------------------
+-- 7. ROLLBACK
+-- ---------------------------------------------------------------------
+-- do $$ declare t text; begin
+--   foreach t in array array['ajustes_cuenta','clv_tracking','notificaciones','parlays','picks',
+--       'push_subscriptions','score_notifications','semana_bankroll','canasta','config_staking',
+--       'fantasy_roster_semanal','limites_usuario','user_stats_cache'] loop
+--     execute format('drop trigger if exists zzzz_espejo_usuario_id on public.%I', t);
+--     execute format('alter table public.%I drop column if exists usuario_id', t);
+--   end loop; end $$;
+-- drop function if exists public.tg_espejo_usuario_id();
+-- Ninguna fila original fue modificada salvo por rellenar la columna nueva.
