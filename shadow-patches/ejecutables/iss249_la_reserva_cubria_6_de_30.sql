@@ -1,0 +1,110 @@
+-- =====================================================================
+-- ISS249 -- MI CONTENCION DE ISS246 CUBRIA 6 DE 30 APODOS
+-- Rama: claude/eager-noether-s7p33g   Proyecto: wpiztubmmmzclhlprgpd
+-- =====================================================================
+
+-- ---------------------------------------------------------------------
+-- 1. EL ERROR
+-- ---------------------------------------------------------------------
+-- En ISS246 rellene apodo_historial leyendo UNICAMENTE public.usuarios.
+-- Eso dio 6 apodos y lo reporte como contencion de la toma de cuenta.
+-- Era incompleto. El censo de las 55 tablas con columna apodo da
+-- 30 apodos normalizados distintos en el sistema. 24 no estaban reservados.
+--
+-- Los de mayor valor, medidos (filas ligadas / tablas):
+--     ios     31005 / 13
+--     joe     18102 /  7
+--     guille  13504 / 14
+--     jpm     11968 / 14
+--     oraculo  3832 /  1   <- etiqueta del sistema, no una persona
+--     nano       52 / 11
+--     villei     47 / 11
+--
+-- Viven en respaldo_borrado_usuarios (551 filas, 20 apodos),
+-- usuarios_archivados (19 filas, 19 apodos), semana_bankroll (25 apodos),
+-- user_stats_cache (25 apodos), picks_temporada_1, parlays_temporada_1,
+-- ajustes_cuenta_temporada_1 y los backups fechados.
+--
+-- CONSECUENCIA: hasta este parche, B podia registrarse, pedir el apodo 'joe'
+-- y heredar 18102 filas de datos historicos. La toma de cuenta seguia abierta
+-- por esa via. Mi informe de ISS246 dijo "contenida" y no lo estaba del todo.
+
+-- ---------------------------------------------------------------------
+-- 2. SEGUNDO ERROR, EN EL PROPIO TRIGGER
+-- ---------------------------------------------------------------------
+-- Aun reservando esos 24, el trigger de ISS246/248 NO los habria protegido.
+-- Su comprobacion era:
+--     if (v_d.user_id is not null and new.user_id is not null and v_d.user_id <> new.user_id)
+--        or (v_d.usuarios_id is not null and v_d.usuarios_id <> new.id) then raise
+-- Para un apodo historico sin dueno conocido, user_id y usuarios_id son NULL,
+-- asi que NINGUNA rama disparaba y la reserva no bloqueaba nada.
+-- Logica invertida: ahora pasa solo quien ES el dueno registrado; cualquier
+-- otro cae, con dueno probado o sin el.
+
+-- ---------------------------------------------------------------------
+-- 3. LO APLICADO
+-- ---------------------------------------------------------------------
+-- 3.1 apodo_historial gana columnas: dueno_probado, clase, filas_ligadas,
+--     tablas_ligadas. Nada se borra.
+--
+-- 3.2 Los 6 vivos: dueno_probado = (user_id is not null). 'rongo' queda en
+--     USUARIO_VIVO_SIN_AUTH con dueno_probado=false porque no tiene auth uid;
+--     se conserva su usuarios_id, que es lo unico acreditable.
+--
+-- 3.3 Los 24 restantes entran en CUARENTENA sin inferir propietario.
+--     Respeta la instruccion: "No reasignes automaticamente filas ambiguas
+--     ni infieras propietario solo por el apodo actual." Reservar NO es
+--     atribuir: bloquea la reutilizacion y deja la propiedad sin decidir.
+--
+-- 3.4 Clasificacion resultante:
+--     HUMANO_HISTORICO_SIN_DUENO_PROBADO   19 apodos   74986 filas
+--     USUARIO_VIVO_CON_AUTH                 5 apodos  158591 filas
+--     USUARIO_VIVO_SIN_AUTH                 1 apodo    75208 filas
+--     ARTEFACTO_DE_PRUEBA                   3 apodos      23 filas
+--     ETIQUETA_DE_SISTEMA                   2 apodos    3947 filas
+--     (oraculo, pre_analizar_fut_diario: no son personas. Reservarlos impide
+--      que un usuario se haga pasar por el sistema.)
+--
+-- 3.5 Trigger v3 con la logica invertida y dos mensajes distintos:
+--     APODO_RESERVADO               -> hay dueno acreditado y no eres tu
+--     APODO_HISTORICO_EN_CUARENTENA -> no hay dueno acreditado, nadie lo toma
+
+-- ---------------------------------------------------------------------
+-- 4. PRUEBAS (medidas, en transaccion revertida)
+-- ---------------------------------------------------------------------
+-- W1 registrar_perfil('joe')      -> {"ok":false,"error":"apodo_reservado"}
+-- W2 registrar_perfil('ios')      -> {"ok":false,"error":"apodo_reservado"}
+-- W3 registrar_perfil('guille')   -> {"ok":false,"error":"apodo_reservado"}
+-- W4 registrar_perfil('jpm')      -> {"ok":false,"error":"apodo_reservado"}
+-- W5 registrar_perfil('oraculo')  -> {"ok":false,"error":"apodo_reservado"}
+-- W6 registrar_perfil('jugador nuevo iss249') -> {"ok":true}   producto vivo
+-- W7 A reescribe su propio apodo con el mismo valor -> PERMITIDO
+-- W8 service_role intenta asignar 'joe' a otra fila -> BLOQUEADO
+--    (APODO_HISTORICO_EN_CUARENTENA). Ni el rol de servicio puede atribuir
+--    un apodo en cuarentena; primero hay que acreditar la propiedad en
+--    apodo_historial. Esa es la via de reclamo, y encaja con la tabla
+--    apodo_claim_codes y la rama 'apodo_legacy_requiere_codigo' que ya
+--    existian en registrar_perfil.
+
+-- ---------------------------------------------------------------------
+-- 5. LO QUE SIGUE ABIERTO
+-- ---------------------------------------------------------------------
+-- - La propiedad NO esta migrada. 52 de 55 tablas siguen sin user_id.
+-- - No he probado las 36 tablas escribibles una por una. Pendiente.
+-- - pa_audit_log: 302168 filas, legible por anon y ESCRIBIBLE por
+--   authenticated. Un cliente puede forjar entradas de auditoria. Sin tocar,
+--   declarado.
+-- - respaldo_borrado_usuarios (551 filas de usuarios BORRADOS) y
+--   usuarios_archivados (19) son legibles por anon. Fuga declarada, sin tocar.
+-- - Concurrencia con dos sesiones: NO PROBADA.
+-- - Edge Functions: NO PROBADAS. Frontend: PENDING.
+
+-- ---------------------------------------------------------------------
+-- 6. ROLLBACK
+-- ---------------------------------------------------------------------
+-- update public.apodo_historial set dueno_probado = true
+--  where clase = 'HUMANO_HISTORICO_SIN_DUENO_PROBADO';   -- deja de bloquear
+-- delete from public.apodo_historial
+--  where motivo like 'alta ISS249%';                     -- si se quiere volver a 6
+-- -- y restaurar tg_apodo_reservado() a la version de ISS248 (commit 1741831).
+-- -- Las columnas nuevas se pueden dejar: son metadatos, no estado.
