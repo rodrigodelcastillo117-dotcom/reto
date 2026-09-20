@@ -86,16 +86,71 @@ Contraste importante con MLB: alli los 21 pp salian de un tramo de **7** partido
 sin soporte, y eran ruido. Aqui el tramo tiene 24 partidos y **si** tiene soporte,
 aunque este justo en el minimo. Este defecto es real.
 
-## Siguiente paso concreto (NO hecho todavia)
+## El calibrador: PROBADO Y RECHAZADO (2026-09-20)
 
-Ajustar un mapa de calibracion monotono (isotonica o Platt) **solo sobre el
-tramo de entrenamiento**, validarlo en el holdout de 516, y registrarlo como
-`calibration_version` unicamente si baja el gap por debajo de 7.5 pp **sin**
-empeorar el Brier. Si no lo logra, no se registra y se dice.
+> **CORRECCION A ESTE MISMO DOCUMENTO.** Arriba escribi: *"Aqui hay un sesgo
+> medido, localizado y con soporte. Es justo el caso donde calibrar es legitimo."*
+> **Estaba equivocado, y la prueba lo demuestra.** Lo dejo escrito en vez de
+> borrarlo.
 
-Esto NO es el caso de MLB/futbol, donde la calibracion se probo y se rechazo:
-alli el modelo ya estaba insesgado o el calibrador empeoraba. Aqui hay un sesgo
-medido, localizado y con soporte. Es justo el caso donde calibrar es legitimo.
+### Metodo
+
+Solo estan guardadas las 516 predicciones de holdout, no las 1,121 de
+entrenamiento. Para no reimplementar el Elo, se partio el holdout en el tiempo:
+
+- **ajuste**: 424 partidos, 2024-11-17 a 2025-12-30
+- **validacion**: 92 partidos, 2026-01-03 a 2026-09-15 (el calibrador nunca los ve)
+
+Calibrador probado: compresion monotona de un parametro
+`p' = 0.5 + lambda*(p - 0.5)`, lambda ∈ [0.50, 1.00].
+**Regla prerregistrada: lambda se elige en la ventana de AJUSTE.**
+
+### Resultado
+
+| lambda | Brier ajuste (424) | Brier validacion (92) |
+|---|---|---|
+| **1.00 (sin calibrar)** | **0.22500** ← mejor | 0.25831 |
+| 0.75 | 0.22658 | 0.25111 |
+| 0.50 | 0.23128 | 0.24732 |
+
+**La ventana de ajuste elige lambda = 1.00: no calibrar.** Toda compresion
+empeora el Brier ahi.
+
+En validacion la compresion si mejora — pero **eso no es calibracion, es tapar**:
+en esa ventana el modelo va peor que adivinar (0.25831 > 0.25), y encoger hacia
+0.5 mejora mecanicamente cuando el modelo es malo. Elegir lambda por la ventana
+de validacion seria seleccionar sobre el conjunto de validacion, el mismo error
+que ya me corregi al elegir k.
+
+### Por que el gap de 24.2 pp tampoco es un sesgo real
+
+El sesgo por tramo **cambia de signo entre periodos**:
+
+| tramo | sesgo en ajuste | sesgo en validacion |
+|---|---|---|
+| 5 | **−11.2 pp** | **+9.9 pp** |
+| 7 | **+8.1 pp** | **−12.9 pp** |
+| 8 | +3.4 pp | **−17.9 pp** |
+
+Un defecto de calibracion real tiene direccion **estable**. Este se invierte en
+el mismo tramo de un periodo a otro. Es ruido de tramos delgados.
+
+**Mismo veredicto que en MLB, por un camino distinto:** el numero grande de
+"mala calibracion" no sobrevive a que lo partas en dos.
+
+### Accion correcta
+
+**Ninguna.** No se registra `calibration_version`. `prediction_authorized` se
+queda en false, el dinero apagado, y el modelo acumula partidos. El gate esta
+haciendo exactamente lo que debe.
+
+## Aviso que hay que vigilar
+
+En los 92 partidos mas recientes (2026) el Brier es **0.25831, peor que 0.25 de
+adivinar**. El 0.23094 global lo carga el periodo viejo. Con 92 partidos puede
+ser ruido, pero es justo el numero que hay que mirar la semana que viene: si la
+ventana reciente sigue por encima de 0.25, la habilidad demostrada sobre 516 deja
+de ser la historia completa.
 
 ## Pendiente de gobierno
 
