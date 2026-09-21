@@ -1,0 +1,39 @@
+# Ramas de Supabase autorizadas EXPLICITAMENTE para borrar.
+#
+# Por que existe este archivo:
+#   mcp__Supabase__delete_branch no acepta project_id: identifica su objetivo por
+#   branch_id. La guarda exigia project_id a todo lo que "apunta a un proyecto",
+#   asi que delete_branch caia en denegacion con una condicion IMPOSIBLE de
+#   satisfacer (el esquema de la herramienta rechaza project_id con
+#   unrecognized_keys). Era un bloqueo muerto, no una proteccion.
+#
+# La correccion NO es eximir delete_branch. Es esta lista: la guarda permite
+# borrar UNICAMENTE las ramas anotadas aqui, y deniega cualquier otra. Sigue
+# fallando cerrado; solo cambia la llave, de project_id a un branch_id escrito
+# a mano y verificado.
+#
+# CONTEXTO (2026-09-21, factura VKFIVA-00010 por $61.43):
+#   $32.91 —el 54% de la factura— eran estas 10 ramas creadas el 9-13 de
+#   septiembre para las tareas #4 y #7 ("rama desechable") y NUNCA borradas.
+#   Llevaban ~250 horas encendidas cada una a $0.01344/hora = $3.23/dia.
+#   Las 10 estan en MIGRATIONS_FAILED y nacieron con with_data=false: nunca
+#   terminaron de migrar y jamas tuvieron datos.
+#
+# VERIFICADO antes de anotarlas: list_branches confirma que las 10 tienen
+#   parent_project_ref = wpiztubmmmzclhlprgpd.
+# NO aparece aqui fd14044f-d80d-4ac2-893c-ec0b149f382e ('main', produccion),
+#   y no debe aparecer nunca.
+#
+# Una vez borradas, estos identificadores dejan de existir y la lista queda
+# inerte sola. No hace falta limpiarla para que vuelva a ser segura.
+
+eae83874-e0fe-4176-9863-fa03c45fe3b1   # soccer-validation            266h  $3.58
+9e22e689-ecc3-43ee-851d-634f75d92fce   # soccer-final-gate            255h  $3.43
+6cdc2d00-d7cd-49dd-9e51-5b08a7b089fd   # soccer-gate-v2               254h  $3.41
+7935ece1-1b9d-4eea-a3a9-fe4e27ccd854   # soccer-gate-v2-repro         253h  $3.40
+7b8501ba-92ff-4ae2-9c54-e84dd48ed9c6   # soccer-coherence-gate        251h  $3.37
+a32fadd3-5252-4a0b-9ceb-cc55f9fda698   # nfl-dossier-parity           249h  $3.35
+ac59c994-9f78-4b17-9893-5ee9e898df01   # iss050-mlb-dossier           248h  $3.33
+37c46914-ae60-4941-9f5a-0dfc11ce7f05   # soccer-final-branch-gate     248h  $3.33
+0897a5a8-2fb5-4cc0-a7cd-402a1260d65c   # mlb-decision-contract        241h  $3.24
+af15e9c3-7a5d-4c5d-a926-597d882e9926   # reto13m-final-independent    177h  $2.38

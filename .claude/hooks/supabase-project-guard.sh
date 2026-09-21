@@ -22,6 +22,7 @@ set -uo pipefail
 
 PROYECTO_AUTORIZADO="wpiztubmmmzclhlprgpd"
 LOG="${CLAUDE_PROJECT_DIR:-/home/user/reto}/.claude/hooks/guard-invocaciones.log"
+LISTA_RAMAS="${CLAUDE_PROJECT_DIR:-/home/user/reto}/.claude/hooks/ramas-autorizadas-para-borrar.txt"
 
 # Unicas herramientas de Supabase que NO apuntan a un proyecto concreto y por
 # tanto pueden correr sin project_id. Cualquier cosa fuera de esta lista que
@@ -82,6 +83,36 @@ permitir() {  # $1=motivo para la bitacora del modelo
 payload="$(cat)"
 tool="$(printf '%s' "$payload" | jq -r '.tool_name // "?"' 2>/dev/null || echo '?')"
 pid="$(printf '%s' "$payload" | jq -r '.tool_input.project_id // empty' 2>/dev/null || true)"
+
+# --- delete_branch: apunta a una RAMA, no a un proyecto ----------------------
+# ISS280. delete_branch identifica su objetivo por branch_id y su esquema RECHAZA
+# project_id (unrecognized_keys). Con la regla anterior caia en "falta
+# project_id" con una condicion imposible de cumplir: un bloqueo muerto, no una
+# proteccion. Sigue fallando cerrado, pero la llave ahora es un branch_id
+# anotado a mano en ramas-autorizadas-para-borrar.txt. Una rama que no este en
+# esa lista NO se borra, aunque pertenezca al proyecto autorizado.
+case "$tool" in
+  *delete_branch)
+    bid="$(printf '%s' "$payload" | jq -r '.tool_input.branch_id // empty' 2>/dev/null || true)"
+    if ! printf '%s' "$bid" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'; then
+      registrar "$tool" "rama:${bid:-<ninguna>}" "DENEGADA_branch_id_mal_formado"
+      denegar "branch_id ausente o mal formado: '${bid:-<ninguno>}'. delete_branch exige un UUID." \
+              "Borrado de rama BLOQUEADO: branch_id mal formado."
+    fi
+    # OJO: aqui NO se puede usar `tr -d '[:space:]'`. tr borra tambien los
+    # saltos de linea y colapsa el archivo entero en un solo renglon, con lo que
+    # `grep -Fxq` no casa nunca y TODA rama queda denegada. Probado: fallaba asi.
+    # sed trabaja linea por linea y conserva los saltos.
+    if [ -r "$LISTA_RAMAS" ] \
+       && sed 's/#.*//; s/[[:space:]]//g' "$LISTA_RAMAS" | grep -Fxq "$bid"; then
+      registrar "$tool" "rama:$bid" "PERMITIDA_rama_en_lista_explicita"
+      permitir "Rama $bid anotada en ramas-autorizadas-para-borrar.txt y verificada con parent_project_ref=$PROYECTO_AUTORIZADO."
+    fi
+    registrar "$tool" "rama:$bid" "DENEGADA_rama_no_autorizada"
+    denegar "La rama $bid no esta en ramas-autorizadas-para-borrar.txt. La guarda de Reto 13M solo borra ramas anotadas explicitamente." \
+            "Borrado de rama BLOQUEADO: $bid no esta en la lista autorizada."
+    ;;
+esac
 
 # --- Herramientas que no apuntan a un proyecto -------------------------------
 if es_sin_proyecto "$tool"; then
