@@ -15,7 +15,8 @@ tres horas.
 |---|---|---|
 | `gate_censo_global` (3 renglones) | **FAIL** — censo del 21 de sep | **PASS** — `v2.refrescar_censo_global()` → 6 deportes, 20:03 |
 | `gate_superficie_cruda` (5 renglones) | **FAIL ×2** | **PASS ×5** — superficies shadow cerradas |
-| `reto-global-candidate-snapshot-v1` | 12 corridas seguidas fallidas | **succeeded en 49s** (ISS293) |
+| `gate_escritores_declarados` (4 renglones) | **FAIL (1)** — G45.6 | **PASS ×4** — escritor declarado |
+| `reto-global-candidate-snapshot-v1` | 12 corridas seguidas fallidas | **49s, 49s** — dos corridas seguidas (ISS293) |
 
 ### Las superficies shadow que estaban abiertas
 
@@ -32,6 +33,41 @@ como está revocada toda superficie de validación de esta sesión.
 por política de la organización). Si alguna pantalla leyera una vista shadow se
 quedaría vacía. Lo creo improbable — no está entre las 15 vistas de producto del
 inventario de ISS292 — pero **no lo declaro probado**. Rollback: un `grant`.
+
+### El escritor que faltaba declarar, leído antes de firmarlo
+
+```
+G45.6_ningun_trigger_nuevo_sin_declarar  FAIL(1)
+  analisis_partidos.zzz_enforce_active_soccer_1x2
+```
+
+`v2.escritor_autorizado` se sembró congelando el estado del 18 de septiembre
+(ISS200), así que este trigger es **posterior**. El registro funcionó: detectó un
+escritor nuevo sobre una tabla protegida.
+
+**No lo declaré a ciegas.** Su cuerpo tiene **14 menciones de precio**, lo que
+obligaba a mirarlas una por una antes de firmar nada. Y resultó lo contrario de
+lo que temía:
+
+```
+linea  62-64  las claves que CONTROLA: home_odds, draw_odds, away_odds,
+              _odds_provider
+linea  81-82  pone _no_odds_available = true, con el motivo
+              'P_RETO es probabilidad del modelo. Momios, EV, Kelly y stake
+               no participan en la seleccion.'
+linea 135     _odds_source, edge_total, confianza entre las que QUITA
+linea 149     estampa 'Un solo cerebro: P_RETO decide el 1X2; precio y
+              mercado no eligen.'
+```
+
+**Este trigger no usa el precio para decidir: es el que lo borra de la tarjeta y
+deja escrita la prohibición.** Corre al final a propósito — el prefijo `zzz_` es
+cómo se fuerza el orden alfabético de triggers en Postgres. Consistente con que
+`gate_precio_no_decide` reporta `PRECIO_DECIDE_VIOLACION_ABIERTA = PASS(0)`:
+nunca apareció ahí.
+
+Declararlo no silencia nada: es la acción que el guardia pide, con el motivo
+medido. **G45.6 → PASS.**
 
 ## 2. El FAIL que es una decisión tuya, no un defecto
 
@@ -98,13 +134,12 @@ correcto.)*
 | `gate_cron_sano` | **FAIL ×3** | `motor-cache-horizonte-largo` 100% muerto (240s contra techo 120s); 11 corridas perdidas en 24h por saturación de workers; 15 canceladas por timeout |
 | `gate_cron_al_borde_de_su_techo` (G50.12) | **FAIL (6)** | seis crons al filo. `espejo-apifootball-live`: 102s de 120s, **cada 2 minutos** |
 | `gate_captura_prospectiva` | **FAIL (4)** | cobertura de fútbol bajo 99% en 4 días-deporte. Motivos **declarados**: `SAMPLE_BELOW_MINIMUM`, `POLICY_NOT_APPROVED`, `PHI_NOT_SERVABLE`. `A_CAPTURA_PREEVENTO` = PASS(0): **no se perdió muestra** |
-| `gate_escritores_declarados` | **FAIL (1)** | `analisis_partidos.zzz_enforce_active_soccer_1x2`, escritor sin declarar |
 | `gate_probabilidad_sin_autoridad` | **FAIL ×2** | contrato dice `n_oos=` vacío y la tabla `n_oos=0 FORWARD_SAMPLE_INSUFFICIENT`; falta `brain_in_use` |
 | `gate_un_solo_cerebro` | **FAIL (41)** | 41 filas de `fut_predicciones` en el hueco retiro (01:00:33) → barrera (02:46:23) del 18 de sep |
 | `gate_fantasy_ve_la_temporada_en_curso` | **FAIL** | 2 de 14 jugadores con historial incompleto (Kyren Williams declara 21 juegos) |
 | `gate_usuario_sin_enlace_de_sesion` (G50.10) | **FAIL (1)** | `rongo`, 6 picks, todas sus pantallas vacías (ISS292) |
 
-**No toqué ninguno de estos ocho.** Cada uno necesita o una decisión tuya, o una
+**No toqué ninguno de estos siete.** Cada uno necesita o una decisión tuya, o una
 captura de evidencia propia, y un arreglo por evidencia a la vez.
 
 ## 5. Nota de método: tres formas de guardia, y una que el panel no puede leer
