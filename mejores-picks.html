@@ -1,0 +1,298 @@
+<title>RETO 13M · Mejores Picks</title>
+<style>
+  /* Layout: terminal de análisis deportivo — cabecera fija, rejilla de tarjetas de pick con estudio, parlays y metodología. */
+  :root{
+    --bg:#eef1f5; --surface:#ffffff; --surface2:#e9edf2; --fg:#101720; --muted:#5a6775; --line:#d8dee6;
+    --accent:#0c7a4e; --accent-ink:#0c7a4e; --elite:#0c7a4e; --alta:#2f9e6a; --media:#b5760f;
+    --bar-home:#0c7a4e; --bar-draw:#8b97a4; --bar-away:#b5760f; --warn:#b5760f;
+    --shadow:0 1px 2px rgba(16,23,32,.06),0 8px 24px rgba(16,23,32,.06);
+    --dsp:"Archivo",system-ui,sans-serif; --body:"IBM Plex Sans",system-ui,sans-serif; --mono:"IBM Plex Mono",ui-monospace,monospace;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --bg:#0a0e13; --surface:#121a23; --surface2:#1a232e; --fg:#eef3f8; --muted:#8c99a7; --line:#232e3a;
+    --accent:#37d191; --accent-ink:#37d191; --elite:#37d191; --alta:#45c489; --media:#e0a93b;
+    --bar-home:#37d191; --bar-draw:#5c6b7a; --bar-away:#e0a93b; --warn:#e0a93b;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.35); color-scheme:dark;
+  }}
+  :root[data-theme="dark"]{
+    --bg:#0a0e13; --surface:#121a23; --surface2:#1a232e; --fg:#eef3f8; --muted:#8c99a7; --line:#232e3a;
+    --accent:#37d191; --accent-ink:#37d191; --elite:#37d191; --alta:#45c489; --media:#e0a93b;
+    --bar-home:#37d191; --bar-draw:#5c6b7a; --bar-away:#e0a93b; --warn:#e0a93b;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 10px 30px rgba(0,0,0,.35); color-scheme:dark;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--fg);font-family:var(--body);line-height:1.5;-webkit-font-smoothing:antialiased}
+  .wrap{max-width:1080px;margin:0 auto;padding-block:0 64px;padding-left:16px;padding-right:16px}
+  h1,h2,h3{font-family:var(--dsp);text-wrap:balance;margin:0}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+
+  header.top{position:sticky;top:env(safe-area-inset-top,0px);z-index:20;background:color-mix(in srgb,var(--bg) 86%,transparent);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+  .topin{max-width:1080px;margin:0 auto;padding:12px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .brand{font-family:var(--dsp);font-weight:800;letter-spacing:.14em;font-size:15px;text-transform:uppercase}
+  .brand b{color:var(--accent)}
+  .brand span{color:var(--muted);font-weight:600}
+  .spacer{flex:1}
+  .legend{display:flex;gap:10px;align-items:center;font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:2px;vertical-align:-1px;margin-right:4px}
+  .tbtn{font-family:var(--mono);font-size:12px;background:var(--surface2);color:var(--fg);border:1px solid var(--line);border-radius:8px;padding:6px 10px;cursor:pointer}
+
+  .hero{padding:34px 0 10px}
+  .kicker{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+  .hero h1{font-size:clamp(30px,6vw,52px);font-weight:800;line-height:1.02;margin:10px 0 8px;letter-spacing:-.01em}
+  .hero p{color:var(--muted);max-width:60ch;margin:0}
+  .stats{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin:22px 0 6px}
+  .stat{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 14px;box-shadow:var(--shadow)}
+  .stat .n{font-family:var(--dsp);font-weight:800;font-size:clamp(20px,4.5vw,28px);font-variant-numeric:tabular-nums}
+  .stat .l{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:2px}
+  @media(max-width:620px){.stats{grid-template-columns:repeat(2,1fr)}}
+
+  .sechead{display:flex;align-items:baseline;gap:12px;margin:36px 0 14px;border-bottom:1px solid var(--line);padding-bottom:8px}
+  .sechead h2{font-size:22px;font-weight:700;letter-spacing:-.01em}
+  .sechead .sub{font-size:12px;color:var(--muted);font-family:var(--mono)}
+
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+  @media(max-width:760px){.grid{grid-template-columns:1fr}}
+
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:12px;min-width:0}
+  .crow{display:flex;align-items:center;gap:10px}
+  .rank{font-family:var(--dsp);font-weight:800;font-size:13px;color:var(--muted);width:26px;flex:none}
+  .comp{font-family:var(--mono);font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 8px;white-space:nowrap}
+  .sport{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.1em;padding:3px 7px;border-radius:6px;color:#fff;background:var(--accent)}
+  .sport.nfl{background:var(--media)}
+  .when{margin-left:auto;font-family:var(--mono);font-size:11px;color:var(--muted);text-align:right}
+
+  .match{display:flex;align-items:center;gap:10px}
+  .team{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
+  .team.away{flex-direction:row-reverse;text-align:right}
+  .badge{width:36px;height:36px;border-radius:50%;flex:none;display:grid;place-items:center;font-family:var(--dsp);font-weight:800;font-size:12px;letter-spacing:.02em;color:var(--fg);background:var(--surface2);border:1px solid var(--line)}
+  .team .nm{font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .vs{font-family:var(--mono);font-size:11px;color:var(--muted);flex:none}
+  .winner .badge{border-color:var(--accent);box-shadow:0 0 0 2px color-mix(in srgb,var(--accent) 35%,transparent)}
+  .winner .nm{color:var(--fg)}
+
+  .pickbar{display:flex;align-items:center;gap:12px}
+  .pickmeta{flex:1;min-width:0}
+  .pick-lab{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+  .pick-nm{font-family:var(--dsp);font-weight:800;font-size:16px;line-height:1.1;margin-top:1px}
+  .prob{font-family:var(--dsp);font-weight:800;font-size:30px;line-height:1;font-variant-numeric:tabular-nums}
+  .tier{font-family:var(--mono);font-size:9.5px;font-weight:600;letter-spacing:.1em;text-transform:uppercase;padding:2px 6px;border-radius:5px;margin-top:4px;display:inline-block}
+  .tier.elite{background:color-mix(in srgb,var(--elite) 16%,transparent);color:var(--elite)}
+  .tier.alta{background:color-mix(in srgb,var(--alta) 16%,transparent);color:var(--alta)}
+  .tier.media{background:color-mix(in srgb,var(--media) 18%,transparent);color:var(--media)}
+
+  .meter{height:8px;border-radius:999px;background:var(--surface2);overflow:hidden;display:flex}
+  .meter i{display:block;height:100%}
+  .mlabels{display:flex;justify-content:space-between;font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:4px}
+
+  .study{border-top:1px dashed var(--line);padding-top:11px;display:flex;flex-direction:column;gap:9px}
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+  .kpi{background:var(--surface2);border-radius:9px;padding:7px 8px;text-align:center}
+  .kpi .v{font-family:var(--mono);font-weight:600;font-size:14px;font-variant-numeric:tabular-nums}
+  .kpi .k{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-top:1px}
+  .note{font-size:12px;color:var(--muted)}
+  .note b{color:var(--fg);font-weight:600}
+  .chips{display:flex;flex-wrap:wrap;gap:6px}
+  .chip{font-family:var(--mono);font-size:10px;padding:3px 7px;border-radius:6px;background:var(--surface2);color:var(--muted);border:1px solid var(--line)}
+  .chip.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 40%,var(--line))}
+
+  .parlays{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:760px){.parlays{grid-template-columns:1fr}}
+  .parlay{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:10px}
+  .parlay h3{font-size:15px;font-weight:700}
+  .parlay .big{font-family:var(--dsp);font-weight:800;font-size:34px;line-height:1;font-variant-numeric:tabular-nums}
+  .parlay .legs{display:flex;flex-direction:column;gap:7px;margin-top:2px}
+  .leg{display:flex;align-items:center;gap:8px;font-size:13px}
+  .leg .lp{font-family:var(--mono);font-size:11px;color:var(--muted);margin-left:auto;flex:none}
+  .leg .d{width:6px;height:6px;border-radius:50%;background:var(--accent);flex:none}
+
+  .method{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px;box-shadow:var(--shadow);display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+  @media(max-width:620px){.method{grid-template-columns:1fr}}
+  .method h3{font-size:14px;font-weight:700;margin-bottom:4px;display:flex;align-items:center;gap:8px}
+  .method .num{font-family:var(--mono);font-size:11px;color:var(--accent);border:1px solid var(--line);border-radius:6px;padding:1px 6px}
+  .method p{font-size:13px;color:var(--muted);margin:0}
+  .disc{margin-top:28px;font-size:12px;color:var(--muted);border:1px solid var(--line);border-left:3px solid var(--warn);border-radius:10px;padding:14px 16px;background:var(--surface)}
+  .disc b{color:var(--fg)}
+  footer{margin-top:26px;font-family:var(--mono);font-size:11px;color:var(--muted);text-align:center}
+</style>
+
+<header class="top">
+  <div class="topin">
+    <div class="brand"><b>RETO&nbsp;13M</b> <span>· Mejores Picks</span></div>
+    <div class="spacer"></div>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--elite)"></i>Élite</span>
+      <span><i class="dot" style="background:var(--alta)"></i>Alta</span>
+      <span><i class="dot" style="background:var(--media)"></i>Media</span>
+    </div>
+    <button class="tbtn" id="theme" type="button">tema</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <section class="hero">
+    <div class="kicker">Probabilidad del modelo · modelos validados OOS</div>
+    <h1>Los picks con mayor probabilidad de acierto</h1>
+    <p>Selección por probabilidad de los modelos de RETO 13M, con el estudio detrás de cada pick: marcador probable, forma real, goles esperados y la validación que lo respalda. Sin momios ni EV — pura probabilidad.</p>
+    <div class="stats" id="stats"></div>
+  </section>
+
+  <div class="sechead"><h2>Fútbol</h2><span class="sub" id="sub-soccer"></span></div>
+  <div class="grid" id="grid-soccer"></div>
+
+  <div class="sechead"><h2>NFL</h2><span class="sub" id="sub-nfl"></span></div>
+  <div class="grid" id="grid-nfl"></div>
+
+  <div class="sechead"><h2>Parlays sugeridos</h2><span class="sub">probabilidad conjunta = producto de piernas independientes</span></div>
+  <div class="parlays" id="parlays"></div>
+
+  <div class="sechead"><h2>Por qué confiar</h2><span class="sub">la metodología, en corto</span></div>
+  <div class="method">
+    <div><h3><span class="num">01</span>Validación fuera de muestra</h3><p>Cada deporte se mide contra resultados reales que el modelo no vio al entrenar. Fútbol: OOS validado. NFL: Brier 0.230 vs 0.25 de referencia sobre 143 eventos — le gana al azar con significancia.</p></div>
+    <div><h3><span class="num">02</span>Dixon-Coles + fuerza entre ligas</h3><p>El fútbol usa un modelo de goles Dixon-Coles con forma local real y un ajuste de fuerza entre ligas (phi) sellado a una fecha anterior al partido, para comparar equipos de torneos distintos sin hacer trampa temporal.</p></div>
+    <div><h3><span class="num">03</span>Seguridad temporal</h3><p>Ningún pick usa información posterior al momento de decisión. Las features y la fuerza de liga se sellan "as-of" el kickoff; si un dato no estaba disponible antes, no entra.</p></div>
+    <div><h3><span class="num">04</span>Honestidad sobre la muestra</h3><p>Los picks de inicio de temporada con pocos partidos se marcan como <b>muestra corta</b> y se suavizan hacia la media de liga. No inflamos confianza que los datos no respaldan.</p></div>
+  </div>
+
+  <div class="disc" id="disc"></div>
+  <footer id="foot"></footer>
+</div>
+
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<script>
+const soccer=[
+ {c:"Champions League",h:"Sporting CP",a:"LASK Linz",hc:"SPO",ac:"LAS",ko:"2026-10-21T19:00:00Z",pick:"Sporting CP",side:"h",p:79.8,ph:79.8,pd:12.1,pa:8.1,sc:"2-0",scp:10.6,btts:51.5,ou:null,xg:3.65,lh:2.85,la:0.80,nh:46,na:46,reason:"Cross-league OOS validado + forma doméstica + phi sellado as-of."},
+ {c:"Europa League",h:"Bournemouth",a:"Sturm Graz",hc:"BOU",ac:"STU",ko:"2026-10-15T19:00:00Z",pick:"Bournemouth",side:"h",p:79.7,ph:79.7,pd:12.8,pa:7.5,sc:"2-0",scp:12.9,btts:44.3,ou:3.5,xg:3.28,lh:2.62,la:0.66,nh:49,na:27,reason:"Cross-league OOS validado + forma doméstica + phi sellado as-of."},
+ {c:"Premier League",h:"Manchester City",a:"Ipswich Town",hc:"MCI",ac:"IPS",ko:"2026-10-17T14:00:00Z",pick:"Manchester City",side:"h",p:76.3,ph:76.3,pd:13.7,pa:10.0,sc:"2-0",scp:10.7,btts:52.4,ou:3.5,xg:3.49,lh:2.65,la:0.84,nh:6,na:6,reason:"Canónico V2, inicio de temporada con shrinkage n/(n+8)."},
+ {c:"Saudi Pro League",h:"Al Hilal",a:"Al Hazem",hc:"HIL",ac:"HAZ",ko:"2026-10-19T18:00:00Z",pick:"Al Hilal",side:"h",p:75.0,ph:75.0,pd:14.6,pa:10.4,sc:"2-0",scp:11.5,btts:50.2,ou:null,xg:3.31,lh:2.51,la:0.80,nh:47,na:42,reason:"Same-league OOS validado + forma doméstica canónica."},
+ {c:"Champions League",h:"Internazionale",a:"Shakhtar Donetsk",hc:"INT",ac:"SHK",ko:"2026-10-21T19:00:00Z",pick:"Internazionale",side:"h",p:73.3,ph:73.3,pd:15.1,pa:11.6,sc:"2-0",scp:10.8,btts:52.8,ou:null,xg:3.36,lh:2.49,la:0.87,nh:49,na:40,reason:"Cross-league OOS validado + forma doméstica + phi sellado as-of."},
+ {c:"Europa League",h:"Stade Rennais",a:"OFI Creta",hc:"REN",ac:"OFI",ko:"2026-10-15T19:00:00Z",pick:"Stade Rennais",side:"h",p:72.8,ph:72.8,pd:15.4,pa:11.8,sc:"2-0",scp:10.9,btts:52.5,ou:3.5,xg:3.32,lh:2.46,la:0.87,nh:44,na:41,reason:"Cross-league OOS validado + forma doméstica + phi sellado as-of."},
+ {c:"Saudi Pro League",h:"Al Qadsiah",a:"Abha",hc:"QAD",ac:"ABH",ko:"2026-10-16T13:15:00Z",pick:"Al Qadsiah",side:"h",p:72.7,ph:72.7,pd:15.8,pa:11.4,sc:"2-0",scp:11.9,btts:48.9,ou:3.5,xg:3.14,lh:2.35,la:0.79,nh:48,na:7,reason:"Low-sample jerárquico OOS validado + forma de liga, shrinkage k=4."},
+ {c:"Conference League",h:"SC Freiburg",a:"Jablonec",hc:"SCF",ac:"JAB",ko:"2026-10-15T19:00:00Z",pick:"SC Freiburg",side:"h",p:72.7,ph:72.7,pd:15.7,pa:11.7,sc:"2-0",scp:11.4,btts:50.6,ou:3.5,xg:3.22,lh:2.39,la:0.83,nh:43,na:22,reason:"Cross-league con forma real; fuerza de liga del rival estimada, no medida."},
+ {c:"Serie A",h:"AS Roma",a:"Genoa",hc:"ROM",ac:"GEN",ko:"2026-10-17T18:45:00Z",pick:"AS Roma",side:"h",p:72.5,ph:72.5,pd:17.1,pa:10.4,sc:"2-0",scp:14.3,btts:40.8,ou:2.5,xg:2.76,lh:2.12,la:0.64,nh:6,na:6,reason:"Canónico V2, inicio de temporada con shrinkage n/(n+8)."},
+ {c:"Bundesliga",h:"Bayern Munich",a:"RB Leipzig",hc:"BAY",ac:"RBL",ko:"2026-10-17T16:30:00Z",pick:"Bayern Munich",side:"h",p:71.9,ph:71.9,pd:14.2,pa:13.9,sc:"2-1",scp:8.3,btts:66.9,ou:null,xg:4.15,lh:2.91,la:1.24,nh:5,na:5,reason:"Canónico V2, inicio de temporada con shrinkage n/(n+8)."}
+];
+const nfl=[
+ {h:"Kansas City Chiefs",a:"LA Chargers",hc:"KC",ac:"LAC",ko:"2026-10-18T20:25:00Z",pick:"Kansas City Chiefs",side:"h",p:80.1,ph:80.1,pa:19.9,mg:11.1,dk:-8.5,tot:42.5},
+ {h:"San Francisco 49ers",a:"Washington",hc:"SF",ac:"WAS",ko:"2026-10-20T00:15:00Z",pick:"San Francisco 49ers",side:"h",p:79.8,ph:79.8,pa:20.2,mg:11.0,dk:-7.5,tot:50.5},
+ {h:"New York Jets",a:"Miami Dolphins",hc:"NYJ",ac:"MIA",ko:"2026-10-25T17:00:00Z",pick:"New York Jets",side:"h",p:71.6,ph:71.6,pa:28.4,mg:7.4,dk:-2.5,tot:41.5},
+ {h:"Minnesota Vikings",a:"Indianapolis Colts",hc:"MIN",ac:"IND",ko:"2026-10-25T17:00:00Z",pick:"Minnesota Vikings",side:"h",p:71.6,ph:71.6,pa:28.4,mg:7.4,dk:-2.5,tot:46.5},
+ {h:"Jacksonville Jaguars",a:"Houston Texans",hc:"JAX",ac:"HOU",ko:"2026-10-18T13:30:00Z",pick:"Jacksonville Jaguars",side:"h",p:70.6,ph:70.6,pa:29.4,mg:7.0,dk:-3,tot:42.5},
+ {h:"LA Rams",a:"Arizona Cardinals",hc:"LAR",ac:"ARI",ko:"2026-10-18T20:05:00Z",pick:"LA Rams",side:"h",p:70.1,ph:70.1,pa:29.9,mg:6.8,dk:-13.5,tot:52.5},
+ {h:"Indianapolis Colts",a:"Tennessee Titans",hc:"IND",ac:"TEN",ko:"2026-10-18T17:00:00Z",pick:"Indianapolis Colts",side:"h",p:65.7,ph:65.7,pa:34.3,mg:5.2,dk:-7,tot:44.5},
+ {h:"New York Giants",a:"New Orleans Saints",hc:"NYG",ac:"NO",ko:"2026-10-18T17:00:00Z",pick:"New York Giants",side:"h",p:65.4,ph:65.4,pa:34.6,mg:5.1,dk:-1.5,tot:45.5}
+];
+
+const tier=p=>p>=78?["elite","Élite"]:p>=72?["alta","Alta"]:["media","Media"];
+const fmtDay=iso=>{try{return new Intl.DateTimeFormat('es-MX',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',timeZone:'America/Mexico_City'}).format(new Date(iso))}catch(e){return iso.slice(0,10)}};
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+function soccerCard(m,i){
+  const[tk,tl]=tier(m.p);
+  const chips=[];
+  if(Math.min(m.nh,m.na)<10)chips.push('<span class="chip warn">muestra corta · n='+Math.min(m.nh,m.na)+'</span>');
+  if(/estimada/.test(m.reason))chips.push('<span class="chip warn">fuerza rival estimada</span>');
+  chips.push('<span class="chip">muestra '+m.nh+' / '+m.na+'</span>');
+  const bt=m.ou?('O/U '+m.ou):'BTTS';
+  const btv=m.ou?(m.btts.toFixed(0)+'% amb.'):(m.btts.toFixed(0)+'%');
+  return `<article class="card">
+   <div class="crow"><span class="rank">${String(i+1).padStart(2,'0')}</span>
+     <span class="sport">FÚTBOL</span><span class="comp">${esc(m.c)}</span>
+     <span class="when">${fmtDay(m.ko)}</span></div>
+   <div class="match">
+     <div class="team ${m.side==='h'?'winner':''}"><span class="badge">${m.hc}</span><span class="nm">${esc(m.h)}</span></div>
+     <span class="vs">vs</span>
+     <div class="team away ${m.side==='a'?'winner':''}"><span class="badge">${m.ac}</span><span class="nm">${esc(m.a)}</span></div>
+   </div>
+   <div class="pickbar">
+     <div class="pickmeta"><div class="pick-lab">Pick del modelo</div><div class="pick-nm">${esc(m.pick)}</div>
+       <span class="tier ${tk}">${tl} confianza</span></div>
+     <div style="text-align:right"><div class="prob" style="color:var(--${tk==='media'?'media':'accent'})">${m.p.toFixed(0)}<span style="font-size:15px">%</span></div></div>
+   </div>
+   <div>
+     <div class="meter"><i style="width:${m.ph}%;background:var(--bar-home)"></i><i style="width:${m.pd}%;background:var(--bar-draw)"></i><i style="width:${m.pa}%;background:var(--bar-away)"></i></div>
+     <div class="mlabels"><span>Local ${m.ph.toFixed(0)}%</span><span>Empate ${m.pd.toFixed(0)}%</span><span>Visita ${m.pa.toFixed(0)}%</span></div>
+   </div>
+   <div class="study">
+     <div class="kpis">
+       <div class="kpi"><div class="v">${m.sc}</div><div class="k">Marcador prob.</div></div>
+       <div class="kpi"><div class="v">${m.xg.toFixed(2)}</div><div class="k">Goles esp.</div></div>
+       <div class="kpi"><div class="v">${m.lh.toFixed(2)}–${m.la.toFixed(2)}</div><div class="k">λ local–vis</div></div>
+       <div class="kpi"><div class="v">${btv}</div><div class="k">${bt}</div></div>
+     </div>
+     <div class="note"><b>Estudio.</b> El modelo proyecta <b>${m.sc}</b> (${m.scp.toFixed(0)}% al marcador exacto) con ${m.xg.toFixed(2)} goles esperados; ventaja de ataque clara (λ ${m.lh.toFixed(2)} vs ${m.la.toFixed(2)}). ${esc(m.reason)}</div>
+     <div class="chips">${chips.join('')}</div>
+   </div>
+  </article>`;
+}
+
+function nflCard(m,i){
+  const[tk,tl]=tier(m.p);
+  return `<article class="card">
+   <div class="crow"><span class="rank">${String(i+1).padStart(2,'0')}</span>
+     <span class="sport nfl">NFL</span><span class="comp">Semana 6 · 2026</span>
+     <span class="when">${fmtDay(m.ko)}</span></div>
+   <div class="match">
+     <div class="team ${m.side==='h'?'winner':''}"><span class="badge">${m.hc}</span><span class="nm">${esc(m.h)}</span></div>
+     <span class="vs">vs</span>
+     <div class="team away ${m.side==='a'?'winner':''}"><span class="badge">${m.ac}</span><span class="nm">${esc(m.a)}</span></div>
+   </div>
+   <div class="pickbar">
+     <div class="pickmeta"><div class="pick-lab">Pick del modelo (moneyline)</div><div class="pick-nm">${esc(m.pick)}</div>
+       <span class="tier ${tk}">${tl} confianza</span></div>
+     <div style="text-align:right"><div class="prob" style="color:var(--${tk==='media'?'media':'accent'})">${m.p.toFixed(0)}<span style="font-size:15px">%</span></div></div>
+   </div>
+   <div>
+     <div class="meter"><i style="width:${m.ph}%;background:var(--bar-home)"></i><i style="width:${m.pa}%;background:var(--bar-away)"></i></div>
+     <div class="mlabels"><span>${esc(m.pick)} ${m.ph.toFixed(0)}%</span><span>Rival ${m.pa.toFixed(0)}%</span></div>
+   </div>
+   <div class="study">
+     <div class="kpis">
+       <div class="kpi"><div class="v">+${m.mg.toFixed(1)}</div><div class="k">Margen esp.</div></div>
+       <div class="kpi"><div class="v">${m.dk}</div><div class="k">Línea DK</div></div>
+       <div class="kpi"><div class="v">${m.tot}</div><div class="k">Total DK</div></div>
+       <div class="kpi"><div class="v">0.230</div><div class="k">Brier OOS</div></div>
+     </div>
+     <div class="note"><b>Estudio.</b> El modelo híbrido (Elo + forma, datos al día) da <b>${m.ph.toFixed(0)}%</b> con margen esperado de <b>+${m.mg.toFixed(1)}</b> puntos. La línea es contexto, no entra en la probabilidad.</div>
+     <div class="chips"><span class="chip">nfl_hybrid_ml_v1</span><span class="chip">OOS validado</span><span class="chip">143 eventos</span></div>
+   </div>
+  </article>`;
+}
+
+const all=[...soccer.map(x=>({...x,s:'f'})),...nfl.map(x=>({...x,s:'n'}))].sort((a,b)=>b.p-a.p);
+const avg=(all.reduce((s,x)=>s+x.p,0)/all.length);
+document.getElementById('stats').innerHTML=[
+ [all.length,'picks publicados'],
+ [avg.toFixed(0)+'%','confianza media'],
+ [soccer.length+' · '+nfl.length,'fútbol · NFL'],
+ ['2','modelos validados']
+].map(([n,l])=>`<div class="stat"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+
+document.getElementById('grid-soccer').innerHTML=soccer.map(soccerCard).join('');
+document.getElementById('grid-nfl').innerHTML=nfl.map(nflCard).join('');
+document.getElementById('sub-soccer').textContent=soccer.length+' picks · Dixon-Coles + cross-league';
+document.getElementById('sub-nfl').textContent=nfl.length+' picks · híbrido Elo+forma';
+
+// Parlays: piernas independientes (distinto partido), producto de probabilidades
+function parlay(name,desc,legs){
+  const pj=legs.reduce((s,l)=>s*(l.p/100),1)*100;
+  return `<div class="parlay"><div><h3>${name}</h3><div class="note" style="margin-top:2px">${desc}</div></div>
+    <div><div class="pick-lab">Probabilidad conjunta</div><div class="big" style="color:var(--accent)">${pj.toFixed(1)}%</div></div>
+    <div class="legs">${legs.map(l=>`<div class="leg"><span class="d"></span>${esc(l.pick)}<span class="lp">${l.p.toFixed(0)}%</span></div>`).join('')}</div></div>`;
+}
+const top=all.slice(0,6);
+document.getElementById('parlays').innerHTML=[
+ parlay('Doble seguro','Las 2 piernas de mayor probabilidad.',top.slice(0,2)),
+ parlay('Triple élite','Las 3 más fuertes, partidos distintos.',top.slice(0,3)),
+ parlay('Cuádruple','Riesgo medio, mayor premio.',top.slice(0,4))
+].join('');
+
+document.getElementById('disc').innerHTML='<b>Lo honesto.</b> Son probabilidades de modelos validados fuera de muestra (fútbol OOS; NFL Brier 0.230 &lt; 0.25), <b>no</b> recomendaciones de dinero/EV/Kelly — eso sigue apagado a propósito hasta pasar validación de calibración. MLB no aparece: su modelo está bien en acierto agregado pero mal calibrado hoy (error de 10 puntos en un rango clave), así que no publicamos picks de béisbol hasta recalibrarlo. Ningún pick usa información posterior al kickoff.';
+const now=new Intl.DateTimeFormat('es-MX',{dateStyle:'medium',timeStyle:'short',timeZone:'America/Mexico_City'}).format(new Date());
+document.getElementById('foot').textContent='RETO 13M · generado '+now+' (CDMX) · datos: publicación canónica en vivo';
+
+// tema
+const tb=document.getElementById('theme');
+function cur(){const e=document.documentElement.getAttribute('data-theme');if(e)return e;return matchMedia('(prefers-color-scheme:dark)').matches?'dark':'light';}
+tb.addEventListener('click',()=>{const n=cur()==='dark'?'light':'dark';document.documentElement.setAttribute('data-theme',n);try{localStorage.setItem('reto-theme',n)}catch(e){}});
+try{const s=localStorage.getItem('reto-theme');if(s)document.documentElement.setAttribute('data-theme',s)}catch(e){}
+</script>
