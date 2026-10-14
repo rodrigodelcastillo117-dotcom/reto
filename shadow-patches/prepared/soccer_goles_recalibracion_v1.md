@@ -39,3 +39,10 @@ a la fuerza del equipo: ganador (1X2), **hándicap** y **marcador**.
   Ruta si se quiere insistir: Dixon-Coles con corrección de marcadores bajos, ataque/
   defensa separado local/visita, y ponderación por recencia. Expectativa honesta: el
   techo es bajo; probablemente llegue cerca de la base, no por encima del mercado.
+
+## Córners (probado 2026-10-14) — también near-random
+Modelo ataque/defensa de córners, OOS n=8,719 (línea 9.5):
+- Brier crudo 0.2861 vs base 0.2511.
+- **corr(predicho, real) = 0.021** → señal nula. Ni calibración optimista supera la base.
+Conclusión reforzada: los mercados de conteo por partido (goles, córners) en soccer son
+casi aleatorios. NO se publican. Foco en mercados de fuerza relativa (1X2, handicap, marcador).
