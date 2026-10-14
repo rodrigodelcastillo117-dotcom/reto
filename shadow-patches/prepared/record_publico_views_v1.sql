@@ -1,6 +1,8 @@
 -- ============================================================================
 -- RÉCORD PÚBLICO — vistas read-only para la pantalla de transparencia
--- STAGED (NO APLICADAS): PROD_FREEZE=ON. Requieren OK del auditor/usuario.
+-- ✅ APLICADAS A PROD el 2026-10-14 (migración record_publico_views_v1) tras
+--    autorización explícita del usuario ("Todo: prod + Lovable"). Grants a
+--    anon/authenticated incluidos. Money sigue apagado.
 -- ----------------------------------------------------------------------------
 -- Son 100% ADITIVAS y de SOLO LECTURA: crean vistas nuevas, nada depende de
 -- ellas, no modifican ni una tabla, función, vista o dato existente. No tocan
