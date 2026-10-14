@@ -40,3 +40,11 @@ Baseball/football/tenis tienen caminos propios. **Catálogo-driven** pero soccer
 - Validar OOS antes de publicar cualquier mercado/deporte (nada mal hecho).
 - No totales/spreads/BTTS/córners sin edge probado.
 - Backfills medidos; no hammering de APIs externas; cambios de prod aditivos y reversibles.
+
+## Tenis — validado 2026-10-14: Elo NO discrimina (needs rebuild)
+Validé el Elo sobre 342 partidos emparejados (ganador derivado del linescore por sets):
+p_home_prom 0.500, corr −0.013, Brier 0.2502, acierto 51.2% = nivel volado.
+Los ratings salen ~uniformes (no separan jugadores) pese a 10,701 partidos de linescore.
+Causa: el pipeline Elo no está alimentándose bien de la historia. NO publicable.
+Ruta: reconstruir Elo secuencial sobre toda la historia ATP/WTA con suficientes juegos
+por jugador; re-validar. Es build real, no toggle.
