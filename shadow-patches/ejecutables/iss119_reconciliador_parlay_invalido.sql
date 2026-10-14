@@ -1,0 +1,83 @@
+-- =====================================================================
+-- ISS119  RECONCILIADOR DE PARLAY INVALIDO  (Decision 4 del dueno)
+-- =====================================================================
+-- ANTES DE NADA: TE REPORTE MAL EL EFECTO ECONOMICO
+--
+--   En ISS112 escribi "se cobraron 250" y "la plata YA se movio". La primera
+--   mitad es cierta: el parlay 861b03b9 quedo con resultado='perdido' y
+--   ganancia_neta=-250.00 sin una sola pata perdida. La segunda mitad es FALSA.
+--
+--   get_bankroll_actual__base filtra created_at >= reto_desde(apodo).
+--   reto_desde('rongo') = 2026-09-02. El parlay es del 2026-08-06.
+--   Los 15 parlays de rongo son anteriores a su fecha de arranque, asi que la
+--   suma dentro de la ventana es 0 y el bankroll reporta exactamente el
+--   bankroll_inicial: 2500.00, antes y despues de reconciliar.
+--
+--   O sea: el cierre invalido fue real y el resultado economico registrado en la
+--   fila fue real, pero NUNCA toco el bankroll que el producto muestra.
+--   Lo corrijo aqui porque te lo reporte al reves.
+--
+-- HALLAZGO SEPARADO, DE LA MISMA MEDICION
+--   Los 15 parlays de rongo suman ganancia_total = -6613.32 y NINGUNO entra en
+--   la ventana del reto, asi que el bankroll no los ve. Puede ser alcance
+--   deliberado (el reto arranca en una fecha), pero significa que el historial
+--   de parlays es invisible para la banca reportada. Queda reportado, no tocado.
+--
+-- EL CAMINO DE REPARACION, LOS SEIS PUNTOS QUE PIDIO
+--
+--  1) GATE PERMANENTE: ya existia, gate_parlay_coherente de ISS112.
+--
+--  2) EVIDENCIA FORENSE INMUTABLE: parlay_reconciliacion guarda la fila
+--     COMPLETA como jsonb, las patas tal como estaban al detectar, el motivo y
+--     el bankroll antes y despues. Se escribe ANTES de corregir: si la
+--     evidencia falla, no se corrige nada.
+--
+--  3) ESTADO FAIL-CLOSED QUE YA EXISTE: vuelve a 'pendiente'. NO se invento
+--     semantica nueva. El motivo estructurado va en reconciliacion_motivo, una
+--     columna nueva, y NO en manual_override: el dueno prohibio el override
+--     manual como solucion y esto no es un arreglo a mano.
+--     manual_override del parlay sigue en false.
+--
+--  4) ECONOMIA POR RECOMPUTE DETERMINISTA, NO POR MUTACION DE SALDO:
+--     y resulto mas limpio de lo que esperaba. ganancia_total es COLUMNA
+--     GENERADA: intentar asignarla devuelve
+--       "column ganancia_total can only be updated to DEFAULT"
+--     Se anula ganancia_neta y ganancia_total se recalcula sola. Despues se
+--     llama recalcular_bankroll_post_aplicar(apodo), que reescribe bankroll_post
+--     en orden con la misma formula que usa la app. No hay saldo que mutar
+--     porque la banca es derivada por construccion.
+--
+--     Se reviso uno por uno los 27 disparadores de parlays para la transicion
+--     perdido -> pendiente. El esquema YA estaba disenado para des-liquidar:
+--       on_parlay_graded_notify        exige OLD='pendiente' -> NO dispara
+--       actualizar_bankroll_post_parlay exige OLD='pendiente' -> NO dispara
+--       auto_recalc_semana / stats      exigen NEW settled     -> NO disparan
+--       sync_parlay_legs_to_learning    exige NEW settled      -> NO dispara
+--       capture_parlay_legs_to_ai       exige NEW settled      -> NO dispara
+--       audit_parlays_grading           solo ganado<->perdido  -> NO dispara
+--       recalc_parlay_on_result_change  TIENE rama 'pendiente' -> si actua, y
+--                                       esta escrita para este caso
+--       proteger_ganancia_cashout       TIENE rama 'pendiente' -> idem
+--     Cero notificaciones duplicadas, cero pagos duplicados, cero doble
+--     movimiento de banca.
+--
+--  5) LAS PATAS NO SE TOCAN. Siguen 9 pendientes de 16, todas de tenis, todas
+--     sin resolver. Nada se adivino.
+--
+--  6) IDEMPOTENCIA: la llave primaria de parlay_reconciliacion es parlay_id, y
+--     el detector excluye lo ya reconciliado.
+--       RUN1 = 1 correccion
+--       RUN2 = 0 correcciones
+--
+-- ESTADO DEL GATE, ANTES -> DESPUES
+--   PARLAY_PERDIDO_SIN_LEG_PERDIDO      FAIL 1  ->  PASS 0
+--   DINERO_COBRADO_SIN_RESPALDO         FAIL 1  ->  PASS 0
+--   PARLAY_CERRADO_CON_LEGS_PENDIENTES  FAIL 3  ->  FAIL 2
+--   GUARDA_DE_CIERRE_INSTALADA          PASS 1
+--
+--   Los 2 que quedan son los parlays en 'nulo' con TODAS sus patas pendientes
+--   (d3adc9fc con 8 de baseball, c9237cf6 con 2 de tenis) y ganancia 0. NO
+--   entran en este reconciliador porque la regla del dueno es sobre cerrar como
+--   PERDIDO sin pata perdida, y 'nulo' no es una perdida cobrada. Quedan
+--   visibles en el gate, no escondidos, esperando criterio.
+-- =====================================================================

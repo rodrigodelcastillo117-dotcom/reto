@@ -1,0 +1,37 @@
+-- iss060 — NFL Fantasy no servía por UNA llave de JSON mal leída.
+--
+-- SÍNTOMA: `fantasy_start_sit` devolvía los 15 slots con `jugador: null`, `resuelto: false` y
+-- el aviso *"No lo identificamos y la captura no traía su proyección: no cuenta en el total"*.
+-- La proyección del equipo salía 18.5, que eran sólo el pateador y la defensa (los únicos que
+-- usan proyección de ESPN). Se veía como "Fantasy no funciona".
+--
+-- LO QUE NO ERA: no era el roster. Está COMPLETO y correcto en `fantasy_roster_semanal`:
+-- 15 slots, CERO sin nombre — Mahomes, Achane, Kyren Williams, Smith-Njigba, Egbuka,
+-- Tyler Warren, Montgomery, MarShawn Lloyd, Dowdle, Sutton, Jacobs, Keenan Allen, Shakir,
+-- Dicker y Jaguars. Varios incluso con `espn_player_id` ya resuelto.
+--
+-- CAUSA RAÍZ: los dos lados del contrato no se hablaban.
+--   El roster GUARDA el nombre en  ->> 'nombre'
+--   `fantasy_analizar_alineacion` LEE  ->> 'texto'
+-- `match_jugador_nfl` recibía cadena vacía y devolvía `{'resuelto': false, 'motivo': 'texto vacio'}`,
+-- que es exactamente lo que la pantalla mostraba. La función hacía bien su trabajo: le estaban
+-- pasando nada.
+--
+-- EL PARCHE, deliberadamente mínimo: en el ÚNICO sitio de llamada se acepta `texto` y, si viene
+-- vacío, se cae a `nombre` y luego a `jugador`. `texto` sigue ganando cuando existe, así que un
+-- roster guardado con el formato viejo se comporta igual que antes.
+--
+--   ANTES:  public.match_jugador_nfl(item->>'texto', ...)
+--   AHORA:  public.match_jugador_nfl(
+--             coalesce(nullif(item->>'texto',''), nullif(item->>'nombre',''), nullif(item->>'jugador','')), ...)
+--
+-- Se aplicó con un DO que exige EXACTAMENTE una ocurrencia del sitio de llamada y aborta si
+-- encuentra otra cosa. Importante: `item->>'texto'` aparece 9 veces en esa función, pero 8 son
+-- de presentación (`texto_leido`). Reemplazarlas todas habría sido un cambio mucho más ancho
+-- del necesario.
+--
+-- MEDIDO, como `anon`, sobre el roster real del owner:
+--   ANTES:  mi_proyeccion = 18.5   ·  0 de 8 jugadores resueltos
+--   DESPUÉS: mi_proyeccion = 109.0 ·  8 de 8 resueltos
+--   Egbuka 5.1 · Montgomery 7.5 · MarShawn Lloyd 1.9 · Dowdle 9.0 · Keenan Allen 7.3 · Shakir 7.9
+--   (los dos sin nombre son K y DST: usan proyección de ESPN por diseño, no es un fallo)

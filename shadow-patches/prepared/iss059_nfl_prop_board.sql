@@ -1,0 +1,44 @@
+-- iss059 — La pantalla de props existía; lo que faltaba era el backend.
+--
+-- HALLAZGO: el owner reportó "no sale la página de props". No había que construirla:
+-- `src/components/nfl/PropBoard.tsx` YA existe y está bien hecho. Lo que hace es llamar a
+-- `usePropBoard`, que intenta los RPC `nfl_prop_board` / `nfl_prop_board_semana`. Ninguno de
+-- los dos existía en la base. El hook tiene feature-detection: ante PGRST202/42883 marca
+-- "no publicado" y la pantalla dice *"El tablero de props de la semana todavía no está
+-- publicado"*. O sea, el frontend llevaba tiempo esperando un contrato que nadie había escrito.
+--
+-- LO QUE NO TENEMOS Y HAY QUE DECIRLO: en TODA la base no existe ni una línea de props de casa
+-- de apuestas. Lo verifiqué: el único objeto con 'prop' en el nombre es `nfl_props_jugador`,
+-- que creé yo y es historial. Sin precio no hay mercado.
+--
+-- DECISIÓN: el contrato del frontend YA contempla este caso. `semantics` acepta
+-- 'HISTORICAL_ORIENTATIVE' además de 'CANONICAL_P_RETO', y el adaptador lo trata distinto:
+-- lo etiqueta "% orientativo" (no P_RETO), `chipPropBoard` le devuelve null (sin "TOP PROP"
+-- ni "FUERTE") y `ordenarPropBoard` lo ordena DESPUÉS de lo canónico, con el comentario
+-- "nunca se mezclan como si fueran lo mismo". Publicar orientativo es exactamente para lo
+-- que ese modo fue diseñado.
+--
+-- Así que se publica TODO como HISTORICAL_ORIENTATIVE, con tres salvaguardas:
+--   1. `bookmaker` = 'REFERENCIA RETO · no es linea de casa'. La UI lo pinta justo después
+--      del número, así que es imposible confundirla con una línea de la casa.
+--   2. `cobertura` lleva la muestra, el promedio, la mediana y el rango.
+--   3. `momio_justo_decimal` va NULL a propósito: publicar un precio justo invitaría a
+--      calcular EV sobre historial, que es justo lo que el contrato de NFL prohíbe.
+--
+-- DOS DECISIONES DE MÉTODO, ambas corregidas después de ver los números reales:
+--   a. La línea de referencia se centra en la MEDIANA, no en el promedio. Con el promedio, un
+--      jugador con mediana 3.5 y un partidazo de 11 quedaba con línea 5.5, donde casi nunca
+--      llega. La mediana es robusta a eso.
+--   b. Se publica el lado que históricamente pega MÁS, no siempre OVER. Forzar OVER producía
+--      filas engañosas: "Gibbs recepciones OVER 5.5 → 30%", cuando lo informativo es
+--      "UNDER 5.5 → 70%". Es descriptivo, no una recomendación.
+-- La línea siempre en .5 para que NUNCA haya empate.
+--
+-- MEDIDO como `anon` con los argumentos exactos del frontend, nfl_prop_board(1, 2026, null):
+--   1,657 filas · 442 jugadores · 8 mercados
+--   0 filas no-orientativas · 0 sin probabilidad · todas >= 50%
+--   Mahomes UNDER 1.5 intercepciones 80% · Jacobs UNDER 2.5 recepciones 70%
+--   Rivales correctos: Jacobs GB vs MIN, Mahomes KC vs DEN, Gibbs DET vs NO
+--
+-- La definición completa aplicada está en docs/master_v2/NFL_TABLERO_MODELO.md
+-- Helper: public.nfl_prop_valores(p_player_id, p_metrica) -> últimos 10 valores, NULL excluidos.

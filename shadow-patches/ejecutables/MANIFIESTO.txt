@@ -1,0 +1,723 @@
+# Manifiesto de reproducibilidad — estado de producción al 11-sep-2026
+#
+# md5 de pg_get_viewdef / pg_get_functiondef de cada objeto tocado por
+# iss082, iss083, iss084 e iss085.
+#
+# PARA QUÉ SIRVE: si alguien reconstruye la base corriendo los archivos de
+# esta carpeta, puede correr `verificar.sql` y comparar contra estos hashes.
+# Si un hash no cuadra, la reconstrucción NO es idéntica a producción y hay
+# que averiguar por qué antes de seguir. Sin esto, "es reproducible" es una
+# afirmación sin forma de comprobarse.
+#
+# tipo     md5                               objeto
+funcion  d57901ec3512949019327d0a6c14d920  destacados_del_dia(integer,text,boolean)
+funcion  30bc8b6db4b17af4666a9da818b543a8  enrich_oraculo_prob_with_momio()
+funcion  0da84a0f0303af81118bf0900e9efd23  favoritos_bien_pagados(numeric,numeric,numeric)
+funcion  49984afcbd8448cdf7e2824d49401de3  generar_parlay_seguro(text,integer,numeric,text[])
+funcion  5e6d26f8916d91edf9b7cafaa1e5797f  mejor_oportunidad_hoy(integer)
+funcion  8773352049a507cf824fa2681b36b2ae  mejor_oportunidad_hoy_v2__base(integer,text)
+funcion  5db662c599537c8d7a50516c2db15c43  mejor_pick_hoy(numeric,numeric,numeric,numeric,numeric,integer)
+funcion  c3a9d71ba96aaa4a1657c7924dd62ce9  motor_mlb(text,text,integer,numeric)
+funcion  a2e92804492a2367455e32b883afcb57  normal_cdf(double precision)
+funcion  64700411fe3fddb2c06463daddc610fb  normal_cdf(numeric)
+funcion  112f00b9eca953e993a373a8fc9f19f7  parlay_del_dia_v3(integer)
+funcion  bcc2f991a8a5d8c51f02d556bd731932  prob_total_sobre(numeric,numeric,text)
+funcion  169e19ebe9e7c66e7becf7cbf966049b  recalcular_zonas_confiables()
+funcion  ad02a82c086e3b78a69d2947777fa6fd  refrescar_destacados(integer)
+funcion  7f4a4d4f835d5e7bfb1271272a9c397a  reto_13m_estado__base(text)
+funcion  2fcb102d5298430777cc05d6f55b67da  rongol_seleccionar_dia(integer,integer)
+funcion  c85785d36ed9ee26a224eed3d8e2d2ed  seleccionar_picks_seguro_valor(jsonb)
+funcion  6e130c27427864e67ff06f3169bc78de  tg_filtrar_pick_del_dia()
+funcion  08a17f864e3c891787cc98a2c1ae10b5  veredicto_lote__base(text)
+funcion  819959185b43ce79c0cb469e1d44e8d6  zona_realidad(text,numeric)
+funcion  94e8d2af369fed6814535ef2c15de348  zona_realidad(text,numeric,text)
+vista  9d213f14055f7da2e9f7f99a49251c94  picks_premium
+vista  2a416bc705e67bd6a8391d140db58d3a  v_mejor_pick_por_partido
+vista  f3c9383910d55fcfbcd97db768cb3c63  v_mejores_picks_mlb
+vista  40d994988e7dea60a6f713d9506281c4  v_oraculo_picks_activos
+vista  a8095a4ad124c784fe9cd4617f81ab64  v_pick_canonico
+vista  ea59273f06a194d6c9a62ce3067ac56f  v_picks_con_valor
+vista  b3387c2847c23b07bbbca8253a0fae15  v_picks_futbol_calc
+vista  1a4a096face3ae415ff51337433824a2  v_picks_para_parlay
+vista  a351a33bfe532945728c752d31a59606  v_picks_premium
+vista  d0b8b4efbc9bf29b02fe12f93dd54186  v_reto13m_lo_mejor
+vista  05d3c26d18ed5d3365ed4c90db164bec  v_reto13m_mejores
+vista  14ffa68d4c5073a99f9afdde343ae64d  v_super_pick
+
+# ---------------------------------------------------------------------------
+# Añadido por iss088 / iss089 / iss090 / iss091 — 11-sep-2026
+# ---------------------------------------------------------------------------
+aplicar_isotonica(p_params jsonb, p double precision)	d7445f582cbdccf45005eb7a91d9ae63
+bootstrap_mejora_metodo(p_model text, p_metodo text, p_params jsonb, p_desde timestamptz, p_hasta timestamptz, p_reps integer)	5370277a2b2eab8d86057dac749cfaf3
+bootstrap_mejora_por_partido(p_model text, p_params jsonb, p_desde timestamptz, p_hasta timestamptz, p_reps integer)	30fbdcc93ac04c75bca953608ac8d51e
+evaluar_calibrador(p_model text, p_metodo text, p_params jsonb, p_desde timestamptz, p_hasta timestamptz)	0fa614ee5789ab293d933a7d5abf16a8
+fit_isotonica_binned(p_model text, p_desde timestamptz, p_hasta timestamptz, p_bins integer)	d312ad92b451e7fed1111f7ca47c6486
+fit_platt(p_model text, p_desde timestamptz, p_hasta timestamptz)	a01b88686bbaede0f9d58109d5734141
+mlb_backfill_aplicar()	74f1e20cf42059279a4c122f5412cbd6
+mlb_backfill_cosechar()	3242d787f617f7ffd3a8e4092a286755
+mlb_backfill_encolar(p_desde date, p_hasta date, p_max integer)	4afb415c4fee2d5adf13e2aa677d940b
+normal_cdf(z double precision)	9b7d6eb6a4a1a059115d650382166b28
+normal_cdf(z numeric)	64700411fe3fddb2c06463daddc610fb
+
+# NOTA DE DEUDA HONESTA: iss087_sin_pretemporada.sql conserva en Git el bug de
+# ventanas hardcodeadas (36 months / 120 days para ambos deportes). NO se edita
+# a posteriori: es el registro de lo que se corrió ese día. iss089 lo corrige y
+# es el archivo que refleja producción. Correr iss087 después de iss089
+# REINTRODUCIRÍA el bug — el orden es iss088 -> iss089 -> iss090 -> iss091.
+
+# ---------------------------------------------------------------------------
+# RECAPTURA iss094-096 — 12-sep-2026
+# ---------------------------------------------------------------------------
+# FALLA RECONOCIDA: iss094, iss095 e iss096 se commitearon como PROSA PURA,
+# 0 lineas de SQL ejecutable. El dueno lo detecto. Reabria el gate de
+# reproducibilidad que se habia cerrado en iss082-084 creando esta carpeta.
+# Recapturados como SQL real, idempotente y con assertions:
+#   iss094_season_type_exacto.sql          178 lineas de SQL
+#   iss094b_universo_por_season_type.sql   135
+#   iss095_llave_exacta_y_una_matriz.sql   187
+#   iss096_fuera_el_ev_del_canonico.sql    162
+#   gates_selector.sql                     120
+#   verificar_checksums_iss094_096.sql      55
+#
+# ORDEN DE EJECUCION:
+#   iss088 -> iss089 -> iss090 -> iss091 -> iss094 -> iss094b -> iss095
+#          -> iss096 -> gates_selector -> verificar_checksums_iss094_096
+# NUNCA correr iss087 despues de iss089: reintroduce el bug de ventanas.
+#
+# REPLAY VERIFICADO contra produccion: las assertions de los 4 patches pasan, el
+# parche de v_pick_canonico detecta que ya esta aplicado y NO lo vuelve a tocar
+# (md5 estable cb23f0a51f4fe419aab5a9a077b0f85b), y el envoltorio de las 5 hojas
+# no se reaplica. Los 14 checksums cuadran, y el control negativo confirma que un
+# hash falso si se detecta.
+#
+# DEUDA PREEXISTENTE QUE NOMBRO EN VEZ DE ABSORBER: la definicion completa de
+# v_pick_canonico (21 KB) nunca estuvo en git. iss096 aporta la TRANSFORMACION,
+# que es reproducible contra esa base; una reconstruccion desde CERO absoluto
+# necesita ademas el volcado integro de esa vista preexistente.
+
+# ---------------------------------------------------------------------------
+# SEGUNDA RONDA DE RECAPTURA — 12-sep-2026 (AUDIT_NO_PASS 5643434081)
+# ---------------------------------------------------------------------------
+# El dueno encontro 4 cosas mas, las 4 ciertas:
+#
+# 1. iss094 dejaba COMENTADA la corrida que re-descarga y aplica el historico.
+#    Sobre una base limpia el archivo no reconstruia nada; las assertions
+#    pasaban solo porque produccion ya estaba corregida.
+#    ARREGLADO: bootstrap AUTO-CONDUCIDO con pg_cron. Un solo comando,
+#      select public.mlb_bootstrap_arrancar('2023-02-15','2026-09-12');
+#    y el job se desprograma solo al terminar. PROBADO sobre 6 fechas: paso 1
+#    encolo 6, paso 2 termino, aplico, cron_activo=0.
+#    La prueba encontro DOS bugs mios que ya estan corregidos:
+#      - arrancar() reiniciaba TODA la tabla de control (1,306 fechas) sin
+#        importar el rango pedido.
+#      - mlb_backfill_encolar (de iss088) insertaba el rango pedido pero
+#        SELECCIONABA cualquier fecha pendiente de toda la tabla: la causa raiz.
+#
+# 2. iss096 AFIRMABA que existia un baseline de v_pick_canonico y NO ESTABA EN
+#    EL REPO. ARREGLADO: baseline/v_pick_canonico.sql, volcado integro de 21 KB,
+#    byte a byte identico a produccion (md5 d12fd2437bba938a4ab90f8d833afce4,
+#    verificado calculando el hash del archivo y comparandolo).
+#
+# 3. elegibilidad_no_economica_v1 tenia DOS bugs conceptuales:
+#      - aceptaba EARLY como suficiente para elegir. EARLY significa "el
+#        calibrador NO paso el holdout limpio": no puede autorizar nada.
+#      - usaba arranca_en > now() como "temporalidad limpia". Que el partido no
+#        haya empezado NO demuestra ausencia de lookahead.
+#    ARREGLADO: solo VALIDADO autoriza, y la temporalidad se MIDE comparando
+#    feature_asof contra evento_at. Sin as-of medido falla cerrado. Como los
+#    motores no exponen as-of, v_pick_canonico pasa NULL y es_pick queda en
+#    false por dos razones independientes y correctas.
+#
+# 4. iss094b reconstruia NFL desde etiqueta de texto aunque el mismo archivo
+#    reconocia que su season_type esta sucio.
+#    ARREGLADO: NFL AISLADO. Fuera de calib_lambda y calib_eventos, sus
+#    calibradores invalidados con motivo, y un TRIGGER que revienta si alguien
+#    intenta reintroducirlo. Probado: la guarda rechaza la insercion.
+#
+# CHECKSUMS: 18 objetos. NUEVO ORDEN:
+#   iss088 -> iss089 -> iss090 -> iss091 -> iss094 -> iss094b -> iss095
+#          -> iss096 -> baseline/v_pick_canonico.sql -> gates_selector
+#          -> verificar_checksums_iss094_096
+
+# ---------------------------------------------------------------------------
+# TERCERA RONDA — 12-sep-2026 (AUDIT_NO_PASS 5643661236)
+# ---------------------------------------------------------------------------
+# Los 4 bloqueadores eran ciertos. El mas grave no era ninguno de los tres de
+# orden: era el 4.
+#
+# 4. MODIFICACION ESCONDIDA DE P_RETO. v_pick_canonico llamaba a
+#    ajuste_h2h_over25() en Soccer Over 2.5, que sumaba +2.9 pp con H2H caliente
+#    y restaba -5.4 pp con H2H frio. El filtro x.fecha < ev.fecha SI es causal,
+#    asi que no habia lookahead en la feature; el problema es que la MAGNITUD se
+#    estimo in-sample sobre 3,725 partidos, sin model_version, sin
+#    calibration_version y sin holdout. Medido antes de retirarlo: 2 de 67
+#    candidatos de Over 2.5 estaban recibiendo +2.9 pp.
+#    RETIRADO de la ruta canonica. Registrado en ajustes_a_p_reto con
+#    habilitado=false y el motivo completo. Gate nuevo
+#    gate_ajustes_escondidos() = AJUSTE_NO_REGISTRADO_A_P_RETO, que exige
+#    registro + habilitado + validado_fuera_de_muestra + llave completa.
+#    Yo lo pase por alto dos rondas seguidas.
+#
+# 3. LLAVE EXACTA SIEMPRE. mercado_apto_para_lock tenia
+#    p_calibration_version DEFAULT NULL y NULL actuaba de comodin, asi que
+#    cualquier calibracion valida del mismo model_version autorizaba. Se elimino
+#    el default: ahora son 4 argumentos obligatorios y NULL en cualquiera falla
+#    cerrado. La cadena lleva calibration_version por fila.
+#
+# 1. CICLO EN EL ARRANQUE. iss096 parcheaba v_pick_canonico (necesitaba que
+#    existiera) pero el baseline final invoca funciones que iss095/096 crean.
+#    Resuelto separando definicion de transformacion: orden/ORDEN_DE_ARRANQUE.md
+#    crea v_pick_canonico UNA sola vez desde su definicion final, despues de sus
+#    funciones. Los iss0xx quedan como registro historico del cambio.
+#
+# 2. iss094 MEZCLABA bootstrap con assertions. Dividido:
+#      iss094                          -> solo esquema + funciones
+#      orden/50_bootstrap.sql          -> define y arranca la descarga
+#      orden/60_espera_bootstrap.sql   -> BLOQUEA hasta que termine de verdad
+#      orden/70_universo.sql           -> construye el universo
+#      orden/80_assertions.sql         -> recien entonces comprueba
+#    Antes, en una base virgen, las assertions podian correr sobre datos a medio
+#    cargar y "pasar" sin probar nada.
+#
+# ENDURECIMIENTOS (los tres eran valores de adorno que nadie evaluaba):
+#   model_skill      -> model_skill() exige calibrador elegido + mejora_oos +
+#                       brier_cal < brier_raw. Verificado: MLB Platt SKILL_OK,
+#                       nfl_ml_poisson_v1 SKILL_RECHAZADO,
+#                       soccer_1x2_poisson_v1 SKILL_NO_DEMOSTRADO.
+#   data_readiness   -> datos_listos() comprueba agenda, identidad de equipos y
+#                       hora. Antes era la constante 'READY'.
+#   semantic_validity-> identidad_valida() valida evento, equipos, mercado, linea
+#                       canonica, lado correcto y proveniencia del motor. Antes
+#                       solo miraba si dos motores se contradecian.
+#                       DISCRIMINA DE VERDAD: 35 de 302 filas fallan
+#                       LINEA_NO_CANONICA, que el chequeo viejo nunca veria.
+#
+# CHECKSUMS a 23 objetos. BASELINE MARCADO COMO OBSOLETO a proposito: la
+# definicion cambio 3 veces despues de capturarlo, y prefiero decirlo a dejar un
+# volcado caducado pareciendo bueno.
+
+================================================================================
+RONDA ISS098 — AUDIT_NO_PASS 5644082184 (2026-09-12)
+================================================================================
+
+Los cuatro puntos del dueño, cerrados. Las dos sondas se reprodujeron en
+producción ANTES de tocar nada:
+
+  identidad_valida('401876965','soccer','Moneyline','Gana local','a','e',...)
+      antes -> PASS                          ahora -> HOME_NO_COINCIDE_CON_AGENDA
+  estado_respaldo('baseball','Over/Under','mlb_totales_normal_v1','NO_EXISTE')
+      antes -> INSUFFICIENT                  ahora -> CALIBRATION_VERSION_INEXISTENTE
+
+1) IDENTIDAD EXACTA  — iss098 secciones 1 y 2
+   Fuera las dos ramas `ilike '%'||...||'%'` que dejaban pasar 'a' y 'e'. La
+   identidad ahora es: igualdad normalizada contra agenda_espn, o un alias
+   REGISTRADO en identidad_equipo_alias atado a ESE espn_id.
+   13 variantes reales registradas a mano (MLS y Liga MX: 'Chicago Fire' vs
+   'Chicago Fire FC', 'Club America' vs 'América', 'Red Bull New York' vs
+   'New York Red Bulls'...). Cada una verificada 1:1 y sin colisionar con el
+   nombre canónico de otro equipo.
+   COSTO REAL: 0 filas canónicas perdidas. Las 302 siguen en 267 PASS /
+   35 LINEA_NO_CANONICA, igual que antes.
+   NO usé equipos_alias, la tabla que ya llena aprender_alias_equipos() por cron:
+   esa se construye con similarity() >= 0.75 e incluye entradas 'inferido' con
+   confianza 0.80-0.85. Es matching difuso. Usarla sería lavar por tabla lo que
+   el dueño acaba de rechazar.
+
+2) EL GATE DE CALIBRACIÓN  — iss098 sección 4
+   El dueño tenía razón: exigir P_RETO == P_RAW habría roto una calibración
+   futura legítima. Ahora el gate compara contra
+   aplicar_calibrador_autorizado(), que aplica SOLO el calibrador
+   apto_para_lock de la llave exacta (deporte+mercado+model+calibration).
+   Sin calibrador autorizado, la transformación esperada es la identidad.
+   vector_scaling devuelve null: es multiclase, no se verifica desde un escalar,
+   y el gate lo cuenta como violación. Falla cerrado.
+   La tolerancia se amplía solo con ajustes_a_p_reto.magnitud_max_pp, columna
+   NUEVA y numérica: el gate nunca parsea el texto de `magnitud`.
+
+3) ERROR DE VERSIÓN EXPLÍCITO  — iss098 sección 3
+   Nuevos retornos: CALIBRATION_VERSION_INEXISTENTE y CALIBRADOR_INVALIDADO
+   (este último es el caso NFL sucio). Verificado que ningún consumidor compara
+   contra 'INSUFFICIENT'; la elegibilidad exige = 'VALIDADO', así que sigue
+   fallando cerrado.
+
+4) TOMBSTONE DE v_mis_favoritos_analisis  — iss098b
+   RETIRADA, no reconstruida. Cero consumidores probado en cinco frentes.
+   Dos cierres nuevos: gate_superficie_resucitada() y el trigger
+   tg_superficie_solo_sale_con_lapida, que impide borrar una fila del registro
+   de superficie sin lápida con evidencia (probado: bloquea v_pick_canonico).
+
+--------------------------------------------------------------------------------
+TRES COSAS QUE ENCONTRÉ YO ESTA RONDA, Y QUE NO ME PIDIERON
+--------------------------------------------------------------------------------
+
+a) LA DEFINICIÓN PERDIDA NO ESTABA PERDIDA. Escribí en mi informe de incidente
+   que de v_mis_favoritos_analisis "no existe definición en ningún sitio". Era
+   FALSO: estaba íntegra en pg_stat_statements, 2094 caracteres. Declaré pérdida
+   irrecuperable sin agotar las fuentes. Corregido en el informe y guardada en
+   superficie_retirada.definicion_historica.
+   Y la definición recuperada confirma que retirarla era lo correcto: exponía
+   nivel_ventaja, zona, es_pick y favorito_pct directo en Favoritos.
+
+b) MI PROPIO GATE DE DESPLAZAMIENTO VERIFICABA NADA. Primera versión: 700
+   comparaciones sobre 302 filas, porque metí la tolerancia como JOIN y
+   (espn_event_id, mercado, fuente) no es única en v_pick_canonico (137 llaves,
+   302 filas). Corregido a función escalar: 302 de 302.
+   Peor: como modelo_de_pick() devuelve NULL en las 302 filas, la verificación
+   era VACÍA — "esperado = crudo" porque no sabíamos qué está autorizado, no
+   porque el registro dijera identidad. Ahora el gate reporta
+   sin_llave_verificacion_vacia = 302. El verde es honesto sobre ser vacío.
+   Mi primer control negativo tampoco probó nada por esta razón; lo rehice
+   inyectando la llave.
+
+c) EL CALIBRADOR ISOTÓNICO NO ES REPRODUCIBLE DESDE SU PROPIO REGISTRO.
+   calibradores.params = {bins: 50, nota: ...} pero aplicar_isotonica() lee
+   params->'bloques'. Aplicarlo devuelve NULL. No está apto_para_lock, así que
+   no bloquea, pero está en el registro como si sirviera. Nuevo gate
+   gate_calibrador_reproducible() lo marca y bloquea si alguien lo autoriza.
+
+--------------------------------------------------------------------------------
+CONTROLES NEGATIVOS (todos en transacción revertida)
+--------------------------------------------------------------------------------
+  identidad con la versión vieja (%substring%) -> 190 de 240 mutaciones
+      ACEPTADAS, incluidas 30 del caso 'a'/'e'. Con la nueva: 0 de 240.
+  platt autorizado pero no aplicado -> gate = 80 violaciones, máx 8.5 pp,
+      sin_llave baja de 302 a 222. Detecta "el registro dice transformar y la
+      superficie muestra crudo".
+  identidad autorizada con llave presente -> gate = 0. No se pone rojo solo
+      porque aparezca una llave.
+  vector_scaling autorizado -> 51 no_verificables contados como violación.
+  borrar superficie sin lápida -> BLOQUEADO.
+  resucitar la vista retirada / re-registrarla -> gate = 1 en ambos casos.
+
+--------------------------------------------------------------------------------
+REPRODUCIBILIDAD: UNA LECCIÓN QUE ME COSTÓ
+--------------------------------------------------------------------------------
+Al comparar md5(prosrc) vivo contra el md5 de los cuerpos extraídos del archivo
+.sql, 7 de 9 funciones DIFERÍAN. Causa: al redactar el parche saqué comentarios
+que sí estaban en el cuerpo que ejecuté. O sea, el archivo "documentaba"
+algo parecido a producción, no idéntico. Ejecuté el archivo para que producción
+quedara igual AL ARCHIVO, no al contrario, y verificar_checksums_iss098.sql
+ahora ancla al cuerpo del archivo, no solo a la firma. 9 de 9 IGUAL_AL_ARCHIVO.
+
+--------------------------------------------------------------------------------
+GATES: 12 AHORA, 8 ANTES
+--------------------------------------------------------------------------------
+  EV_FIELDS_USER_VISIBLE                24   (sin tocar, va después)
+  EV_EN_RUNTIME_ACTIVO                   6   (sin tocar)
+  UNIFORM_BASELINE_PICK_GATE             5   (sin tocar)
+  SPORT_QUOTA                            1   (v_reto13m_daily, sin tocar)
+  IN_SAMPLE_PROB_MUTATION                0
+  NONCANONICAL_OR_TRIVIAL_LINES          0
+  UNTRACEABLE_APPROVED_PICK              0
+  SUPERFICIE_SIN_CLASIFICAR              0
+  IDENTIDAD_NO_EXACTA                    0   NUEVO
+  P_RETO_DESPLAZADA_NO_REGISTRADA        0   NUEVO
+  CALIBRADOR_AUTORIZADO_NO_VERIFICABLE   0   NUEVO
+  SUPERFICIE_ALTERADA_EN_SILENCIO        0   NUEVO (antes 1)
+
+Los 24/6/5/1 siguen abiertos A PROPÓSITO: tu orden fue capa de origen y
+reproducibilidad primero. Lo siguiente es el punto 2 de tu orden, el volcado de
+TODA la dependencia transitiva de la capa origen.
+
+ORDEN DE EJECUCIÓN DE ESTA RONDA
+  1. iss098_identidad_exacta_y_calibracion_registrada.sql   (8 assertions)
+  2. iss098b_tombstone_favoritos.sql                        (5 assertions)
+  3. gates_selector.sql                                     (runner de 12)
+  4. verificar_checksums_iss098.sql
+
+================================================================================
+RONDA ISS099 — AUDIT_NO_PASS 5645505673 (2026-09-12)
+================================================================================
+
+Tus tres hallazgos, los tres reales, los tres reproducidos antes de tocar nada.
+
+1) IDENTIDAD INCOMPLETA: FALTABAN DEPORTE Y LIGA
+   Tu sonda: un MLB real (Cleveland Guardians vs Athletics, 401816997) pasado como
+   `soccer` con motor de fútbol devolvía PASS. Al probarla encontré que el hueco
+   era de ida y vuelta: también pasé un Liga MX real como `baseball` con motor de
+   MLB y daba PASS. La función recibía `p_deporte` y solo lo usaba para
+   `linea_es_canonica` y `motor_modelo_mapa`; nunca lo comparaba con la agenda.
+
+   Arreglo: firma nueva de 8 argumentos con `p_liga`, que verifica
+   DEPORTE_NO_COINCIDE_CON_AGENDA y LIGA_NO_COINCIDE_CON_AGENDA.
+   `deporte_canonico()` normaliza mlb/beisbol → baseball, nfl → football,
+   futbol → soccer, con el americano PRIMERO porque 'futbol americano' contiene
+   'futbol' y caería en soccer (ese hueco latente sigue en la normalización de
+   `estado_respaldo`; aquí no está).
+
+   La liga se compara por NOMBRE y no por `liga_id`: medí la cobertura antes y
+   `liga_id` es NULL en los 124 eventos de baseball. Exigir `liga_id` habría
+   rechazado todo MLB. `liga_nombre` está al 100% en los tres deportes.
+   Costo del candado: 0 filas. Las 302 canónicas ya traían deporte y liga exactos
+   (MLB/MLS/Liga MX/Scottish/Libertadores/La Liga, todas coincidiendo).
+
+   La firma de 7 argumentos no se borró —borrar con dependientes es lo que me
+   costó 10 vistas— sino que devuelve 'FIRMA_OBSOLETA_SIN_LIGA'. Y eso falla de
+   verdad: `elegibilidad_no_economica_v1` exige `semantic_validity = 'PASS'`, así
+   que cualquier vista olvidada con la firma vieja deja de producir picks en vez
+   de pasar en silencio. `v_pick_canonico` se parcheó con guarda de idempotencia
+   exigiendo 1 y solo 1 ocurrencia.
+
+2) EL GATE DE P_RETO SEGUÍA VACÍO — AHORA NO PUEDE DAR VERDE
+   Tenías razón: 302 comparados / 0 desplazados / 302 SIN LLAVE no demuestra nada.
+   Yo ya lo reportaba, pero reportarlo y dejarlo en verde es lo mismo que
+   esconderlo.
+
+   Ahora `P_RETO_SIN_LLAVE_TRAZABLE` es el gate 13, BLOQUEANTE, y vale 302.
+   Lo puse como contador SEPARADO en vez de sumarlo al 10 a propósito: "nada se
+   movió" y "no pudimos comprobar si se movió" son dos cosas distintas y meterlas
+   en el mismo número volvería a esconder una dentro de la otra.
+   `todas_en_cero` ahora es false por esto, que es el estado honesto.
+   Cerrarlo es el punto 3 de tu orden y no lo adelanté.
+
+3) AUTORIDAD DEL CALIBRADOR AMBIGUA
+   Confirmado y peor de lo que sonaba: las DOS llaves tienen 2 métodos con
+   `creado_at` EMPATADO AL MICROSEGUNDO.
+     baseball/Over-Under/mlb_totales_normal_v1/cal_v4  isotonic y platt  23:21:56.476865
+     soccer/1X2/soccer_1x2_poisson_v1/cal_v4           identity y vector_scaling  23:33:35.969210
+   `ORDER BY creado_at DESC LIMIT 1` sobre timestamps idénticos es no
+   determinista. Y el aplicador ni exigía `elegido`.
+
+   Arreglo en dos niveles:
+   - `ux_calibrador_autoridad_unica`: índice ÚNICO parcial sobre
+     (deporte, mercado, model_version, calibration_version)
+     WHERE elegido AND apto_para_lock AND NOT invalidado.
+     La ambigüedad deja de ser detectable y pasa a ser IMPOSIBLE de insertar.
+   - el aplicador exige `elegido AND apto_para_lock AND NOT invalidado` y ya no
+     ordena ni limita: 0 autoridades → identidad; más de 1 → NULL, que el gate
+     cuenta como violación. No adivina.
+   - gate nuevo `CALIBRADOR_APTO_SIN_ELEGIR`: una fila `apto_para_lock` sin
+     `elegido` el aplicador la ignora, así que parece autorizada en el registro y
+     no lo está. Hoy 0, pero antes era invisible.
+
+--------------------------------------------------------------------------------
+CONTROLES NEGATIVOS (todos revertidos)
+--------------------------------------------------------------------------------
+  identidad sin verificar deporte ni liga -> el gate marca 80 de 320 aceptadas,
+      exactamente 40 'deporte_cambiado' y 40 'liga_cambiada'. Con la nueva: 0.
+  una sola autoridad (platt elegido+apto) -> aplicador: 62.5 -> 54.2
+  segunda autoridad en la misma llave (isotonic) -> BLOQUEADO por el índice
+  dos autoridades en soccer (identity + vector_scaling) -> BLOQUEADO por el índice
+  estado restaurado: 0 autoridades, 0 aptos
+
+El gate conductual ahora prueba 320 mutaciones (40 eventos x 8 tipos), con
+deporte y liga tomados de eventos REALES de la propia agenda, no inventados.
+
+--------------------------------------------------------------------------------
+GATES: 13
+--------------------------------------------------------------------------------
+  EV_FIELDS_USER_VISIBLE                24   (sin tocar, va al final de tu orden)
+  EV_EN_RUNTIME_ACTIVO                   6   (sin tocar)
+  UNIFORM_BASELINE_PICK_GATE             5   (sin tocar)
+  SPORT_QUOTA                            1   (v_reto13m_daily, sin tocar)
+  IN_SAMPLE_PROB_MUTATION                0
+  NONCANONICAL_OR_TRIVIAL_LINES          0
+  UNTRACEABLE_APPROVED_PICK              0
+  SUPERFICIE_SIN_CLASIFICAR              0
+  IDENTIDAD_NO_EXACTA                    0   (ahora incluye deporte, liga y firma)
+  P_RETO_DESPLAZADA_NO_REGISTRADA        0
+  CALIBRADOR_AUTORIDAD_INVALIDA          0   (ahora incluye ambigüedad)
+  SUPERFICIE_ALTERADA_EN_SILENCIO        0
+  P_RETO_SIN_LLAVE_TRAZABLE            302   NUEVO Y BLOQUEANTE
+
+Reproducibilidad: 6 de 6 cuerpos IGUAL_AL_ARCHIVO a la primera. En iss098
+fallaron 7 de 9 y tuve que ejecutar el archivo para alinear producción; esta vez
+escribí el archivo con los cuerpos exactos desde el principio.
+
+ORDEN DE EJECUCIÓN DE ESTA RONDA
+  1. iss099_identidad_deporte_liga_y_autoridad_unica.sql   (10 assertions)
+  2. gates_selector.sql                                    (runner de 13)
+  3. verificar_checksums_iss099.sql
+
+SIGUIENTE, según tu orden: volcar toda la capa origen transitiva, luego sacar la
+verdadera model_version/calibration_version de cada P_RETO (que es lo que apaga
+el gate 13), luego clean bootstrap desde Git, y sólo después los 24/6/5/1.
+
+================================================================================
+RONDA ISS100 — issue #4, comentario 5645732488 (2026-09-12)
+================================================================================
+
+HALLAZGO P0 QUE NO ESTABA EN LA AUDITORÍA
+-----------------------------------------
+Al reproducir tu dossier de Dortmund–Paderborn encontré que `v_analisis_v2` keyea
+TODO el análisis por equipo (forma, tendencias, xG, H2H) con
+`escudos_partido.home_id/away_id`, que usa ids de **API-Football**, mientras
+`v_equipo_partido_espn_xg` e `historico_partidos_espn` usan ids de **ESPN**.
+Son dos espacios de enteros pequeños que colisionan, así que el join no falla:
+devuelve el historial de otro equipo en silencio.
+
+  evento 401884799
+    agenda_espn:     home 124 = Borussia Dortmund · away 3307 = SC Paderborn 07
+    escudos_partido: home 165                     · away 185
+    en espacio ESPN: 165 = NANTES                 · 185 = FC DALLAS
+
+O sea el bloque "tendencias.home" del dossier de Dortmund son los últimos 8 de
+**Nantes**, y el de away son los de **FC Dallas**. Medido: 186 de 186 eventos de
+fútbol desalineados, 37 con colisión silenciosa (el id ajeno existe en el espacio
+ESPN y tiene historia).
+
+Así descubrí el defecto: al comparar mi cálculo con el bloque vivo, el dossier
+decía home gana_pct=25 cuando Dortmund ganó 5 de sus últimos 8. No era un
+contrato incompleto de tendencias: eran los números de otro equipo.
+
+El H2H "sin enfrentamientos directos" también se calculó sobre Nantes vs FC
+Dallas. Da 0, y el H2H real de Dortmund vs Paderborn también da 0, así que tu
+conclusión era correcta POR CASUALIDAD, no por método.
+
+`home_forma`/`away_forma` sí estaban bien porque `v_fuerza_equipo` también usa
+ids de API-Football. Por eso el defecto es invisible: la mitad del dossier es
+correcta.
+
+LO ENTREGADO
+------------
+1. `partidos_recientes_equipo()` — últimos N reales por espn_team_id, con evento,
+   fecha, competencia (`espn_endpoint`), rival + rival_espn_id, local/visita,
+   marcador, resultado, source, capturado_max, data_asof, temporal_safe y
+   missing_reason. Si sólo hay 2, devuelve 2. Nunca rellena.
+   Dortmund da WWWWL real en 4 competencias, contra el 'WW' de `v_fuerza_equipo`
+   que sólo veía 2 partidos de Bundesliga.
+2. `tendencias_equipo_exactas()` — cada métrica con `aciertos` Y `muestra`, y el
+   pct derivado de esos dos. Ventana solicitada y obtenida por separado, más
+   `eventos_usados` para que se pueda replicar. Dortmund: gana 5/8, btts 4/8,
+   over25 5/8.
+3. `h2h_factual()` — identidad exacta por espn_team_id en ambos sentidos, corte
+   `fecha < kickoff`, falla cerrado con motivo. Para 401884799 da 0 y lo dice.
+   Nota: el H2H viejo NO usaba nombres; ya usaba ids. El problema era de qué
+   espacio venían esos ids.
+4. `v_contexto_factual_v1` — CONTEXT_ONLY, identidad ESPN desde `agenda_espn`.
+   Assertion 8 comprueba que ninguna vista la consume; no toca P_RETO.
+5. Cuarentena de Under 3.5 en el origen: tabla `mercado_cuarentena` +
+   `pick_en_cuarentena()`, aplicada a 8 vistas.
+   `MERCADO_EN_CUARENTENA_CANDIDATO = 0`.
+6. Regresión del fixture 401884799: 9 assertions.
+
+SIN ASCENSO COLATERAL
+---------------------
+18 filas Under 3.5 en `v_pick_canonico`, **11 eran rank 1**. Si borro y se
+recalcula el rank, asciende otro pick — lo que prohibiste. Apliqué el filtro como
+envoltura EXTERNA: el rank se calcula dentro, así que las filas desaparecen sin
+renumerar. Huella md5 de las 284 restantes (evento|mercado|pick|prob|rank)
+IDÉNTICA antes y después: ac7e12585a1ae9c8f7d1d6ebe8f2e287.
+
+LO QUE ENCONTRÉ DE MÁS QUE TU CONTEO
+------------------------------------
+Tú reportaste 18 + 22. El gate encontró 494 filas en 15 vistas más. Las separé en
+tres estados, no dos:
+  CANDIDATO (fecha futura probada, BLOQUEANTE)      -> 151, ahora 0
+  TEMPORALIDAD NO PROBADA (sin columna de fecha)    -> 328, SIGUE ABIERTO
+  HISTÓRICO PROBADO (fecha pasada)                  -> 0
+"Sin columna de fecha" no prueba que sea histórico, así que no le doy el beneficio
+de la duda. Y no las filtro: unas son registro histórico y borrarlas falsificaría
+el track record (ai_picks_historial 116, v_picks_medibles 116, track_record_* 28,
+picks_reales 4, v_tr_base 4); otras suenan prospectivas (v_oraculo_picks_activos
+26, v_picks_para_parlay 19, v_motor_valor_proximos 8, v_apuestas_equipo 7).
+Distinguirlas por el NOMBRE sería el atajo que este proyecto ya rechazó. Necesitan
+una declaración explícita de temporalidad.
+
+LO QUE NO HICE, A PROPÓSITO
+---------------------------
+No reescribí `v_analisis_v2`. Acotaste este bloque a "stage in Git, do not cut
+over". Dejo el gate que prueba el defecto y la vista correcta lista. Mientras el
+frontend no cambie de fuente, 37 dossieres siguen mostrando otro equipo.
+Esto es tuyo para decidir; mi recomendación es cambiarlo ya.
+
+DEUDA DE REPRODUCIBILIDAD, RECONOCIDA
+-------------------------------------
+La envoltura de cuarentena LEE la definición vigente de producción, igual que
+iss099. Es exactamente la deuda que marcaste como bloqueante del clean bootstrap.
+No queda cerrada aquí. El siguiente bloque es el volcado de la capa origen
+transitiva.
+
+================================================================================
+RONDA ISS101 — inventario temporal explícito de Under 3.5 (2026-09-12)
+================================================================================
+
+ERROR MÍO EN ISS100, ENCONTRADO AL CERRAR ESTO
+----------------------------------------------
+Mi gate buscaba la fecha por NOMBRE entre 6 candidatos y se perdió `match_date`,
+`fecha_utc`, `fecha_seleccion` e `intended_game_date`. Por eso reporté "328 filas
+sin columna de fecha" cuando las 10 vistas SÍ tenían columna temporal. Adivinar
+por nombre fue el error, igual que el gate de ajustes ocultos que ya habíamos
+reemplazado por uno conductual. Lo sustituí por una declaración explícita.
+
+Y un segundo error del mismo parche: filtré 4 vistas ENTERAS en vez de por fila.
+En las dos que tenían filas pasadas eso borró registro histórico. Corregido a
+filtro por fila. `picks_premium` y `picks_recomendados_hoy` resultaron 100%
+prospectivas (0 filas pasadas), así que ahí no hubo daño.
+
+LA DISTINCIÓN QUE HACE EL TRABAJO
+---------------------------------
+Fecha de EVENTO vs sello de REGISTRO. `created_at`, `updated_at`, `calculado_at`,
+`congelado_at`, `momio_leido_en`, `momio_capturado_at`, `clv_registrado_at` y
+`occurred_at` dicen cuándo se escribió la fila, no cuándo se juega. Un pick creado
+ayer puede ser de un partido de mañana. La assertion 2 prohíbe que cualquiera de
+esos se declare como columna de evento.
+
+`superficie_temporalidad`: 32 superficies declaradas, 27 con fecha de evento real,
+5 sin ninguna.
+
+SEGUNDA VÍA DE PRUEBA: LIQUIDACIÓN
+----------------------------------
+Para las 5 sin fecha de evento encontré otra prueba que no depende de fechas: si
+la fila está LIQUIDADA, el evento ocurrió. `track_record_historial` y `v_tr_base`
+tienen `resultado='perdido'` en sus 8 filas → históricas probadas.
+
+Pero `track_record_detalle` tiene 24 con `resultado='pendiente'`. Eso no prueba
+nada, y es un hallazgo en sí: son selecciones de entre el 2026-08-19 y el
+2026-09-11 que nunca se liquidaron. No las filtro porque cambiaría el denominador
+del track record, y no las declaro históricas porque 'pendiente' no es prueba.
+Hay que liquidarlas o anularlas; es decisión de producto.
+
+RESULTADO
+---------
+  MERCADO_EN_CUARENTENA_CANDIDATO                = 0     bloqueante, limpio
+  MERCADO_EN_CUARENTENA_SIN_CLASIFICAR           = 0     bloqueante, limpio
+  SUPERFICIE_CON_PICK_SIN_DECLARAR_TEMPORALIDAD  = 0     bloqueante, limpio
+  en_cuarentena_historico_por_fecha              = 201   preservado
+  en_cuarentena_historico_por_liquidacion        = 8     preservado
+  en_cuarentena_pendiente_sin_liquidar           = 24    ABIERTO
+
+93 predicciones Under 3.5 sobre eventos futuros que seguían visibles tras ISS100
+ahora son 0: ai_picks_historial 24, v_picks_medibles 24, v_oraculo_picks_activos
+21, v_picks_para_parlay 16, v_motor_valor_proximos 8. Todas filtradas a nivel de
+fila, sin tocar sus filas históricas.
+
+NOTA HONESTA SOBRE LA HUELLA DE v_pick_canonico
+-----------------------------------------------
+Entre la huella que tomé en ISS100 (ac7e1258…) y la de ahora (9acd1c66…) el
+conteo sigue en 284 pero el md5 cambió. No toqué esa vista ni sus insumos en ese
+intervalo, así que lo más probable es que sea dato vivo (momios y partidos que
+arrancan). No puedo probarlo retroactivamente, así que lo reporto como lo que es:
+sin explicación verificada.
+
+SIGUIENTE, según el orden fijado: volcar la capa origen transitiva (que cierra la
+deuda de los wrappers que leen definiciones de producción), luego la llave real de
+las 302 filas sin defaults, luego disposable con el candidato exacto.
+
+================================================================================
+RONDA ISS102 — P0-1 NFL RESULT TRUTH / PARLAY AUTOGRADE (2026-09-12)
+================================================================================
+
+Reproducido primero: evento 401872657, `nfl_partidos` decía `scheduled` con
+marcador NULL y se había actualizado HOY 13:23, mientras `live_scores` tenía
+FINAL 7-27 desde el día 11.
+
+VERIFIQUÉ LAS CALIFICACIONES CONTRA DATO REAL, no contra ausencia de dato:
+los game logs del evento dan McCaffrey 0 TD, Adams 0 TD, Stafford 0 pases de TD
+(el único TD de LAR fue carrera de Kyren Williams) y 34 puntos totales < 50.5.
+Las cuatro calificaciones ya eran correctas. Lo roto era la AUTORIDAD DE ESTADO.
+
+Detalle que importa para cualquier grading de TDs: en `nfl_player_game_logs`,
+`pass_tds` y `rec_tds` cuentan EL MISMO touchdown desde los dos lados. El total
+real de un equipo es rush_tds + rec_tds. Sumar pass_tds lo duplicaría.
+
+CONFLICTO REAL DE AUTORIDAD DESCUBIERTO
+---------------------------------------
+Evento 401874394 (Titans–Bears): `live_scores` dice **final 0–0**, el box score
+dice 15–24, y los game logs muestran CHI 3 TD reales y TEN 1 TD. El 0–0 es falso.
+Por eso la precedencia NO puede ser "la fuente más reciente": `live_scores` es un
+feed en vivo que puede quedar capturado y publicar `final` con placeholder.
+Precedencia declarada: box score ESPN > live_scores > game logs como prueba de
+que SE JUGÓ (nunca del marcador; no se sintetiza sumando touchdowns).
+
+IDEMPOTENCIA PROBADA
+--------------------
+  ANTES huella dca717d4…, 298 finales, 4 desalineados
+  RUN 1 huella d7514cea…, 301 finales, 1 desalineado, 3 filas
+  RUN 2 huella d7514cea…, 301 finales, 1 desalineado, **0 filas**
+
+picks_calificacion: era una segunda verdad. 42 de 68 vacías y 26 divergentes, de
+las cuales **6 discrepaban en el RESULTADO del leg** (decían `pendiente` con
+`pick_desc` NULL mientras `picks_data` ya tenía el grado). Ahora es una derivación
+por trigger. 42→0 vacías, 26→0 divergentes, run2 idéntico.
+
+ANTES DE ESCRIBIR verifiqué que los 25 triggers de `parlays` no duplicaran
+economía: bankroll, recálculo semanal, notificación, auditoría y captura de
+aprendizaje están todos guardados por cambio de `resultado`. Medido: huella
+económica idéntica en las tres fases y notificaciones 362 → 362 → 362.
+
+CONTROLES NEGATIVOS (revertidos)
+  devolver 401872657 a 'scheduled'         -> NFL_ESTADO_DESALINEADO 0 → 1
+  corromper picks_calificacion de fbb18adb -> PARLAY_CALIFICACION_DIVERGENTE 0 → 1
+
+ESTADO
+  NFL_ESTADO_DESALINEADO          = 0
+  PARLAY_CALIFICACION_DIVERGENTE  = 0
+  PARLAY_GANADO_CON_LEG_PENDIENTE = 0
+  NFL_RESULTADO_EN_CONFLICTO      = 1   BLOCKER externo (401874394)
+  PARLAY_PERDIDO_SIN_LEG_PERDIDO  = 1   hallazgo nuevo, abierto
+
+================================================================================
+RONDA ISS103 — P0-2.F coherencia matemática del modelo de fútbol (2026-09-12)
+================================================================================
+
+Reproduje el caso Cruz Azul–América (evento 401876981) y el problema es peor que
+lo reportado: no es la álgebra de la doble oportunidad, es que **hay varios
+motores publicando números distintos para el mismo evento**.
+
+Cuatro probabilidades de local para ESE evento:
+  38.4  analisis_json → probabilidades.home_win (_fuente_1x2 dixon_coles_determinista)
+  39.1  analisis_json → picks_recomendados[].prob  ← el pick PUBLICADO
+  39.9  fut_predicciones → 'Gana local'
+  49.1  lo que viste en la UI
+Y tres pares de xG, dos de ellos **dentro del mismo JSON**:
+  1.33/1.17 (goles_esperados) · 1.512/1.205 (pronostico_meta.xg) · 1.4546/1.3752 (λ)
+
+`mercados_desde_matriz()` es coherente por construcción: la doble oportunidad sale
+del mismo CTE normalizado. Verificado: 39.9+34.7 = 74.6 = el `12` guardado, exacto.
+El derivador de mercados secundarios NO es el defecto.
+
+MEDIDO EN 637 EVENTOS
+  SUMA_1X2_INVALIDA             = 0     cada motor suma 100 por separado
+  DOBLE_OPORTUNIDAD_INCOHERENTE = 0     la álgebra de fut_predicciones es correcta
+  MODEL_MATRIX_INCOHERENT       = 19    dos motores, distinta P(local)
+  PICK_FUERA_DE_SU_DISTRIBUCION = 340   el pick publicado no sale de su propia 1X2
+  desacuerdo máximo             = 28.6 pp
+
+PEOR CASO, evento 401876458:
+  Motor A: 48.6 / 25.6 / 25.7      Motor B: 20.0 / 16.2 / 63.8
+  No solo difieren: se contradicen en QUIÉN ES EL FAVORITO.
+
+DOS HALLAZGOS MÁS EN EL MISMO EVENTO
+* El pick se eligió por EDGE: `"edge_calculado": 11.3`, `"ev_estimado": "+11.4%"`,
+  `[PICK DE VALOR] Cruz Azul ML`. Viola el candado directamente.
+* `v_analisis_partido` **revienta** al leer este evento:
+  `invalid input syntax for type integer: "38.4"` — hay un cast a integer sobre
+  una probabilidad decimal. Medido y reportado; no lo toco sin su propio ciclo.
+
+Lo que NO hice, a propósito: no "corregí" ningún número. El arreglo correcto es
+elegir un motor canónico —el bakeoff A/B que el propio issue #4 exige— y suprimir
+en falla cerrada los mercados secundarios de todo evento incoherente. Eso necesita
+muestra histórica emparejada y es un frente propio, no un parche.
+
+================================================================================
+RONDA ISS107 — P0-2.H: el reason_code contradictorio NO lo genera el backend
+================================================================================
+
+El dueño reportó: muestra `44 local / 2 visita` con razón
+`AWAY_EVENT_LEAGUE_SAMPLE_BELOW_2` y prosa "menos de 2 partidos".
+
+BUSCADO EXHAUSTIVAMENTE EN LA BASE:
+  funciones con 'EVENT_LEAGUE|AWAY_EVENT|LEAGUE_SAMPLE'  -> 0
+  vistas con esos patrones                               -> 0
+  filas de analisis_partidos que contengan la cadena     -> 0
+
+Los únicos reason codes de muestra que SÍ existen en Postgres son
+`DOMESTIC_SAMPLE_BELOW_TARGET` y `DOMESTIC_SAMPLE_STILL_LOW`, dentro de
+`get_soccer_coverage_jobs`, y no son esos.
+
+CONCLUSIÓN: ese código de razón se compone FUERA de la base — frontend o edge
+function. Por eso puede contradecir la muestra: el backend publica `muestra=2` y
+otra capa inventa un umbral que el backend nunca afirmó. No es un desajuste de
+operador (`<` vs `<=`) ni evidencia stale: es una cadena que el backend no emite.
+
+CONTRATO REQUERIDO (backend lo define, frontend lo consume; no edito React):
+  gate_metric      identificador semántico de la métrica que decide
+  observed_value   el valor medido
+  threshold        el umbral aplicado
+  operator         '<' | '<=' | '>' | '>='
+  reason_code      derivado de los cuatro anteriores, nunca escrito a mano
+  evidence_source  de dónde salió observed_value
+Invariante permanente: reason_code tiene que ser reconstruible desde
+(gate_metric, observed_value, threshold, operator). Si no se puede reconstruir,
+es prosa, no diagnóstico.

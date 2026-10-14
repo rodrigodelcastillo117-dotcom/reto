@@ -1,0 +1,119 @@
+-- iss080 · RETO 13M mostraba la cartelera completa, no los mejores picks.
+--
+-- El owner pasó la pantalla: ~100 partidos, literalmente todos los de fútbol del fin
+-- de semana más los 14 de NFL. Y la calidad de lo que encabezaba:
+--     "Troyes @ Lille — Lille 35.0%"
+--     "New York City FC @ Real Salt Lake — Real Salt Lake 36.0%"
+--     "Standard Liege @ KVC Westerlo — Standard Liege 36.6%"
+-- En un mercado de 3 vías la base de azar es 33.3%. Un 35% NO ES UN PICK: es "el menos
+-- improbable de tres". La app hasta lo decía en su propio pie de tarjeta
+-- ("Punto de partida de este mercado: 33.3% (al azar)") y aun así los listaba como
+-- "LO QUE RETO CREE QUE VA A PASAR".
+--
+-- ===== v_reto13m_lo_mejor: rn_deporte = 1 es EL pick de ese deporte =====
+--
+-- ORDEN DE SELECCIÓN, en este orden exacto:
+--  1) H2H. Si contradice la línea, el pick se DESCARTA (no se degrada: se va).
+--     Hoy solo aplica a MLB, que es donde hay H2H real: v_mlb_h2h, 435
+--     emparejamientos construidos desde 129 mil entradas de linescore (iss076).
+--  2) CALIBRACIÓN. Un pick calibrado le gana a uno sin calibrar, y a mayor muestra
+--     mejor. ERROR MÍO EN LA PRIMERA VERSIÓN: puse el desacuerdo antes que la
+--     calibración y me salió un MLS SIN CALIBRAR como "el mejor de fútbol", cuando el
+--     fútbol tiene 37 de 42 moneylines calibrados con muestras de hasta 2,612. Lo
+--     detecté revisando por qué el respaldo decía SIN CALIBRAR en un deporte que sí
+--     está calibrado. Corregido.
+--  3) DESACUERDO con el precio. Coincidir con la casa es pagar comisión por nada, y
+--     fue exactamente lo que costó el 1-7 (desacuerdo medio de 1.26 puntos).
+--  4) VENTAJA SOBRE EL AZAR. Es lo que permite comparar ENTRE deportes: un 60% en el
+--     1X2 de fútbol (base 33.3) vale mucho más que un 60% en un total (base 50).
+--     Que el moneyline de fútbol es de 3 vías no lo supuse: se ve en el dato, hay
+--     probabilidades de 11.7%.
+--
+-- FILTROS DUROS: probabilidad >= 55, nuestra probabilidad > la que implica el precio,
+-- y el H2H no puede contradecir.
+--
+-- NFL VA POR SU PROPIA RAMA. v_pick_canonico solo trae 1 de los 16 partidos de la
+-- semana (bug aparte, SIN RESOLVER); nfl_tablero_semana trae los 14 por jugar, los 14
+-- con pick del modelo. Ventana de 8 días para NFL porque juega una vez por semana;
+-- 36 horas para el resto. Y OJO: sus momios vienen en formato AMERICANO (-218, 180,
+-- 145) mientras el resto viene en DECIMAL (1.5714). Se convierten aquí; pintar "145"
+-- junto a "1.57" como si fueran lo mismo es un error que el owner iba a ver.
+--
+-- es_validado = false cuando el modelo del deporte NO ha demostrado que le gana al
+-- mercado. Hoy: NFL (Brier 0.22702 del modelo contra 0.21822 del mercado, 208
+-- partidos). APARECE igual, porque el owner pidió uno por deporte, pero el front DEBE
+-- mostrarlo aparte y con su advertencia. "Esto creemos" no es "esto recomendamos", y
+-- confundir las dos cosas es lo que produjo el 1-7.
+--
+-- ===== RESULTADO, leído como anon: 3 picks de 17 candidatos =====
+--   FÚTBOL  (validado)   Seattle Sounders @ LA Galaxy · Under 3.5
+--                        nosotros 71.4% · precio 63.6% · 21.4 sobre el azar ·
+--                        7.8 de desacuerdo · respaldo ALTO con 2,026 de muestra
+--   MLB     (validado)   Pittsburgh Pirates @ Chicago Cubs · Over 8
+--                        61.7% · 54.1% · 11.7 sobre el azar · 7.6 de desacuerdo ·
+--                        H2H DE 32 JUEGOS PROMEDIANDO 10.81 CARRERAS contra línea de 8
+--   NFL  (NO validado)   Baltimore Ravens @ Indianapolis Colts · Gana Colts
+--                        60.9% · 39.1% · 21.8 de desacuerdo · momio 2.450
+--
+-- El de MLB es el ejemplo de lo que el owner pidió: análisis Y H2H de verdad, no de
+-- adorno. Los Cubs y los Pirates promedian 10.81 carreras entre ellos en 32 juegos y
+-- la línea está en 8, así que el H2H APOYA el Over. Si promediaran 7, el pick se
+-- habría descartado solo.
+--
+-- Nota sobre el de NFL: 21.8 puntos de desacuerdo es enorme, y eso es precisamente el
+-- perfil de un modelo que pierde contra el mercado -- discrepa mucho y con confianza,
+-- y se equivoca. Por eso va marcado y aparte.
+--
+-- PENDIENTE: la vista vieja v_reto13m_mejores (10 por deporte, y con picks al 46.3%)
+-- sigue existiendo. No la borré para no romper el front de golpe; una vez que Lovable
+-- apunte a v_reto13m_lo_mejor hay que retirarla.
+
+-- El cuerpo vigente se recupera con:
+--   select pg_get_viewdef('public.v_reto13m_lo_mejor'::regclass, true);
+-- Y el GRANT va EN SU PROPIA LLAMADA:
+--   grant select on public.v_reto13m_lo_mejor to anon, authenticated;
+
+-- ===== CORRECCIÓN: MI PRIMERA VERSIÓN VIOLABA EL CANDADO DEL OWNER =====
+--
+-- Apareció en el proyecto de Lovable, a las 17:02, una auditoría que NO vino de esta
+-- sesión, citando SHAs concretos y estableciendo el issue #4 owner lock:
+--   "El desacuerdo con el mercado (score_valor, discriminacion_pp, brecha_pp,
+--    implied-price gap, EV, etc.) puede mostrarse solo como contexto diagnóstico;
+--    NUNCA puede seleccionar, ordenar, autorizar, suprimir ni sustituir un pick
+--    de P_RETO."
+--
+-- Mi primera versión de esta vista lo violaba de dos formas:
+--   1. ORDENABA por discriminacion_pp.
+--   2. FILTRABA con `probabilidad_pct > prob_que_implica_el_precio_pct`, o sea
+--      SUPRIMÍA picks según el mercado.
+--
+-- Y el candado tiene razón. Ordenar por (nuestra probabilidad menos la del mercado)
+-- significa que el número de la casa es LA MITAD del criterio: si DraftKings mueve la
+-- línea, el ranking cambia aunque nuestro análisis no se haya movido ni un punto. Es
+-- dejar que el sportsbook elija, solo que más disimulado que el EV. Es exactamente lo
+-- que el owner prohibió desde el principio ("nunca sustituyas P_RETO con el implied /
+-- no-vig de DraftKings").
+--
+-- ORDEN CORREGIDO, solo con señales PROPIAS:
+--   1) H2H (dato histórico nuestro; si contradice, se descarta)
+--   2) Calibración y tamaño de muestra (qué tan bien le ha atinado el modelo)
+--   3) ventaja_sobre_azar = P_RETO menos la base ARITMÉTICA del mercado (33.3% con
+--      tres resultados, 50% con dos). Eso NO es un precio: es cuántos resultados tiene
+--      el mercado. Es lo que permite comparar un 60% de 1X2 con un 60% de un total.
+--   4) P_RETO a secas.
+-- FILTRO: probabilidad >= 55 y el H2H no puede contradecir. Se ELIMINÓ el filtro por
+-- precio implícito, porque suprimir según el mercado también está prohibido.
+-- discriminacion_pp y prob_que_implica_el_precio_pct SIGUEN en la vista como CONTEXTO.
+--
+-- CONSECUENCIA REAL, y hay que entenderla:
+--   FÚTBOL cambió de Seattle @ LA Galaxy (71.4%) a Portland @ FC Dallas Over 2.5
+--     (72.9%, respaldo ALTO, 2,026 de muestra). Este último ni siquiera tiene precio
+--     de casa (prob_que_implica_el_precio_pct es NULL): con el orden viejo quedaba
+--     fuera por no haber con qué compararlo. Ahora entra por su propio mérito.
+--   NFL cambió de Ravens @ Colts (60.9%, 21.8 de desacuerdo) a Browns @ Jaguars
+--     (78.4%). Y aquí está lo interesante: el mercado dice 78.7% y nosotros 78.4%,
+--     o sea CASI COINCIDIMOS (desacuerdo -0.3). Con el orden viejo lo habría
+--     descartado por "no hay ventaja". Con el candado entra de primero porque es lo
+--     que más probable vemos.
+--   Eso es literalmente lo que el owner pidió: "PURO % SEGÚN EL ANÁLISIS Y LOS DATOS",
+--   no "dónde le ganamos a la casa".

@@ -1,0 +1,36 @@
+-- iss066 — Marcadores enteros (pedido explícito) y por qué el cerebro dejó de aprender.
+--
+-- ═══ 1. MARCADORES HACIA ARRIBA ═══
+-- Pedido textual: "SIEMPRE REDONDEAR LOS MARCADORES HACIA ARRIBA".
+-- En NFL no existen los puntos fraccionarios: 25.9 se lee 26, no 25. Se usa `ceil`, no `round`,
+-- para no reportar de menos lo que el modelo espera.
+--
+-- Columnas nuevas en `nfl_tablero_semana`:
+--   reto_pts_local_ent · reto_pts_visitante_ent · reto_marcador_proyectado · reto_total_esperado_ent
+--
+-- MEDIDO:  22.2-25.9 → "23-26"   ·   21.4-23.5 → "22-24"   ·   20.7-25.2 → "21-26"
+--
+-- CASCADA, la lección que ya me había mordido una vez: recrear `nfl_tablero_semana` tumba
+-- `nfl_lock_semana` Y `v_prediccion_reto_canonico`. Esta vez se recrearon las TRES en el mismo
+-- paso y se contaron las 8 superficies después, no sólo la que toqué:
+--   nfl_tablero_semana 16 · nfl_lock_semana 14 · canónico NFL 14 · canónico fútbol 109
+--   mejor_pick_por_partido 30 · props_top_equipo 161 · reto13m_mejores 14 · picks_con_valor 15
+--
+-- ═══ 2. POR QUÉ EL CEREBRO NO APRENDÍA — no faltaba la tabla, faltaba que corriera ═══
+-- El owner pidió "que todo se guarde en el cerebro o BD, para mejorar picks día con día".
+-- Lo primero fue verificar si ya existía en vez de construir una séptima tabla encima: hay
+-- SEIS tablas de aprendizaje. El diagnóstico real es si se están llenando:
+--
+--   pick_learning_data ..... 543 filas, TODAS con resultado, última ayer 20:50  → VIVA
+--   rongol_memoria ......... 4,410 filas, última 6-sep                          → MUERTA
+--   reto_picks_mostrados ... 8 filas, última 7-sep                              → CASI MUERTA
+--   bitacora_aprendizaje ... 2 filas, última 3-sep                              → MUERTA
+--
+-- `rongol_memoria` dejó de crecer el **6 de septiembre**, que es EXACTAMENTE el día en que el
+-- cron de RONGOL empezó a fallar en su primer COMMIT. No son dos problemas: es uno.
+-- La memoria del cerebro dejó de llenarse porque el ciclo que la llena estaba roto.
+--
+-- Ya se reapuntó el job 182 a `rongol_ciclo()` (la variante sin COMMIT). Además se programó una
+-- corrida de recuperación (job temporal 423) porque el ciclo tarda ~80 s y el cliente MCP corta
+-- a los 60: ejecutarlo desde aquí lo cancelaba a media corrida. Por cron corre del lado del
+-- servidor y no depende de la conexión.
