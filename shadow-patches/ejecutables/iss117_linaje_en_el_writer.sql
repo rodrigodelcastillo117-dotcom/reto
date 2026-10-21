@@ -1,0 +1,113 @@
+-- =====================================================================
+-- ISS117  LINAJE EN EL PUNTO DE ESCRITURA  (Decision 1 del dueno)
+-- =====================================================================
+-- LO QUE PIDIO: que toda fila predictiva NUEVA persista su linaje real al
+-- escribirse. Y prohibido rellenar filas viejas con defaults para revivir picks.
+--
+-- LO QUE ENCONTRE ANTES DE ESCRIBIR UNA LINEA, Y CAMBIA EL DIAGNOSTICO
+--   El problema no es que los writers "no estampen". Es que HOY NO HAY NADA
+--   VERDADERO QUE ESTAMPAR:
+--
+--   motor_modelo_mapa: los 7 mapeos motor->modelo tienen model_version = NULL.
+--     Las notas las escribi en una sesion anterior y dicen por que:
+--       motor_futbol_calibrado  SIN REGISTRAR. modelo_version_activa(soccer)
+--                               devuelve crossleague_v1, que NO existe en
+--                               modelo_registry: referencia colgante.
+--       motor_mlb_cuantitativo  SIN REGISTRAR. NO es mlb_ml_poisson_v1
+--                               (MODEL_REJECTED) ni mlb_totales_normal_v1
+--                               (ese es el del backtest, no el que sirve).
+--       motor_picks             SIN REGISTRAR.
+--
+--   calibradores: CERO autoridades. Todos invalidados o no elegidos. Asi que
+--     calibration_status = NOT_VALIDATED no es un placeholder: es la verdad.
+--
+--   modelo_registry: 1 en PRODUCCION, 3 CHALLENGER, 4 MODEL_REJECTED.
+--
+-- HALLAZGO NUEVO: UN CEREBRO PAGADO Y DESCONECTADO
+--   nfl-2026.09.2 (football/Moneyline, "ES EL CEREBRO NFL BUENO") esta en
+--   PRODUCCION en modelo_registry, y NINGUN motor apunta a el. motor_modelo_mapa
+--   no tiene ni una fila de football. Es el unico modelo de produccion que
+--   existe y esta desconectado del mapa.
+--
+-- SEGUNDO HALLAZGO, CAUSAL
+--   fut_predicciones NO TIENE espn_event_id. Solo fixture_id (API-Football).
+--   Eso explica los 462 MODELO_SIN_EVENTO_EN_AGENDA que reporte en ISS110: el
+--   generador de soccer esta llaveado al id de otro proveedor y la traduccion
+--   a ESPN pasa despues, via ligamx_partidos. No es un hueco de ingesta: es
+--   que la tabla nace en otro espacio de identidad.
+--
+-- QUE SE CONSTRUYO
+--
+--  1) linaje_de_motor(motor, deporte, mercado) -> jsonb
+--     Dice la verdad o dice que no sabe. NUNCA inventa una version:
+--       motor nulo                  -> MOTOR_NO_DECLARADO
+--       motor sin modelo en el mapa -> NO_MODEL_REGISTERED
+--       mapa -> modelo inexistente  -> MODEL_NOT_IN_REGISTRY
+--       modelo rechazado            -> MODEL_REJECTED
+--       modelo en produccion        -> OK
+--     calibration_version solo se llena si hay EXACTAMENTE UNA autoridad viva;
+--     si no, NOT_VALIDATED explicito en lugar de una version falsa.
+--
+--  2) declarar_motor(text)  el writer se identifica antes de escribir.
+--
+--  3) motor_tabla_mapa  que motor escribe cada tabla, CON SU EVIDENCIA. No es
+--     una suposicion: sale de contar filas contra la atribucion que v_pick_canonico
+--     ya hace en produccion.
+--       fut_predicciones  -> motor_futbol_calibrado  (119 filas = 119)
+--       badrino_partidos  -> motor_mlb_cuantitativo  (160 filas = 160)
+--       analisis_partidos -> motor_picks
+--
+--  4) tg_estampar_linaje, disparador BEFORE INSERT OR UPDATE en las 3 tablas.
+--     Se eligio disparador y no editar las 5 funciones generadoras porque un
+--     disparador atrapa a TODO writer, incluidos los que no encontre y los
+--     que se escriban manana, y porque editar funciones de cron a ciegas
+--     arriesga el pipeline de resultados.
+--     Distingue el motor DECLARADO del DERIVADO del mapa (sufijo
+--     MOTOR_DERIVADO_DE_TABLA): derivar no es inventar, pero tampoco es que el
+--     writer lo haya afirmado, y esa diferencia se ve en el dato.
+--     NUNCA levanta excepcion: abortar tumbaria la corrida de cron.
+--     Solo llena columnas NULL: un writer que ya estampe bien no se pisa.
+--
+--  5) Columnas aditivas y nullables en las 3 tablas: motor, model_version,
+--     calibration_version, calibration_status, lineage_status, decision_time,
+--     source_data_asof. SIN BACKFILL.
+--
+-- UN BUG QUE ATRAPO LA PRIMERA ESCRITURA DE PRUEBA
+--   La primera version del disparador derivaba el deporte con un CASE unico
+--   que incluia NEW.espn_event_id. PL/pgSQL resuelve NEW.<campo> de TODAS las
+--   ramas, y fut_predicciones no tiene esa columna: reventaba con
+--   "record new has no field espn_event_id" en cada INSERT. Si lo hubiera
+--   instalado sin probar con una escritura real, habria roto los tres
+--   generadores. Se partio en IF/ELSIF.
+--
+-- PRUEBAS
+--   Resolvedor, control POSITIVO (para que no fuera un verde vacuo): se mapeo
+--   temporalmente un motor de prueba al unico modelo en PRODUCCION, a uno
+--   RECHAZADO y a uno colgante, en la MISMA transaccion, y se borro. Devolvio
+--   OK, MODEL_REJECTED y MODEL_NOT_IN_REGISTRY respectivamente. Efecto neto
+--   cero, 0 filas de prueba residuales.
+--   Estampado: 4 pruebas PASS en las 3 tablas
+--     fut_predicciones   deriva motor_futbol_calibrado, marca DERIVADO, mv NULL
+--     badrino_partidos   deriva motor_mlb_cuantitativo
+--     analisis_partidos  deriva motor_picks, y sin evento en agenda no inventa
+--     declarado explicito NO lleva el sufijo de derivado
+--   0 residuos en las tres tablas.
+--   884 filas viejas de fut_predicciones: 884 sin decision_time, 0 con linaje.
+--   No hubo backfill.
+--
+-- ESTADO DEL GATE
+--   LINAJE_ESTAMPADO_INSTALADO       PASS     3
+--   MOTOR_SIN_MODELO_REGISTRADO      FAIL     7   <- EL bloqueador del producto
+--   CALIBRADOR_SIN_AUTORIDAD         FAIL     0
+--   MODELO_EN_PRODUCCION_SIN_MOTOR   FAIL     1   nfl-2026.09.2
+--   FILAS_NUEVAS_CON_LINAJE_OK       INFO     0
+--   FILAS_VIEJAS_SIN_LINAJE          INFO  2026
+--
+-- LO QUE NO HICE, Y ES LO QUE FALTA
+--   No registre ningun modelo. Decidir que model_version corresponde a
+--   motor_futbol_calibrado es exactamente el bakeoff A/B que el dueno exige, y
+--   para motor_mlb_cuantitativo es identificar y gobernar el modelo que de
+--   verdad sirve esa vista. Eso no es plomeria: es decision de modelo, y esta
+--   congelada. La plomeria ya esta puesta: el dia que se registre un modelo,
+--   las filas nuevas nacen con linaje OK sin tocar nada mas.
+-- =====================================================================

@@ -1,0 +1,97 @@
+-- =====================================================================
+-- ISS118  ENDURECER SELECT DEL GOBIERNO  (Decision 3 del dueno)
+-- =====================================================================
+-- AUTORIZACION: comentario 5647114240. El dueno corrio una auditoria read-only
+-- del frontend completo y autorizo revocar SELECT a anon/authenticated SOLO en
+-- el conjunto que probo que el navegador NO consulta, prohibiendo el revoke
+-- masivo y nombrando dos vistas que NO se pueden tocar:
+-- v_picks_futbol_calc y v_reto13m_lo_mejor.
+--
+-- ROMPI PRODUCCION DOS VECES ANTES DE QUE ESTO QUEDARA BIEN. Lo escribo aqui
+-- porque es la parte util del parche.
+--
+-- INTENTO 1: revoque los 9 y mi prueba grito
+--   "ROMPI v_picks_futbol_calc ROMPI v_reto13m_lo_mejor"
+--   o sea exactamente las dos que el dueno prohibio tocar. Revertido en el
+--   acto. Causas, dos distintas y las dos por chequeo incompleto:
+--
+--   a) v_reto13m_lo_mejor depende (3 saltos) de picks_recomendados_hoy, y la
+--      cadena CRUZA vistas security_invoker (picks_recomendados_hoy_raw,
+--      v_evento_hora, v_radar_odds_fase). Cuando la ejecucion entra a una
+--      vista security_invoker, a partir de ahi aplican los permisos del
+--      CLIENTE, asi que revocar la tabla base tumba todo lo de abajo.
+--      Mi chequeo previo solo mirof referencias DIRECTAS de vistas
+--      security_invoker a los objetivos. Faltaba el cierre TRANSITIVO.
+--
+--   b) v_picks_futbol_calc no aparecia en ningun camino de vistas, y aun asi
+--      se rompio. La pieza que me faltaba no era una vista: era una FUNCION.
+--      pick_en_cuarentena() es SECURITY INVOKER y lee mercado_cuarentena.
+--      Toda vista que la llama (v_pick_canonico, picks_premium,
+--      v_picks_futbol_calibrado, v_picks_futbol_calc) se cae para anon si se
+--      revoca esa tabla. Las dependencias de permisos no viven solo en
+--      pg_depend de vistas: tambien en el cuerpo de las funciones.
+--
+-- INTENTO 2: mi "control positivo" me acuso en falso
+--   Arregle lo anterior y la prueba dijo "ROMPI track_record_global". Falso:
+--   esa vista falla por "permission denied for table parlays", y parlays nunca
+--   estuvo en mi lista. Con los grants YA restaurados seguia fallando, lo que
+--   prueba que estaba rota de antes. Mi control positivo estaba armado sobre
+--   una lista ASUMIDA de lo que el frontend puede leer.
+--   Un control positivo sobre supuestos no es un control.
+--
+-- LO QUE SE HIZO AL FINAL
+--
+--  1) baseline_lectura_anon: linea base EMPIRICA. Se ejecuta un SELECT real
+--     como anon en cada relacion en riesgo y se guarda si lee o no. 25
+--     relaciones, las 25 legibles antes del cambio, 0 ya rotas.
+--
+--  2) Ocho predicados ESCALARES de gobierno pasan a SECURITY DEFINER con
+--     search_path = public, pg_temp:
+--       pick_en_cuarentena, tolerancia_desplazamiento_pp, estado_respaldo,
+--       model_skill, mercado_apto_para_lock, aplicar_calibrador_autorizado,
+--       generar_url_notificacion, es_precio_de_libro
+--     Razon de fondo: un predicado de gobierno NO debe exigirle al cliente
+--     poder leer la tabla de gobierno. Devuelven un escalar, asi que no pueden
+--     filtrar filas: responden una pregunta derivada de la configuracion.
+--     mejor_pick_hoy se queda INVOKER A PROPOSITO: devuelve FILAS y hacerlo
+--     DEFINER le saltaria el RLS a quien lo llame.
+--
+--  3) Revocado SELECT a anon y authenticated en OCHO objetos:
+--       ajustes_a_p_reto, calibradores, mercado_cuarentena,
+--       superficie_usuario, superficie_temporalidad, pick_del_dia,
+--       v_super_pick, v_picks_para_parlay
+--
+--  4) DOS RETENIDOS, con razon, no por olvido:
+--     picks_recomendados_hoy  mejor_pick_hoy es un RPC INVOKER que devuelve
+--                             FILAS y la lee. Hacerlo DEFINER saltaria RLS;
+--                             revocar la tabla romperia el RPC.
+--     oraculo_picks_tracking  14 vistas security_invoker LEGIBLES POR CLIENTE
+--                             la leen: ai_performance_por_clasificacion,
+--                             ai_performance_por_fuente, ai_performance_por_liga,
+--                             ai_performance_por_mercado, calibracion_mercado,
+--                             clv_dashboard, oraculo_calibracion,
+--                             oraculo_roi_por_liga, picks_recomendados_hoy_raw,
+--                             track_record_global, v_anti_picks,
+--                             v_ligas_rentables_v2, v_nichos_rentables,
+--                             v_poisson_picks.
+--                             El dueno concluyo que no la necesita porque la
+--                             Edge Function usa SERVICE_ROLE, y es cierto para
+--                             el acceso DIRECTO del navegador. Pero su auditoria
+--                             fue del frontend, no del grafo interno de vistas.
+--
+-- VERIFICACION FINAL
+--   Se revoco y se re-midio EXACTAMENTE el mismo conjunto del baseline:
+--     8 bloqueados como se queria
+--     0 regresiones en las otras 17
+--     v_picks_futbol_calc y v_reto13m_lo_mejor siguen leyendo con anon
+--     picks_recomendados_hoy y oraculo_picks_tracking siguen leyendo
+--     pick_en_cuarentena('soccer','Over/Under','Under 3.5') sigue devolviendo
+--       true CON anon, sin que anon pueda leer mercado_cuarentena
+--   El procedimiento revierte los 8 grants por si mismo si detecta una sola
+--   regresion, antes de fallar.
+--
+-- GATE
+--   GOBIERNO_LEGIBLE_POR_CLIENTE        PASS  0
+--   PREDICADOS_DE_GOBIERNO_SON_DEFINER  PASS  8
+--   GOBIERNO_RETENIDO_CON_RAZON         INFO  2
+-- =====================================================================

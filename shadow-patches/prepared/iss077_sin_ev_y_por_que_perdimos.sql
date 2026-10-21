@@ -1,0 +1,80 @@
+-- iss077 · Por qué fuimos 1 de 8, y fuera el EV de toda la app.
+--
+-- ===== LA AUTOPSIA =====
+-- reto_picks_mostrados, historial completo al 2026-09-11:
+--   8 picks publicados. LOS OCHO de linea de ganador de MLB.
+--   1 ganado, 7 perdidos = 12.5% real contra 58.0% prometido.
+--
+-- Si el modelo de verdad acertara 58%, la probabilidad de ir 1 de 8 O PEOR es 1.17%
+-- (binomial, calculada en SQL). No fue mala suerte. El 58% no era real.
+--
+-- EL DESACUERDO CONTRA EL PRECIO en esos 8 picks, uno por uno:
+--   Red Sox    2.7 pp   Royals   0.6 pp   Yankees  1.2 pp   White Sox 0.7 pp
+--   Brewers    0.1 pp   White Sox 1.5 pp  Brewers  0.6 pp   Marlins   2.7 pp
+--   PROMEDIO: 1.26 puntos porcentuales.
+-- Es decir: el modelo decia casi exactamente lo MISMO que el mercado, y aun asi se
+-- apostaba. Apostar cuando coincides con el mercado es pagar la comision de la casa a
+-- cambio de nada: pierde por construccion, no por suerte. Con momio medio 1.765 el
+-- mercado implica 56.7% y el modelo decia 58.0%.
+--
+-- Y el fondo del asunto: el modelo de MLB NO TIENE HABILIDAD MEDIBLE.
+--   mlb_shadow_predicciones, 800 partidos liquidados:
+--     Brier prod_espejo_0.5 = 0.24707 · shadow_0.2 = 0.24801
+--     Un volado = 0.25. "Siempre gana el local" (tasa 0.538) = 0.2486.
+--   O sea: el modelo de beisbol es, dentro del ruido, un volado.
+--   Y predecir_mlb LO DICE EL MISMO en su aviso_modelo:
+--     "En beisbol el mercado casi siempre tiene razon... No apostar la linea de
+--      ganador."
+--   Se publicaron 8 picks de linea de ganador de MLB ignorando ese aviso.
+--
+-- ===== EL ARREGLO DE RAIZ =====
+-- reto_registrar_favoritos ahora exige que el modelo del deporte este AUTORIZADO
+-- economicamente antes de publicar un pick. No invente un umbral: se reusa
+-- economic_model_authorized, la misma compuerta de v_pick_canonico.
+-- economic_model_authority esta VACIA, asi que hoy publica CERO. Verificado.
+-- Eso es lo correcto: ningun modelo ha demostrado que le gana al mercado.
+-- Cuando v_evidencia_modelo_forward (iss075) acumule partidos y
+-- v_evidencia_modelo_vs_mercado muestre ventaja real con muestra suficiente, se
+-- autoriza ese deporte y los picks se encienden solos.
+--
+-- ===== FUERA EL EV =====
+-- Orden explicita del owner, repetida tres veces:
+--   "NADA DE EV. PURO % SEGUN EL ANALISIS, Y LOS DATOS. QUE TODO SEA REAL."
+--   "NO QUIERO NADAA DE EV, de verdad nada de nada."
+-- Se aplico en los dos sentidos, porque esconder el EV pero seguir ORDENANDO por el
+-- seria la misma mentira con otra cara:
+--   1. reto_picks_mostrados.ev_pct: puesto a NULL en las filas existentes, y
+--      reto_registrar_favoritos lo escribe NULL de aqui en adelante.
+--   2. v_picks_futbol_calc.ev: devuelve NULL siempre. La COLUMNA se conserva porque
+--      picks_futbol_cache se llena con `insert ... select *` y quitarla romperia esa
+--      tabla; pero el valor ya no existe, asi que el front no puede pintarlo.
+--   3. v_picks_futbol_calc.score_valor: ANTES era el EV (o una variante con margen).
+--      AHORA es la DISCRIMINACION: probabilidad del analisis menos la que implica el
+--      precio, en puntos porcentuales. Es el mismo criterio que ya usaba
+--      parlay_del_dia_v3 y es exactamente lo que la tarjeta muestra como "desacuerdo".
+--
+-- EL CONTRASTE QUE JUSTIFICA EL CAMBIO, medido hoy:
+--   Los 8 picks de MLB que se perdieron: desacuerdo promedio 1.26 pp.
+--   Los picks de futbol ordenados por desacuerdo:
+--     Atalanta vs Cagliari  Under 2.5 -> analisis 63.5% · precio 53.5% · 10.02 pp
+--     FC Cincinnati vs Charlotte Under 3.5 -> 58.7% · 53.5% · 5.22 pp
+--     Columbus vs NY Red Bulls  Under 3.5 -> 61.1% · 57.4% · 3.66 pp
+--   Un desacuerdo de 10 puntos es una senal. Uno de 0.1 es ruido con comision.
+--   Ordenar por desacuerdo pone los de 10 arriba; ordenar por EV ponia los de 0.1.
+--
+-- PENDIENTE, no resuelto aqui: otras vistas siguen calculando ev internamente
+-- (v_pick_canonico.ev_pct, v_oraculo_canonico, v_mejores_picks_mlb,
+--  v_motor_valor_proximos, v_reto13m_mejores, v_picks_con_valor). Ninguna decide ya
+-- lo que se publica, pero conviene barrerlas tambien. Se listan con:
+--   select c.relname from pg_class c join pg_namespace n on n.oid=c.relnamespace
+--   where n.nspname='public' and c.relkind in ('v','m')
+--     and pg_get_viewdef(c.oid,true) ~* '\mev_pct\M|score_valor';
+
+update public.reto_picks_mostrados set ev_pct = null where ev_pct is not null;
+
+-- Los cuerpos vigentes de reto_registrar_favoritos y v_picks_futbol_calc se recuperan
+-- con pg_get_functiondef() / pg_get_viewdef(). El guardia nuevo es esta condicion
+-- dentro de reto_registrar_favoritos:
+--   and public.economic_model_authorized(
+--         public.deporte_registry(f.deporte), 'Moneyline', coalesce(f.casa,''),
+--         public.modelo_version_activa(f.deporte))
