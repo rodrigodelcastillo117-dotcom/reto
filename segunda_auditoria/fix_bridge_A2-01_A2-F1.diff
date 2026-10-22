@@ -1,0 +1,44 @@
+--- /home/user/audit2/bridge/fix_propuesto/resolver.ts	2026-10-22 18:07:55.540296214 +0000
++++ supabase/functions/_shared/booking/resolver.ts	2026-10-22 18:07:55.591665803 +0000
+@@ -128,7 +128,9 @@
+   // Lo que escribió la IA o mandó el cliente solo puede salir a dominios de la lista blanca y nunca
+   // por un redirect opaco (google.com/aclk, /travel/clk) cuyo destino final no se ve (AUD-04).
+   const untrusted = UNTRUSTED.includes(c.trust);
+-  const v = untrusted ? checkUntrusted(c.url) : checkTrustedSource(c.url);
++  let v = untrusted ? checkUntrusted(c.url) : checkTrustedSource(c.url);
++  // A2: un dato editable del viaje (google_places) tampoco puede salir por un redirect opaco.
++  if (c.trust === "google_places" && v.ok && v.provider?.redirector === "opaque") v = { ok: false, reason: "redirect_sin_destino_visible" };
+   // tp.media/click responde 400 (ver links.ts): se abre su destino, que también pasó la lista blanca.
+   if (v.ok && v.provider?.redirector === "wrapper") return untrusted ? checkUntrusted(unwrapAffiliate(v.url)) : checkAllowlisted(unwrapAffiliate(v.url));
+   return v;
+@@ -140,7 +142,7 @@
+  * verificado (AUD-04). Se ofrece igual (no se bloquean sitios reales), con su dominio a la vista.
+  */
+ function editableTripData(c: LinkCandidate, v: UrlVerdict): boolean {
+-  return v.ok && v.trust === "trusted_source" && c.trust === "google_places";
++  return v.ok && c.trust === "google_places";
+ }
+ 
+ function preservesNotes(p: Preserves, product: ProductType): string[] {
+--- /home/user/audit2/bridge/fix_propuesto/allowlist.ts	2026-10-22 18:07:55.540410575 +0000
++++ supabase/functions/_shared/booking/allowlist.ts	2026-10-22 18:07:55.599662319 +0000
+@@ -185,6 +185,8 @@
+   if (u.username || u.password) return { ok: false, reason: "credenciales_en_url" };
+   if (u.port && u.port !== "443") return { ok: false, reason: "puerto" };
+   const host = u.hostname.toLowerCase();
++  // A2: un FQDN con punto final ("www.google.com.") no coincide con la lista y saltaba la regla de proveedores.
++  if (host.endsWith(".")) return { ok: false, reason: "host_no_publico" };
+   if (!host.includes(".") || IPV4.test(host) || host.startsWith("[") || /(^|\.)(localhost|local|internal|lan|home|corp)\.?$/.test(host)) {
+     return { ok: false, reason: "host_no_publico" };
+   }
+--- /home/user/audit2/bridge/fix_propuesto/handler.ts	2026-10-22 18:07:55.540446257 +0000
++++ supabase/functions/booking-bridge/handler.ts	2026-10-22 18:07:55.595337926 +0000
+@@ -194,7 +194,7 @@
+  */
+ function signTier(url: string | null, trust: string | null | undefined): SignTier | null {
+   if (!url) return null;
+-  if ((trust === "ai" || trust === "client" ? checkUntrusted(url) : checkAllowlisted(url)).ok) return "allowlist";
++  if ((trust === "ai" || trust === "client" || trust === "google_places" ? checkUntrusted(url) : checkAllowlisted(url)).ok) return "allowlist";
+   if ((trust === "curated_catalog" || trust === "official_site_scan") && checkTrustedSource(url).ok) return "trusted_source";
+   return null;
+ }
