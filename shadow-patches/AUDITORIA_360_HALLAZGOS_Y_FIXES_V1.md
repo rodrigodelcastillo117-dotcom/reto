@@ -26,9 +26,35 @@ Fix: `WHERE mercado <> 'Over/Under'`. Soccer ahora = 864 Moneyline puro (53.1%),
 football 122 (60.7%). (Impacto numérico chico, pero un mercado retirado ya no contamina
 una cifra mostrada.)
 
-## PARA DECISIÓN DEL DUEÑO (NO tocado)
+## ARREGLADO TRAS DECISIÓN DEL DUEÑO (2026-11-03: "es récord del motor → límpialo")
 
-### ALTA #2 — récord legacy con DINERO y mercados retirados (`track_record_*`)
+### ALTA #2 — récord legacy con DINERO (`track_record_*`) → dinero quitado
+Decisión del dueño: tratarlo como récord del motor y quitarle el dinero. Al leer las
+definiciones resultó que estas vistas se arman de los picks/parlays **registrados por
+usuarios** (por `apodo`, tablas `picks`/`parlays`) + tracking de fuentes AI
+(`oraculo_picks_tracking`), y los datos están **estancados desde 2026-09-19**: es un
+tracker legacy comunidad/AI, no el autograde del motor. Igual se le quitó el dinero para
+cumplir "dinero OFF en todo", sin borrar datos y preservando el contrato de columnas
+(la página no se rompe; solo deja de mostrar dinero):
+- `track_record_global.ganancia_total` → NULL (se conservan conteos y win-rate).
+- `track_record_combinado_por_deporte` / `_por_mercado`: `ganancia`, `momio_avg` → NULL.
+- `track_record_real`: `ganancia_neta_total`, `roi_pct` → NULL.
+- `track_record_historial`: `momio`, `ganancia_neta` → NULL.
+Verificado: 0 valores de dinero expuestos en toda la familia. Tablas base intactas
+(reversible).
+
+### Pendiente de alcance (dinero en vistas INTERNAS, no pintadas por la app)
+El barrido encontró dinero (roi_pct/profit/ganancia) también en vistas anon pero que
+`BACKEND_SURFACE_USADA.md` NO lista como leídas por el front: `ai_performance_por_*`,
+`v_ai_learning_summary`, `v_ligas_rentables_v2`, `v_nichos_rentables`,
+`rendimiento_mercados` (analítica/aprendizaje interno del motor), y `picks_reales`/
+`v_tr_base`/`v_picks_usuario_historial` (la bitácora de apuestas propia del usuario =
+producto legítimo). NO se tocaron: nullearlas rompería el loop de aprendizaje y la
+función de bankroll del usuario, y no engañan a nadie porque la app no las pinta.
+Si el dueño quiere "dinero OFF" también ahí, es otra decisión (y requeriría tocar
+internals/producto).
+
+### (original) ALTA #2 — evidencia del hallazgo
 La familia `track_record_global` / `track_record_combinado_por_mercado` / `track_record_real`
 (todas con grant anon, y listadas como superficie que lee el front en
 `docs/BACKEND_SURFACE_USADA.md`) expone **dinero**: `track_record_global.ganancia_total =
