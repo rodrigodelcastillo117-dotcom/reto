@@ -1,0 +1,450 @@
+<title>Récord RETO 13M</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+<style>
+  /* Layout: una bitácora de transparencia — tesis honesta, marcador por deporte,
+     diagrama de fiabilidad, CLV, y el historial pick por pick con aciertos Y fallos a la vista. */
+  :root{
+    --bg:#fbfcfb; --surface:#ffffff; --surface-2:#f1f4f2; --border:#dfe5e1;
+    --fg:#10211b; --fg-muted:#53635c; --fg-faint:#879189;
+    --emerald:#059669; --emerald-soft:#e3f3ec;
+    --sky:#0284c7; --sky-soft:#e1f0f8;
+    --amber:#b45309; --amber-soft:#f8ecd8;
+    --win:#059669; --loss:#d4304a;
+    --ring:#05966955;
+    --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    --body:'IBM Plex Sans',system-ui,-apple-system,sans-serif;
+    --display:'Archivo','Archivo',system-ui,sans-serif;
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+    --bg:#0a0f0d; --surface:#111815; --surface-2:#17201c; --border:#243029;
+    --fg:#eaf2ed; --fg-muted:#9fb0a7; --fg-faint:#6c7d74;
+    --emerald:#34d399; --emerald-soft:#0e2b22;
+    --sky:#38bdf8; --sky-soft:#0a2634;
+    --amber:#fbbf24; --amber-soft:#2a2008;
+    --win:#34d399; --loss:#fb7185;
+    --ring:#34d39966;
+    color-scheme:dark;
+  }}
+  :root[data-theme="dark"]{
+    --bg:#0a0f0d; --surface:#111815; --surface-2:#17201c; --border:#243029;
+    --fg:#eaf2ed; --fg-muted:#9fb0a7; --fg-faint:#6c7d74;
+    --emerald:#34d399; --emerald-soft:#0e2b22;
+    --sky:#38bdf8; --sky-soft:#0a2634;
+    --amber:#fbbf24; --amber-soft:#2a2008;
+    --win:#34d399; --loss:#fb7185;
+    --ring:#34d39966;
+    color-scheme:dark;
+  }
+  *{box-sizing:border-box}
+  body{background:var(--bg);color:var(--fg);font-family:var(--body);line-height:1.5;
+    -webkit-font-smoothing:antialiased;letter-spacing:-0.005em}
+  .wrap{max-width:1000px;margin:0 auto;
+    padding-left:max(16px,env(safe-area-inset-left,0px));
+    padding-right:max(16px,env(safe-area-inset-right,0px));}
+  h1,h2,h3{font-family:var(--display);font-weight:700;text-wrap:balance;margin:0;letter-spacing:-0.02em}
+  .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+  a{color:inherit}
+  /* top bar */
+  .topbar{display:flex;align-items:center;justify-content:space-between;gap:12px;
+    padding-block:16px;border-bottom:1px solid var(--border)}
+  .brand{display:flex;align-items:center;gap:10px;font-family:var(--display);font-weight:700;font-size:15px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--emerald);box-shadow:0 0 0 3px var(--emerald-soft)}
+  .themebtn{font-family:var(--body);font-size:12px;color:var(--fg-muted);background:var(--surface-2);
+    border:1px solid var(--border);border-radius:999px;padding:6px 12px;cursor:pointer}
+  .themebtn:hover{color:var(--fg)}
+  /* hero */
+  .hero{padding-block:44px 32px}
+  .eyebrow{font-family:var(--mono);font-size:11px;letter-spacing:0.14em;text-transform:uppercase;
+    color:var(--emerald);margin-bottom:16px}
+  .hero h1{font-size:clamp(30px,6vw,52px);line-height:1.04}
+  .hero p{color:var(--fg-muted);font-size:clamp(15px,2.2vw,18px);max-width:60ch;margin:18px 0 0}
+  .hero .underline{color:var(--fg);text-decoration:underline;text-decoration-color:var(--emerald);
+    text-underline-offset:3px;text-decoration-thickness:2px}
+  .heroStats{display:flex;flex-wrap:wrap;gap:28px;margin-top:28px}
+  .heroStat .n{font-family:var(--display);font-weight:700;font-size:28px}
+  .heroStat .l{font-size:12px;color:var(--fg-muted);margin-top:2px}
+  /* section */
+  section{padding-block:28px}
+  .sectionhead{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:18px;flex-wrap:wrap}
+  .sectionhead h2{font-size:clamp(20px,3.2vw,26px)}
+  .sectionhead .hint{font-size:12.5px;color:var(--fg-muted);max-width:46ch}
+  /* sport cards */
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(248px,1fr));gap:16px}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px;
+    display:flex;flex-direction:column;gap:14px;min-width:0}
+  .card .top{display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .card .sport{display:flex;align-items:center;gap:9px;font-family:var(--display);font-weight:700;font-size:17px}
+  .pill{font-family:var(--mono);font-size:10.5px;letter-spacing:0.06em;text-transform:uppercase;
+    padding:4px 9px;border-radius:999px;font-weight:600;white-space:nowrap}
+  .pill.win{background:var(--emerald-soft);color:var(--emerald)}
+  .pill.even{background:var(--sky-soft);color:var(--sky)}
+  .pill.hold{background:var(--amber-soft);color:var(--amber)}
+  .verdict{font-size:13.5px;color:var(--fg-muted);line-height:1.45}
+  .verdict b{color:var(--fg);font-weight:600}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:var(--border);
+    border:1px solid var(--border);border-radius:12px;overflow:hidden}
+  .metric{background:var(--surface);padding:11px 13px}
+  .metric .mv{font-family:var(--display);font-weight:700;font-size:21px}
+  .metric .ml{font-size:10.5px;color:var(--fg-muted);margin-top:1px;letter-spacing:0.02em}
+  .metric .sub{font-size:10px;color:var(--fg-faint);font-family:var(--mono)}
+  .pos{color:var(--emerald)} .neg{color:var(--loss)}
+  .brierrow{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--fg-muted);
+    font-family:var(--mono)}
+  .brierbar{flex:1;height:6px;border-radius:3px;background:var(--surface-2);position:relative;overflow:hidden;min-width:0}
+  .brierbar i{position:absolute;top:0;bottom:0;border-radius:3px}
+  /* chart */
+  .chartcard{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px 18px 14px}
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:6px}
+  .legitem{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--fg-muted)}
+  .swatch{width:12px;height:12px;border-radius:3px}
+  .chartscroll{overflow-x:auto}
+  svg{display:block;max-width:100%;height:auto}
+  .caltip{position:fixed;z-index:30;pointer-events:none;background:var(--surface);border:1px solid var(--border);
+    border-radius:9px;padding:8px 10px;font-size:12px;box-shadow:0 8px 24px #0003;opacity:0;transition:opacity .12s;max-width:200px}
+  .caltip .t{font-weight:600;font-family:var(--display)}
+  .caltip .r{color:var(--fg-muted);font-family:var(--mono);font-size:11px}
+  /* clv + method */
+  .panelgrid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .panel{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:20px}
+  .panel h3{font-size:16px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+  .panel p{font-size:13px;color:var(--fg-muted);margin:0 0 10px}
+  .panel ul{margin:0;padding-left:18px;font-size:13px;color:var(--fg-muted)}
+  .panel li{margin:5px 0}
+  .tag{font-family:var(--mono);font-size:10px;letter-spacing:0.08em;text-transform:uppercase;
+    background:var(--amber-soft);color:var(--amber);padding:3px 8px;border-radius:999px;font-weight:600}
+  .big{font-family:var(--display);font-weight:700;font-size:26px}
+  /* table */
+  .controls{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px}
+  .seg{display:inline-flex;background:var(--surface-2);border:1px solid var(--border);border-radius:999px;padding:3px}
+  .seg button{font-family:var(--body);font-size:12.5px;color:var(--fg-muted);background:none;border:none;
+    padding:6px 13px;border-radius:999px;cursor:pointer;white-space:nowrap}
+  .seg button[aria-pressed="true"]{background:var(--surface);color:var(--fg);font-weight:600;
+    box-shadow:0 1px 2px #0000001a}
+  .seg button:focus-visible{outline:2px solid var(--ring);outline-offset:2px}
+  .tablecard{background:var(--surface);border:1px solid var(--border);border-radius:16px;overflow:hidden}
+  .tablescroll{overflow-x:auto}
+  table{border-collapse:collapse;width:100%;font-size:13px;min-width:620px}
+  thead th{text-align:left;font-family:var(--mono);font-size:10.5px;letter-spacing:0.06em;text-transform:uppercase;
+    color:var(--fg-faint);font-weight:600;padding:12px 14px;border-bottom:1px solid var(--border);white-space:nowrap}
+  tbody td{padding:11px 14px;border-bottom:1px solid var(--border);vertical-align:middle}
+  tbody tr:last-child td{border-bottom:none}
+  tbody tr:hover{background:var(--surface-2)}
+  td.num{font-family:var(--mono);font-variant-numeric:tabular-nums;text-align:right;white-space:nowrap}
+  .res{display:inline-flex;align-items:center;gap:6px;font-weight:600;font-size:12.5px}
+  .res.w{color:var(--win)} .res.l{color:var(--loss)}
+  .res .mk{width:16px;height:16px;border-radius:50%;display:grid;place-items:center;font-size:10px;color:#fff}
+  .res.w .mk{background:var(--win)} .res.l .mk{background:var(--loss)}
+  .sportchip{font-family:var(--mono);font-size:10px;padding:2px 7px;border-radius:5px;font-weight:600;white-space:nowrap}
+  .sportchip.soccer{background:var(--emerald-soft);color:var(--emerald)}
+  .sportchip.football{background:var(--sky-soft);color:var(--sky)}
+  .edge{font-family:var(--mono);font-size:11px}
+  .tfoot{padding:12px 14px;font-size:11.5px;color:var(--fg-faint);font-family:var(--mono)}
+  /* footer */
+  footer{border-top:1px solid var(--border);padding-block:24px 36px;margin-top:12px;
+    font-size:12px;color:var(--fg-faint);line-height:1.6}
+  footer b{color:var(--fg-muted)}
+  @media (max-width:560px){
+    .panelgrid{grid-template-columns:1fr}
+    .heroStats{gap:20px}
+  }
+  @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand"><span class="dot"></span> RETO 13M</div>
+    <button class="themebtn" id="themebtn" type="button">Tema</button>
+  </div>
+
+  <header class="hero">
+    <div class="eyebrow">Récord verificado</div>
+    <h1>Cada pick, registrado <span class="underline">antes</span> del partido.<br>Incluidos los que fallamos.</h1>
+    <p>No mostramos un número de aciertos inflado. Mostramos el registro completo: la probabilidad
+    que dijo el modelo, la del mercado, y lo que de verdad pasó. Todo congelado en el momento de
+    decidir, sin editar después. Esto es lo que hay.</p>
+    <div class="heroStats">
+      <div class="heroStat"><div class="n mono">389</div><div class="l">picks verificados y calificados</div></div>
+      <div class="heroStat"><div class="n mono">2</div><div class="l">deportes con récord público</div></div>
+      <div class="heroStat"><div class="n mono">0</div><div class="l">picks perdidos borrados</div></div>
+    </div>
+  </header>
+
+  <section>
+    <div class="sectionhead">
+      <h2>Marcador por deporte</h2>
+      <div class="hint">La métrica honesta no es "% de aciertos", es el <b>Brier</b>: qué tan cerca
+      están nuestras probabilidades de la realidad, comparadas con la línea de cierre del mercado.</div>
+    </div>
+    <div class="cards" id="cards"></div>
+  </section>
+
+  <section>
+    <div class="sectionhead">
+      <h2>¿Calibración real?</h2>
+      <div class="hint">Cuando decimos "60%", ¿gana el 60%? Un modelo honesto cae sobre la diagonal.
+      El tamaño del punto es cuántos picks hay en esa banda.</div>
+    </div>
+    <div class="chartcard">
+      <div class="legend">
+        <div class="legitem"><span class="swatch" style="background:var(--emerald)"></span> Soccer</div>
+        <div class="legitem"><span class="swatch" style="background:var(--sky)"></span> NFL</div>
+        <div class="legitem"><span class="swatch" style="background:var(--fg-faint)"></span> Calibración perfecta</div>
+      </div>
+      <div class="chartscroll"><svg id="relsvg" viewBox="0 0 560 380" role="img"
+        aria-label="Diagrama de fiabilidad: probabilidad dicha contra acierto real, por deporte"></svg></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sectionhead"><h2>Más allá del acierto</h2></div>
+    <div class="panelgrid">
+      <div class="panel">
+        <h3>CLV — valor de línea de cierre <span class="tag">en construcción</span></h3>
+        <p>El CLV mide si conseguimos mejor precio que la línea con la que cerró el mercado.
+        Es la señal que usan los profesionales: importa aunque el pick pierda.</p>
+        <div class="big mono">146</div>
+        <p style="margin-top:4px">picks de soccer con línea de cierre capturada (6–13 oct). El mercado
+        se movió en promedio <b>+0.06pp</b> tras nuestra decisión: señal todavía plana. Se vuelve
+        confiable conforme se acumulan semanas; aquí la verás crecer sin maquillar.</p>
+      </div>
+      <div class="panel">
+        <h3>Cómo lo medimos</h3>
+        <ul>
+          <li><b>Forward, no backtest.</b> El pick se congela antes del saque, con los datos de ese
+          instante. Nada de "lo que hubiéramos dicho".</li>
+          <li><b>Contra el mercado.</b> Cada pick se compara con la probabilidad sin-vig de la casa.</li>
+          <li><b>Sin borrar.</b> Los perdidos cuentan igual que los ganados.</li>
+          <li><b>Muestra chica se marca.</b> NFL son 64 picks: señal buena, no proyección.</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sectionhead">
+      <h2>Pick por pick</h2>
+      <div class="hint">Lo más reciente, con aciertos y fallos mezclados como salieron.</div>
+    </div>
+    <div class="controls">
+      <div class="seg" id="fsport" role="group" aria-label="Filtrar por deporte">
+        <button data-v="all" aria-pressed="true">Todos</button>
+        <button data-v="soccer" aria-pressed="false">Soccer</button>
+        <button data-v="football" aria-pressed="false">NFL</button>
+      </div>
+      <div class="seg" id="fres" role="group" aria-label="Filtrar por resultado">
+        <button data-v="all" aria-pressed="true">Todo</button>
+        <button data-v="win" aria-pressed="false">Aciertos</button>
+        <button data-v="loss" aria-pressed="false">Fallos</button>
+      </div>
+    </div>
+    <div class="tablecard">
+      <div class="tablescroll">
+        <table>
+          <thead><tr>
+            <th>Fecha</th><th>Partido</th><th>Pick</th>
+            <th style="text-align:right">Modelo</th><th style="text-align:right">Mercado</th>
+            <th style="text-align:right">Momio</th><th>Resultado</th>
+          </tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+      </div>
+      <div class="tfoot" id="tfoot"></div>
+    </div>
+  </section>
+
+  <footer>
+    <b>Datos reales al 13-oct-2026</b>, del registro forward del sistema (fuente: <span class="mono">evidencia_modelo_forward</span>).
+    Soccer: 325 picks calificados · NFL: 64. MLB (116/120) sigue en validación y no publica picks de dinero.<br>
+    Esto es un prototipo de la pantalla de récord público. Las probabilidades son del modelo RETO 13M; no son una garantía de ganancia. Apuesta con responsabilidad.
+  </footer>
+</div>
+
+<div class="caltip" id="caltip"></div>
+
+<script>
+(function(){
+  "use strict";
+  // ---------- datos reales ----------
+  var sports = [
+    {key:"football", name:"NFL", color:"var(--sky)", graded:64, hit:67.2, roi:11.8, odds:1.70,
+     brierM:0.219, brierMk:0.234, pill:"win", pillTxt:"Le gana al mercado",
+     verdict:"En 64 picks, el modelo acierta la realidad <b>mejor que la línea de cierre</b> (Brier más bajo) y deja +11.8% a stake plano. Muestra chica: señal fuerte, no proyección."},
+    {key:"soccer", name:"Soccer", color:"var(--emerald)", graded:325, hit:51.4, roi:2.9, odds:2.25,
+     brierM:0.239, brierMk:0.231, pill:"even", pillTxt:"A la par del mercado",
+     verdict:"325 picks: el modelo <b>compite de tú a tú</b> con el mercado (Brier casi igual) y deja un edge pequeño pero real de +2.9%. Es nuestro deporte P0 y la base más sólida."},
+    {key:"mlb", name:"MLB", color:"var(--amber)", graded:null, hit:null, roi:null, odds:null,
+     brierM:null, brierMk:null, pill:"hold", pillTxt:"En validación",
+     verdict:"116 de 120 juegos forward. Bien calibrado, pero su ventaja es marginal — por eso <b>no publica picks de dinero</b> hasta pasar el gate honestamente. Transparencia, no promesas."}
+  ];
+
+  var cal = {
+    soccer:[{p:38.4,a:50.0,n:28},{p:44.7,a:41.3,n:138},{p:54.5,a:49.4,n:87},{p:63.6,a:72.9,n:48},{p:71.9,a:80.0,n:15}],
+    football:[{p:55.7,a:66.7,n:30},{p:64.4,a:50.0,n:22},{p:72.3,a:100.0,n:12}]
+  };
+
+  var picks = [
+    {d:"13 oct",sp:"soccer",g:"RB Leipzig vs PSV",pick:"RB Leipzig",pm:62.2,mk:62.1,o:1.526,w:true},
+    {d:"13 oct",sp:"soccer",g:"Galatasaray vs Barcelona",pick:"Barcelona",pm:44.8,mk:74.9,o:1.263,w:true},
+    {d:"13 oct",sp:"soccer",g:"Villarreal vs Napoli",pick:"Villarreal",pm:49.7,mk:44.5,o:2.150,w:true},
+    {d:"13 oct",sp:"soccer",g:"Atlético Madrid vs Man United",pick:"Atlético Madrid",pm:48.3,mk:52.3,o:1.833,w:true},
+    {d:"13 oct",sp:"soccer",g:"Viking FK vs Bayern Munich",pick:"Bayern Munich",pm:46.2,mk:82.6,o:1.154,w:false},
+    {d:"13 oct",sp:"soccer",g:"Inter vs Club Brugge",pick:"Internazionale",pm:67.5,mk:76.8,o:1.235,w:false},
+    {d:"13 oct",sp:"soccer",g:"Arsenal vs Lille",pick:"Arsenal",pm:62.0,mk:78.0,o:1.222,w:true},
+    {d:"13 oct",sp:"football",g:"LA Rams vs Buffalo Bills",pick:"ML Buffalo Bills",pm:51.3,mk:40.7,o:2.360,w:true},
+    {d:"12 oct",sp:"soccer",g:"Famalicão vs Alverca",pick:"FC Famalicão",pm:55.2,mk:50.7,o:1.833,w:false},
+    {d:"12 oct",sp:"soccer",g:"Levante vs Sevilla",pick:"Levante",pm:46.2,mk:35.5,o:2.650,w:false},
+    {d:"12 oct",sp:"soccer",g:"Coventry vs Newcastle",pick:"Newcastle United",pm:41.2,mk:44.9,o:2.100,w:false},
+    {d:"12 oct",sp:"soccer",g:"Torino vs Udinese",pick:"Torino",pm:44.4,mk:40.6,o:2.250,w:true},
+    {d:"12 oct",sp:"soccer",g:"AGF vs Sønderjyske",pick:"AGF",pm:54.8,mk:58.0,o:1.588,w:true},
+    {d:"12 oct",sp:"soccer",g:"KFUM Oslo vs Vålerenga",pick:"KFUM Oslo",pm:49.4,mk:33.8,o:2.750,w:true}
+  ];
+
+  var fmtPct=function(x){return x==null?"—":x.toFixed(1)+"%"};
+  var fmtSign=function(x){return (x>=0?"+":"")+x.toFixed(1)+"%"};
+
+  // ---------- sport cards ----------
+  var cardsEl=document.getElementById("cards");
+  cardsEl.innerHTML=sports.map(function(s){
+    var metrics;
+    if(s.graded==null){
+      metrics='<div class="grid2">'+
+        '<div class="metric"><div class="mv mono">116<span style="font-size:13px;color:var(--fg-faint)">/120</span></div><div class="ml">muestra forward</div></div>'+
+        '<div class="metric"><div class="mv mono" style="color:var(--amber)">OFF</div><div class="ml">picks de dinero</div></div>'+
+        '</div>';
+    } else {
+      // brier comparison bar: lower is better; scale around 0.20–0.26
+      var lo=0.20,hi=0.26,span=hi-lo;
+      var mPos=Math.max(0,Math.min(1,(s.brierM-lo)/span))*100;
+      var kPos=Math.max(0,Math.min(1,(s.brierMk-lo)/span))*100;
+      var beats=s.brierM<s.brierMk;
+      metrics='<div class="grid2">'+
+        '<div class="metric"><div class="mv mono '+(s.roi>=0?'pos':'neg')+'">'+fmtSign(s.roi)+'</div><div class="ml">ROI stake plano</div><div class="sub">momio prom '+s.odds.toFixed(2)+'</div></div>'+
+        '<div class="metric"><div class="mv mono">'+fmtPct(s.hit)+'</div><div class="ml">aciertos</div><div class="sub">'+s.graded+' picks</div></div>'+
+        '</div>'+
+        '<div class="brierrow">'+
+          '<span style="color:'+(beats?'var(--emerald)':'var(--fg-muted)')+'">Brier '+s.brierM.toFixed(3)+'</span>'+
+          '<span class="brierbar">'+
+            '<i style="left:0;width:'+mPos+'%;background:'+s.color+'"></i>'+
+            '<i style="left:'+kPos+'%;width:2px;background:var(--fg-muted)"></i>'+
+          '</span>'+
+          '<span>mkt '+s.brierMk.toFixed(3)+'</span>'+
+        '</div>';
+    }
+    return '<div class="card">'+
+      '<div class="top"><div class="sport"><span class="swatch" style="width:10px;height:10px;border-radius:50%;background:'+s.color+'"></span>'+s.name+'</div>'+
+      '<span class="pill '+s.pill+'">'+s.pillTxt+'</span></div>'+
+      metrics+
+      '<div class="verdict">'+s.verdict+'</div>'+
+    '</div>';
+  }).join("");
+
+  // ---------- reliability diagram ----------
+  (function(){
+    var svg=document.getElementById("relsvg");
+    var W=560,H=380,m={l:48,r:18,t:14,b:46};
+    var pw=W-m.l-m.r, ph=H-m.t-m.b;
+    var dom=[20,100];
+    var sx=function(v){return m.l+(v-dom[0])/(dom[1]-dom[0])*pw};
+    var sy=function(v){return m.t+ph-(v-dom[0])/(dom[1]-dom[0])*ph};
+    var NS="http://www.w3.org/2000/svg";
+    function el(n,a){var e=document.createElementNS(NS,n);for(var k in a)e.setAttribute(k,a[k]);return e;}
+    function txt(x,y,s,a){var t=el("text",a||{});t.setAttribute("x",x);t.setAttribute("y",y);t.textContent=s;return t;}
+    var frag=document.createDocumentFragment();
+    var muted="var(--fg-faint)", gl="var(--border)";
+    // grid + ticks
+    [20,40,60,80,100].forEach(function(v){
+      frag.appendChild(el("line",{x1:sx(v),y1:m.t,x2:sx(v),y2:m.t+ph,stroke:gl,"stroke-width":1}));
+      frag.appendChild(el("line",{x1:m.l,y1:sy(v),x2:m.l+pw,y2:sy(v),stroke:gl,"stroke-width":1}));
+      var tx=txt(sx(v),m.t+ph+18,v+"%",{"text-anchor":"middle","font-size":11,fill:muted,"font-family":"var(--mono)"});
+      frag.appendChild(tx);
+      var ty=txt(m.l-9,sy(v)+4,v+"%",{"text-anchor":"end","font-size":11,fill:muted,"font-family":"var(--mono)"});
+      frag.appendChild(ty);
+    });
+    // diagonal (perfect calibration)
+    frag.appendChild(el("line",{x1:sx(20),y1:sy(20),x2:sx(100),y2:sy(100),
+      stroke:muted,"stroke-width":2,"stroke-dasharray":"5 5"}));
+    // axis labels
+    frag.appendChild(txt(m.l+pw/2,H-6,"Probabilidad que dijo el modelo",{"text-anchor":"middle","font-size":12,fill:"var(--fg-muted)","font-family":"var(--body)"}));
+    var yl=txt(16,m.t+ph/2,"Acierto real",{"text-anchor":"middle","font-size":12,fill:"var(--fg-muted)","font-family":"var(--body)",transform:"rotate(-90 16 "+(m.t+ph/2)+")"});
+    frag.appendChild(yl);
+    // series
+    function drawSeries(pts,color,label){
+      var line=el("polyline",{fill:"none",stroke:color,"stroke-width":2.5,"stroke-linejoin":"round","stroke-opacity":0.55,
+        points:pts.map(function(d){return sx(d.p)+","+sy(d.a)}).join(" ")});
+      frag.appendChild(line);
+      pts.forEach(function(d){
+        var r=Math.max(5,Math.min(13,Math.sqrt(d.n)*1.25));
+        var ring=el("circle",{cx:sx(d.p),cy:sy(d.a),r:r+2,fill:"var(--surface)"});
+        var c=el("circle",{cx:sx(d.p),cy:sy(d.a),r:r,fill:color,"fill-opacity":0.85,
+          "stroke":"var(--surface)","stroke-width":2,tabindex:0,role:"img"});
+        c.setAttribute("aria-label",label+": modelo "+d.p+"%, real "+d.a+"%, "+d.n+" picks");
+        c.style.cursor="pointer";
+        var show=function(ev){
+          var tip=document.getElementById("caltip");
+          tip.innerHTML='<div class="t">'+label+'</div><div class="r">Dijo '+d.p+'% · Fue '+d.a+'%<br>'+d.n+' picks</div>';
+          tip.style.opacity="1";
+          var pt=(ev.touches&&ev.touches[0])||ev;
+          var px=(pt.clientX||sx(d.p)), py=(pt.clientY||sy(d.a));
+          tip.style.left=Math.min(px+12,window.innerWidth-180)+"px";
+          tip.style.top=(py-10)+"px";
+        };
+        var hide=function(){document.getElementById("caltip").style.opacity="0"};
+        c.addEventListener("mouseenter",show);c.addEventListener("mousemove",show);
+        c.addEventListener("mouseleave",hide);c.addEventListener("focus",show);c.addEventListener("blur",hide);
+        frag.appendChild(ring);frag.appendChild(c);
+      });
+    }
+    drawSeries(cal.soccer,"var(--emerald)","Soccer");
+    drawSeries(cal.football,"var(--sky)","NFL");
+    svg.appendChild(frag);
+  })();
+
+  // ---------- table + filters ----------
+  var fSport="all", fRes="all";
+  var tbody=document.getElementById("tbody"), tfoot=document.getElementById("tfoot");
+  function render(){
+    var rows=picks.filter(function(p){
+      if(fSport!=="all"&&p.sp!==fSport)return false;
+      if(fRes==="win"&&!p.w)return false;
+      if(fRes==="loss"&&p.w)return false;
+      return true;
+    });
+    tbody.innerHTML=rows.map(function(p){
+      var edge=(p.pm-p.mk);
+      return '<tr>'+
+        '<td class="num" style="text-align:left;color:var(--fg-muted)">'+p.d+'</td>'+
+        '<td><span class="sportchip '+p.sp+'">'+(p.sp==="soccer"?"SOC":"NFL")+'</span> '+p.g+'</td>'+
+        '<td><b>'+p.pick+'</b></td>'+
+        '<td class="num">'+p.pm.toFixed(1)+'%</td>'+
+        '<td class="num" style="color:var(--fg-muted)">'+p.mk.toFixed(1)+'%</td>'+
+        '<td class="num">'+p.o.toFixed(2)+'</td>'+
+        '<td><span class="res '+(p.w?'w':'l')+'"><span class="mk">'+(p.w?'✓':'✕')+'</span>'+(p.w?'Ganó':'Perdió')+'</span></td>'+
+      '</tr>';
+    }).join("");
+    var won=rows.filter(function(p){return p.w}).length;
+    tfoot.textContent=rows.length+" picks mostrados · "+won+" ganados · "+(rows.length-won)+" perdidos  (muestra de los más recientes)";
+  }
+  function wire(id,set){
+    var box=document.getElementById(id);
+    box.addEventListener("click",function(e){
+      var b=e.target.closest("button"); if(!b)return;
+      Array.prototype.forEach.call(box.querySelectorAll("button"),function(x){x.setAttribute("aria-pressed",x===b?"true":"false")});
+      set(b.getAttribute("data-v")); render();
+    });
+  }
+  wire("fsport",function(v){fSport=v}); wire("fres",function(v){fRes=v});
+  render();
+
+  // ---------- theme toggle ----------
+  var tb=document.getElementById("themebtn");
+  tb.addEventListener("click",function(){
+    var cur=document.documentElement.getAttribute("data-theme");
+    var dark=window.matchMedia&&window.matchMedia("(prefers-color-scheme:dark)").matches;
+    var next=cur?(cur==="dark"?"light":"dark"):(dark?"light":"dark");
+    document.documentElement.setAttribute("data-theme",next);
+    try{localStorage.setItem("reto_theme",next)}catch(e){}
+  });
+  try{var sv=localStorage.getItem("reto_theme"); if(sv)document.documentElement.setAttribute("data-theme",sv);}catch(e){}
+})();
+</script>
