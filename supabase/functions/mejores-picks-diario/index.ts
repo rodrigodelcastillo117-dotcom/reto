@@ -66,7 +66,7 @@ function pct(p: string | number | null): string {
   return `${n.toFixed(0)}%`;
 }
 
-function filaPick(p: Pick): string {
+function filaPick(p: Pick, precio?: { mejor_momio: any; mejor_casa: string }): string {
   const emj = emojiDeporte(p.deporte);
   const col = colorNivel(p.nivel_confianza);
   const prob = pct(p.prob_pct);
@@ -74,11 +74,15 @@ function filaPick(p: Pick): string {
   const lesion = p.alerta_lesion
     ? `<span style="color:#f59e0b;font-size:11px;"> ⚠︎ ${Number(p.titulares_fuera) || 0} baja(s)</span>`
     : "";
+  const precioLinea = (precio && precio.mejor_momio)
+    ? `<div style="font-size:11px;color:#22c55e;margin-top:3px;">🏷️ Mejor precio ${precio.mejor_momio} — ${precio.mejor_casa}</div>`
+    : "";
   return `
   <tr>
     <td style="padding:10px 12px;border-bottom:1px solid #262626;">
       <div style="font-size:14px;color:#f5f5f5;">${emj} <strong>${p.pick}</strong></div>
       <div style="font-size:12px;color:#9ca3af;margin-top:2px;">${p.partido} · ${p.mercado}${hora ? ` · ${hora}` : ""}${lesion}</div>
+      ${precioLinea}
     </td>
     <td style="padding:10px 12px;border-bottom:1px solid #262626;text-align:right;white-space:nowrap;">
       <div style="font-size:18px;font-weight:bold;color:${col};">${prob}</div>
@@ -87,7 +91,10 @@ function filaPick(p: Pick): string {
   </tr>`;
 }
 
-function buildHtml(fecha: string, apodo: string, picks: Pick[], nflValor: any[], bajas: any[]): string {
+function buildHtml(fecha: string, apodo: string, picks: Pick[], nflValor: any[], bajas: any[], precios: any[]): string {
+  const pm = new Map<string, any>();
+  for (const r of (precios || [])) pm.set(`${r.partido}|${r.pick}`, r);
+  const precioDe = (p: Pick) => pm.get(`${p.partido}|${p.pick}`);
   const num = (p: Pick) => {
     const n = typeof p.prob_pct === "string" ? parseFloat(p.prob_pct) : (p.prob_pct ?? 0);
     return isFinite(n as number) ? (n as number) : 0;
@@ -106,7 +113,7 @@ function buildHtml(fecha: string, apodo: string, picks: Pick[], nflValor: any[],
     ? `
     <h2 style="color:#f5f5f5;font-size:15px;margin:24px 0 8px;">⭐ Top del día</h2>
     <table style="width:100%;border-collapse:collapse;background:#171717;border-radius:10px;overflow:hidden;">
-      ${top.map(filaPick).join("")}
+      ${top.map((p) => filaPick(p, precioDe(p))).join("")}
     </table>`
     : "";
 
@@ -114,7 +121,7 @@ function buildHtml(fecha: string, apodo: string, picks: Pick[], nflValor: any[],
     .map(([dep, arr]) => `
     <h2 style="color:#d4d4d8;font-size:14px;margin:22px 0 8px;">${emojiDeporte(dep)} ${dep}</h2>
     <table style="width:100%;border-collapse:collapse;background:#171717;border-radius:10px;overflow:hidden;">
-      ${arr.map(filaPick).join("")}
+      ${arr.map((p) => filaPick(p, precioDe(p))).join("")}
     </table>`)
     .join("");
 
@@ -254,18 +261,26 @@ serve(async (req) => {
       .limit(6);
     const bajas = (bajasRaw || []);
 
+    // 🏷️ Mejor precio por casa (line shopping) para picks NBA/NHL/NFL al ganador
+    const { data: preciosRaw } = await sb
+      .from("v_reto_pick_precio_v1")
+      .select("deporte, partido, pick, mejor_momio, mejor_casa, kickoff")
+      .gte("kickoff", nowIso)
+      .lte("kickoff", finDiaUtcIso);
+    const precios = (preciosRaw || []);
+
     const results: any[] = [];
     for (const apodo of apodos) {
       const { data: u } = await sb.from("usuarios").select("apodo, email, activo").eq("apodo", apodo).maybeSingle();
       if (!u || !u.email) { results.push({ apodo, skip: "sin email" }); continue; }
 
-      const html = buildHtml(fecha, apodo, lista, nflValor, bajas);
+      const html = buildHtml(fecha, apodo, lista, nflValor, bajas, precios);
       const subject = `🏆 Reto 13M — Mejores picks del ${cdmx.toLocaleDateString("es-MX", { timeZone: "America/Mexico_City", day: "numeric", month: "short" })} (${lista.length})`;
       const res = await sendEmail(resendKey, u.email, subject, html);
-      results.push({ apodo, email: u.email, picks: lista.length, nfl_valor: nflValor.length, bajas: bajas.length, send: res.status });
+      results.push({ apodo, email: u.email, picks: lista.length, nfl_valor: nflValor.length, bajas: bajas.length, precios: precios.length, send: res.status });
     }
 
-    return new Response(JSON.stringify({ ok: true, fecha, total_picks: lista.length, nfl_valor: nflValor.length, bajas: bajas.length, results }), { headers: jsonHeaders });
+    return new Response(JSON.stringify({ ok: true, fecha, total_picks: lista.length, nfl_valor: nflValor.length, bajas: bajas.length, precios: precios.length, results }), { headers: jsonHeaders });
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e?.message || String(e) }), { status: 500, headers: jsonHeaders });
   }
