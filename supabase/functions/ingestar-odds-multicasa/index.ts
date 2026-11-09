@@ -14,6 +14,35 @@ const corsHeaders = {
 // Deportes a sondear. Soccer se puede añadir luego (regions=eu,uk) si el presupuesto de cuota lo permite.
 const SPORTS = ["americanfootball_nfl", "basketball_nba", "icehockey_nhl"];
 
+// Mapa liga del motor (soccer_league_map.liga_nombre) -> key de The Odds API.
+// Se usa en modo soccer_auto: solo se gastan creditos en ligas que de verdad tienen picks proximos.
+const LIGA_ODDSAPI: Record<string, string> = {
+  "Premier League": "soccer_epl",
+  "La Liga": "soccer_spain_la_liga",
+  "Serie A": "soccer_italy_serie_a",
+  "Bundesliga": "soccer_germany_bundesliga",
+  "Ligue 1": "soccer_france_ligue_one",
+  "Eredivisie": "soccer_netherlands_eredivisie",
+  "Liga MX": "soccer_mexico_ligamx",
+  "Liga Portugal": "soccer_portugal_primeira_liga",
+  "Süper Lig": "soccer_turkey_super_league",
+  "Jupiler Pro League": "soccer_belgium_first_div",
+  "Brazil Serie A": "soccer_brazil_campeonato",
+  "Argentine LPF": "soccer_argentina_primera_division",
+  "MLS": "soccer_usa_mls",
+  "Eliteserien": "soccer_norway_eliteserien",
+  "Allsvenskan": "soccer_sweden_allsvenskan",
+  "Süper Lig Turkey": "soccer_turkey_super_league",
+  "Saudi Pro League": "soccer_saudi_arabia",
+  "UEFA Champions League": "soccer_uefa_champs_league",
+  "UEFA Europa League": "soccer_uefa_europa_league",
+  "UEFA Conference League": "soccer_uefa_europa_conference_league",
+  "Copa Libertadores": "soccer_conmebol_copa_libertadores",
+  "Copa Sudamericana": "soccer_conmebol_copa_sudamericana",
+};
+// Competencias de seleccion siempre consideradas cuando estan activas (ventana FIFA).
+const SOCCER_INTL_SIEMPRE = ["soccer_uefa_nations_league"];
+
 serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   const jsonHeaders = { ...corsHeaders, "Content-Type": "application/json" };
@@ -30,8 +59,30 @@ serve(async (req) => {
     // Permite elegir deportes y región por body (opcional)
     let body: any = {};
     try { body = await req.json(); } catch { /* vacío */ }
-    const sports: string[] = Array.isArray(body?.sports) && body.sports.length ? body.sports : SPORTS;
-    const regions: string = body?.regions || "us";
+    let sports: string[] = Array.isArray(body?.sports) && body.sports.length ? body.sports : SPORTS;
+    const regions: string = body?.regions || (body?.soccer_auto ? "eu" : "us");
+
+    // 🎯 Modo POR DEMANDA (soccer_auto): solo gasta créditos en ligas con picks próximos.
+    // Lee las ligas de los picks publicables (próximos N días) y las traduce a keys de The Odds API.
+    // En descanso FIFA se apaga casi solo (solo selecciones); cuando los clubes vuelven, se expande solo.
+    let autoInfo: any = null;
+    if (body?.soccer_auto) {
+      const dias = Number(body?.dias) > 0 ? Number(body.dias) : 3;
+      const hastaIso = new Date(Date.now() + dias * 86400000).toISOString();
+      const { data: prox } = await sb.from("v_reto_soccer_pick_v1")
+        .select("liga_nombre, kickoff")
+        .gte("kickoff", new Date().toISOString())
+        .lte("kickoff", hastaIso);
+      const ligas = Array.from(new Set((prox || []).map((r: any) => String(r.liga_nombre || "").trim())));
+      const keys = new Set<string>(SOCCER_INTL_SIEMPRE);
+      const sinKey: string[] = [];
+      for (const lg of ligas) {
+        const k = LIGA_ODDSAPI[lg];
+        if (k) keys.add(k); else if (lg) sinKey.push(lg);
+      }
+      sports = Array.from(keys);
+      autoInfo = { ligas_con_picks: ligas, keys_elegidas: sports, ligas_sin_key: sinKey, dias };
+    }
 
     // Modo listar: devuelve las competencias de futbol ACTIVAS (no gasta cuota de /sports).
     if (body?.list) {
@@ -93,7 +144,7 @@ serve(async (req) => {
       else resumen.push({ upsert_error: error.message });
     }
 
-    return new Response(JSON.stringify({ ok: true, cuota_restante: cuotaRestante, upserted, resumen }), { headers: jsonHeaders });
+    return new Response(JSON.stringify({ ok: true, cuota_restante: cuotaRestante, upserted, n_keys: sports.length, auto: autoInfo, resumen }), { headers: jsonHeaders });
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e?.message || String(e) }), { status: 500, headers: jsonHeaders });
   }
