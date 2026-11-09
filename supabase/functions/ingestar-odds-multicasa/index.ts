@@ -33,6 +33,16 @@ serve(async (req) => {
     const sports: string[] = Array.isArray(body?.sports) && body.sports.length ? body.sports : SPORTS;
     const regions: string = body?.regions || "us";
 
+    // Modo listar: devuelve las competencias de futbol ACTIVAS (no gasta cuota de /sports).
+    if (body?.list) {
+      const r = await fetch(`https://api.the-odds-api.com/v4/sports/?apiKey=${apiKey}`);
+      const all = await r.json();
+      const soccer = (Array.isArray(all) ? all : [])
+        .filter((s: any) => s.group === "Soccer")
+        .map((s: any) => ({ key: s.key, title: s.title, active: s.active, has_outrights: s.has_outrights }));
+      return new Response(JSON.stringify({ ok: true, cuota_restante: r.headers.get("x-requests-remaining"), n: soccer.length, soccer }), { headers: jsonHeaders });
+    }
+
     const resumen: any[] = [];
     let cuotaRestante: string | null = null;
     const rows: any[] = [];

@@ -91,7 +91,7 @@ function filaPick(p: Pick, precio?: { mejor_momio: any; mejor_casa: string }): s
   </tr>`;
 }
 
-function buildHtml(fecha: string, apodo: string, picks: Pick[], nflValor: any[], bajas: any[], precios: any[]): string {
+function buildHtml(fecha: string, apodo: string, picks: Pick[], nflValor: any[], bajas: any[], precios: any[], internacional: any[]): string {
   const pm = new Map<string, any>();
   for (const r of (precios || [])) pm.set(`${r.partido}|${r.pick}`, r);
   const precioDe = (p: Pick) => pm.get(`${p.partido}|${p.pick}`);
@@ -158,6 +158,27 @@ function buildHtml(fecha: string, apodo: string, picks: Pick[], nflValor: any[],
     </table>`
     : "";
 
+  // 🌍 Internacional (selecciones): 100% mercado — el modelo no rate selecciones y el mercado les gana.
+  const seccionIntl = (internacional && internacional.length)
+    ? `
+    <h2 style="color:#f5f5f5;font-size:15px;margin:26px 0 8px;">🌍 Internacional (selecciones) <span style="color:#6b7280;font-size:11px;">— mercado</span></h2>
+    <table style="width:100%;border-collapse:collapse;background:#171717;border-radius:10px;overflow:hidden;">
+      ${internacional.slice(0, 10).map((g: any) => {
+        const ph = Number(g.prob_home_pct), pa = Number(g.prob_away_pct);
+        const favHome = ph >= pa;
+        const fav = favHome ? g.home_team : g.away_team;
+        const prob = favHome ? ph : pa;
+        const momio = favHome ? g.mejor_home : g.mejor_away;
+        const casa = favHome ? g.casa_home : g.casa_away;
+        return `<tr><td style="padding:9px 12px;border-bottom:1px solid #262626;">
+          <div style="font-size:13px;color:#f5f5f5;">🌍 Favorito: <strong>${fav}</strong> <span style="color:#60a5fa;font-size:12px;">${prob ? prob.toFixed(0) : "?"}%</span></div>
+          <div style="font-size:12px;color:#9ca3af;margin-top:2px;">${g.home_team} vs ${g.away_team} · empate ${g.prob_draw_pct ?? "?"}%${momio ? ` · 🏷️ mejor ${momio} (${casa || "mercado"})` : ""}</div>
+        </td></tr>`;
+      }).join("")}
+    </table>
+    <p style="margin:6px 2px 0;color:#6b7280;font-size:11px;">Selecciones: probabilidad del <strong>mercado</strong> (de-vig de varias casas), no del modelo. Es la lectura más honesta para fútbol internacional.</p>`
+    : "";
+
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:#0a0a0a;font-family:Arial,Helvetica,sans-serif;color:#e5e5e5;">
@@ -169,6 +190,7 @@ function buildHtml(fecha: string, apodo: string, picks: Pick[], nflValor: any[],
 
   ${cuerpo}
   ${seccionNfl}
+  ${seccionIntl}
   ${seccionBajas}
 
   <div style="background:#13131f;border-radius:10px;padding:14px 16px;margin:24px 0 10px;border:1px solid #27272a;">
@@ -341,18 +363,27 @@ serve(async (req) => {
       }
     } catch (_e) { /* fallback: prob del modelo */ }
 
+    // 🌍 Internacional (selecciones): próximos 10 días, solo competencias de selección, 100% mercado.
+    const win10Iso = new Date(now.getTime() + 10 * 86400000).toISOString();
+    const intlKeys = ["nations_league", "world_cup", "qualifiers", "friendl", "cup_of_nations", "copa_america", "concacaf", "uefa_euro"];
+    const { data: intlRaw } = await sb.from("v_reto_soccer_mercado_v2")
+      .select("sport_key, home_team, away_team, commence_time, prob_home_pct, prob_draw_pct, prob_away_pct, mejor_home, casa_home, mejor_away, casa_away")
+      .gte("commence_time", nowIso).lte("commence_time", win10Iso)
+      .order("commence_time");
+    const internacional = (intlRaw || []).filter((g: any) => intlKeys.some((k) => String(g.sport_key || "").includes(k)));
+
     const results: any[] = [];
     for (const apodo of apodos) {
       const { data: u } = await sb.from("usuarios").select("apodo, email, activo").eq("apodo", apodo).maybeSingle();
       if (!u || !u.email) { results.push({ apodo, skip: "sin email" }); continue; }
 
-      const html = buildHtml(fecha, apodo, lista, nflValor, bajas, precios);
+      const html = buildHtml(fecha, apodo, lista, nflValor, bajas, precios, internacional);
       const subject = `🏆 Reto 13M — Mejores picks del ${cdmx.toLocaleDateString("es-MX", { timeZone: "America/Mexico_City", day: "numeric", month: "short" })} (${lista.length})`;
       const res = await sendEmail(resendKey, u.email, subject, html);
-      results.push({ apodo, email: u.email, picks: lista.length, nfl_valor: nflValor.length, bajas: bajas.length, precios: precios.length, send: res.status });
+      results.push({ apodo, email: u.email, picks: lista.length, nfl_valor: nflValor.length, bajas: bajas.length, precios: precios.length, intl: internacional.length, send: res.status });
     }
 
-    return new Response(JSON.stringify({ ok: true, fecha, total_picks: lista.length, nfl_valor: nflValor.length, bajas: bajas.length, precios: precios.length, results }), { headers: jsonHeaders });
+    return new Response(JSON.stringify({ ok: true, fecha, total_picks: lista.length, nfl_valor: nflValor.length, bajas: bajas.length, precios: precios.length, intl: internacional.length, results }), { headers: jsonHeaders });
   } catch (e: any) {
     return new Response(JSON.stringify({ error: e?.message || String(e) }), { status: 500, headers: jsonHeaders });
   }
