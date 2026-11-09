@@ -241,24 +241,39 @@ serve(async (req) => {
     }
     const lista = (picks || []) as Pick[];
 
-    // 🎾 Recalibración de tenis ATP (validada OOS): shrink hacia 50% con k guardado.
-    // Solo ATP (WTA ya calibrado). Si algo falla, se muestran las probs crudas.
+    // 🧠 Recalibración auto-aprendida (validada OOS): aplica SOLO los shrinks que pasaron la compuerta.
+    // Tenis por tour (ATP/WTA); demás deportes por nombre. Fallback: probs crudas.
     try {
-      const { data: calRow } = await sb.from("reto_calibracion_deporte_v1")
-        .select("k, validado").eq("deporte", "tenis_atp").maybeSingle();
-      const kAtp = (calRow && calRow.validado) ? Number(calRow.k) : 1.0;
-      if (kAtp !== 1.0) {
-        const { data: tourRows } = await sb.from("v_reto_tenis_tour_proximo_v1")
-          .select("tour, p1_name, p2_name").eq("tour", "ATP");
-        const atpPairs = (tourRows || []).map((t: any) => [String(t.p1_name || "").toLowerCase(), String(t.p2_name || "").toLowerCase()]);
+      const { data: calRows } = await sb.from("reto_calibracion_deporte_v1")
+        .select("deporte, k, validado").eq("validado", true);
+      const kmap = new Map<string, number>();
+      for (const c of (calRows || [])) if (Number(c.k) !== 1.0) kmap.set(String(c.deporte), Number(c.k));
+      if (kmap.size > 0) {
+        const { data: tourRows } = await sb.from("v_reto_tenis_tour_proximo_v1").select("tour, p1_name, p2_name");
+        const tourPairs = (tourRows || []).map((t: any) => ({
+          key: "tenis_" + String(t.tour || "").toLowerCase(),
+          a: String(t.p1_name || "").toLowerCase(), b: String(t.p2_name || "").toLowerCase(),
+        }));
+        const keyDe = (p: Pick): string | null => {
+          const d = String(p.deporte || "").toLowerCase();
+          if (d.includes("tenis") || d.includes("tennis")) {
+            const part = String(p.partido || "").toLowerCase();
+            const m = tourPairs.find((t) => t.a && t.b && part.includes(t.a) && part.includes(t.b));
+            return m ? m.key : null;
+          }
+          if (d.includes("nba") || d.includes("basket")) return "nba";
+          if (d.includes("nhl") || d.includes("hockey")) return "nhl";
+          if (d.includes("nfl") || d.includes("football")) return "nfl";
+          if (d.includes("soccer") || d.includes("fut")) return "soccer";
+          return null;
+        };
         for (const p of lista) {
-          const dep = String(p.deporte || "").toLowerCase();
-          if (!dep.includes("tenis") && !dep.includes("tennis")) continue;
-          const part = String(p.partido || "").toLowerCase();
-          const esAtp = atpPairs.some(([a, b]) => a && b && part.includes(a) && part.includes(b));
-          if (esAtp && p.prob_pct != null) {
+          const key = keyDe(p);
+          if (!key) continue;
+          const k = kmap.get(key);
+          if (k && p.prob_pct != null) {
             const raw = typeof p.prob_pct === "string" ? parseFloat(p.prob_pct) : (p.prob_pct as number);
-            if (isFinite(raw)) p.prob_pct = (50 + kAtp * (raw - 50)).toFixed(1);
+            if (isFinite(raw)) p.prob_pct = (50 + k * (raw - 50)).toFixed(1);
           }
         }
       }
