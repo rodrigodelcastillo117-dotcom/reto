@@ -175,6 +175,7 @@ function buildHtml(fecha: string, apodo: string, picks: Pick[], nflValor: any[],
     <p style="margin:0;color:#a1a1aa;font-size:12px;line-height:1.5;">
       Estas son <strong>probabilidades del modelo</strong>, no garantías. Sin dinero, sin EV, sin stake.
       El modelo solo supera de forma comprobada al mercado de cierre en NFL; en el resto, úsalo como lectura, no como certeza.
+      Las probabilidades de tenis ATP van <strong>recalibradas</strong> (el modelo era optimista en ese circuito, verificado out-of-sample).
     </p>
   </div>
 
@@ -239,6 +240,29 @@ serve(async (req) => {
       return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: jsonHeaders });
     }
     const lista = (picks || []) as Pick[];
+
+    // 🎾 Recalibración de tenis ATP (validada OOS): shrink hacia 50% con k guardado.
+    // Solo ATP (WTA ya calibrado). Si algo falla, se muestran las probs crudas.
+    try {
+      const { data: calRow } = await sb.from("reto_calibracion_deporte_v1")
+        .select("k, validado").eq("deporte", "tenis_atp").maybeSingle();
+      const kAtp = (calRow && calRow.validado) ? Number(calRow.k) : 1.0;
+      if (kAtp !== 1.0) {
+        const { data: tourRows } = await sb.from("v_reto_tenis_tour_proximo_v1")
+          .select("tour, p1_name, p2_name").eq("tour", "ATP");
+        const atpPairs = (tourRows || []).map((t: any) => [String(t.p1_name || "").toLowerCase(), String(t.p2_name || "").toLowerCase()]);
+        for (const p of lista) {
+          const dep = String(p.deporte || "").toLowerCase();
+          if (!dep.includes("tenis") && !dep.includes("tennis")) continue;
+          const part = String(p.partido || "").toLowerCase();
+          const esAtp = atpPairs.some(([a, b]) => a && b && part.includes(a) && part.includes(b));
+          if (esAtp && p.prob_pct != null) {
+            const raw = typeof p.prob_pct === "string" ? parseFloat(p.prob_pct) : (p.prob_pct as number);
+            if (isFinite(raw)) p.prob_pct = (50 + kAtp * (raw - 50)).toFixed(1);
+          }
+        }
+      }
+    } catch (_e) { /* fallback: probs crudas */ }
 
     // 🏈 Valor NFL (próximos 4 días, solo VALOR con línea fresca)
     const { data: nflRaw } = await sb
