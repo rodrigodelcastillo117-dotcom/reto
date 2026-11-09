@@ -49,13 +49,33 @@ tot as (
     'desde', to_char(min(kickoff),'DD Mon'),
     'hasta', to_char(max(kickoff),'DD Mon YYYY')
   ) j from g
+),
+-- CLV (¿le ganamos al cierre?): proxy del lado favorito del mercado (entrada vs último snapshot).
+-- Se enciende solo: 'recolectando' (<7 días), 'preliminar' (<14), 'listo' (>=14). DINERO OFF.
+clv_ev as (
+  select case when entry_home_pct >= entry_away_pct then mov_home_pp else mov_away_pp end as clv_fav_pp
+  from v_reto_clv_multicasa_v1
+  where n_snaps >= 2 and entry_home_pct is not null
+),
+clv_dias as ( select count(distinct captured_at::date) d from reto_clv_snapshots_v1 ),
+clv as (
+  select jsonb_build_object(
+    'eventos', (select count(*) from clv_ev),
+    'dias_datos', (select d from clv_dias),
+    'clv_pp', (select round(avg(clv_fav_pp)::numeric,2) from clv_ev),
+    'estado', case
+        when (select d from clv_dias) < 7 then 'recolectando'
+        when (select d from clv_dias) < 14 then 'preliminar'
+        else 'listo' end
+  ) j
 )
 select jsonb_build_object(
   'generado_at', now(),
   'totales', (select j from tot),
   'por_deporte', (select j from por),
   'buckets', (select j from buck),
-  'semanas', (select j from wk)
+  'semanas', (select j from wk),
+  'clv', (select j from clv)
 ) as data;
 
 grant select on v_reto_tablero_validacion_v1 to anon, authenticated;
