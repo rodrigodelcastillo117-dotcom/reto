@@ -194,13 +194,17 @@ function buildHtml(fecha: string, apodo: string, picks: Pick[], nflValor: any[],
 
   // 📊 Récord verificado EN VIVO (reusa v_reto_tablero_validacion_v1). Transparencia diaria, sin dinero.
   const rt = record?.totales;
+  const f7 = record?.forma?.d7;
+  const formaLinea = (f7 && Number(f7.n) > 0)
+    ? `<br><span style="color:#9ca3af;">📈 Forma 7 días: <strong style="color:#e5e5e5;">${f7.hit}%</strong> (${f7.n} picks)</span>`
+    : "";
   const recordBar = rt
     ? `
   <div style="background:#13131f;border:1px solid #27272a;border-radius:10px;padding:12px 14px;margin-top:16px;">
     <div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.08em;">Récord verificado</div>
     <div style="font-size:13px;color:#e5e5e5;margin-top:5px;line-height:1.5;">
       ✅ <strong>${rt.hit}%</strong> acierto global <span style="color:#6b7280;">(${Number(rt.n).toLocaleString("es-MX")} picks con resultado)</span><br>
-      <span style="color:#22c55e;">🔒 Alta confianza ≥70%: <strong>${rt.hit_alta}%</strong></span> <span style="color:#6b7280;">(${rt.n_alta} picks)</span>
+      <span style="color:#22c55e;">🔒 Alta confianza ≥70%: <strong>${rt.hit_alta}%</strong></span> <span style="color:#6b7280;">(${rt.n_alta} picks)</span>${formaLinea}
     </div>
     <a href="${APP_URL}/validacion" style="font-size:11px;color:#60a5fa;text-decoration:none;display:inline-block;margin-top:6px;">Ver tablero de validación →</a>
   </div>`
