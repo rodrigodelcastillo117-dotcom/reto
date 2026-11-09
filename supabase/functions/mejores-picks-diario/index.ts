@@ -176,6 +176,7 @@ function buildHtml(fecha: string, apodo: string, picks: Pick[], nflValor: any[],
       Estas son <strong>probabilidades del modelo</strong>, no garantías. Sin dinero, sin EV, sin stake.
       El modelo solo supera de forma comprobada al mercado de cierre en NFL; en el resto, úsalo como lectura, no como certeza.
       Las probabilidades de tenis ATP van <strong>recalibradas</strong> (el modelo era optimista en ese circuito, verificado out-of-sample).
+      Las de fútbol (ML) van <strong>ancladas al mercado</strong> cuando hay momios: validamos que el mercado le gana al modelo, así que mostramos su probabilidad (más honesta) y el mejor precio.
     </p>
   </div>
 
@@ -307,6 +308,38 @@ serve(async (req) => {
       .gte("kickoff", nowIso)
       .lte("kickoff", finDiaUtcIso);
     const precios = (preciosRaw || []);
+
+    // ⚽ Fútbol: ancla la prob publicada al MERCADO (de-vig 3-way) + mejor precio por casa.
+    // Validado OOS: el mercado le gana al modelo en fútbol. Emparejado por nombre normalizado;
+    // fallback seguro: si no machea con confianza, se queda la prob del modelo (nunca peor que hoy).
+    try {
+      const { data: smkt } = await sb.from("v_reto_soccer_mercado_v2")
+        .select("home_team, away_team, prob_home_pct, prob_away_pct, mejor_home, casa_home, mejor_away, casa_away");
+      const norm = (s: string) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      for (const p of lista) {
+        const dep = String(p.deporte || "").toLowerCase();
+        if (!dep.includes("soccer") && !dep.includes("fut")) continue;
+        if (!/\bml\b|moneyline|ganador/i.test(p.mercado || "")) continue; // solo ML (BTTS se queda modelo)
+        const partN = norm(p.partido);
+        const pickN = norm(String(p.pick).replace(/gana/ig, ""));
+        const row = (smkt || []).find((r: any) => {
+          const h = norm(r.home_team), a = norm(r.away_team);
+          return h && a && partN.includes(h) && partN.includes(a);
+        });
+        if (!row) continue;
+        const h = norm(row.home_team), a = norm(row.away_team);
+        const matchHome = !!h && (pickN.includes(h) || h.includes(pickN));
+        const matchAway = !!a && (pickN.includes(a) || a.includes(pickN));
+        if (matchHome === matchAway) continue; // ambiguo -> fallback modelo
+        if (matchHome) {
+          if (row.prob_home_pct != null) p.prob_pct = Number(row.prob_home_pct).toFixed(1);
+          if (row.mejor_home) precios.push({ partido: p.partido, pick: p.pick, mejor_momio: row.mejor_home, mejor_casa: row.casa_home || "mercado" });
+        } else {
+          if (row.prob_away_pct != null) p.prob_pct = Number(row.prob_away_pct).toFixed(1);
+          if (row.mejor_away) precios.push({ partido: p.partido, pick: p.pick, mejor_momio: row.mejor_away, mejor_casa: row.casa_away || "mercado" });
+        }
+      }
+    } catch (_e) { /* fallback: prob del modelo */ }
 
     const results: any[] = [];
     for (const apodo of apodos) {
