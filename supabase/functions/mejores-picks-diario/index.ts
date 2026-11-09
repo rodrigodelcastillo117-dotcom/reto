@@ -91,7 +91,7 @@ function filaPick(p: Pick, precio?: { mejor_momio: any; mejor_casa: string }): s
   </tr>`;
 }
 
-function buildHtml(fecha: string, apodo: string, picks: Pick[], nflValor: any[], bajas: any[], precios: any[], internacional: any[]): string {
+function buildHtml(fecha: string, apodo: string, picks: Pick[], nflValor: any[], bajas: any[], precios: any[], internacional: any[], record: any): string {
   const pm = new Map<string, any>();
   for (const r of (precios || [])) pm.set(`${r.partido}|${r.pick}`, r);
   const precioDe = (p: Pick) => pm.get(`${p.partido}|${p.pick}`);
@@ -192,6 +192,20 @@ function buildHtml(fecha: string, apodo: string, picks: Pick[], nflValor: any[],
     <p style="margin:6px 2px 0;color:#6b7280;font-size:11px;">Selecciones: probabilidad del <strong>mercado</strong> (de-vig de varias casas), no del modelo. Es la lectura más honesta para fútbol internacional.</p>`
     : "";
 
+  // 📊 Récord verificado EN VIVO (reusa v_reto_tablero_validacion_v1). Transparencia diaria, sin dinero.
+  const rt = record?.totales;
+  const recordBar = rt
+    ? `
+  <div style="background:#13131f;border:1px solid #27272a;border-radius:10px;padding:12px 14px;margin-top:16px;">
+    <div style="font-size:10px;color:#6b7280;text-transform:uppercase;letter-spacing:.08em;">Récord verificado</div>
+    <div style="font-size:13px;color:#e5e5e5;margin-top:5px;line-height:1.5;">
+      ✅ <strong>${rt.hit}%</strong> acierto global <span style="color:#6b7280;">(${Number(rt.n).toLocaleString("es-MX")} picks con resultado)</span><br>
+      <span style="color:#22c55e;">🔒 Alta confianza ≥70%: <strong>${rt.hit_alta}%</strong></span> <span style="color:#6b7280;">(${rt.n_alta} picks)</span>
+    </div>
+    <a href="${APP_URL}/validacion" style="font-size:11px;color:#60a5fa;text-decoration:none;display:inline-block;margin-top:6px;">Ver tablero de validación →</a>
+  </div>`
+    : "";
+
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;padding:0;background:#0a0a0a;font-family:Arial,Helvetica,sans-serif;color:#e5e5e5;">
@@ -201,6 +215,7 @@ function buildHtml(fecha: string, apodo: string, picks: Pick[], nflValor: any[],
     <p style="margin:6px 0 0;color:#9ca3af;font-size:13px;">${fecha} — ${apodo}</p>
   </div>
 
+  ${recordBar}
   ${cuerpo}
   ${seccionNfl}
   ${seccionIntl}
@@ -385,12 +400,19 @@ serve(async (req) => {
       .order("commence_time");
     const internacional = (intlRaw || []).filter((g: any) => intlKeys.some((k) => String(g.sport_key || "").includes(k)));
 
+    // 📊 Récord verificado en vivo (para el encabezado del email). Falla suave: si no hay, se omite.
+    let record: any = null;
+    try {
+      const { data: tabRow } = await sb.from("v_reto_tablero_validacion_v1").select("data").maybeSingle();
+      record = (tabRow as any)?.data || null;
+    } catch (_e) { /* sin récord: se omite la barra */ }
+
     const results: any[] = [];
     for (const apodo of apodos) {
       const { data: u } = await sb.from("usuarios").select("apodo, email, activo").eq("apodo", apodo).maybeSingle();
       if (!u || !u.email) { results.push({ apodo, skip: "sin email" }); continue; }
 
-      const html = buildHtml(fecha, apodo, lista, nflValor, bajas, precios, internacional);
+      const html = buildHtml(fecha, apodo, lista, nflValor, bajas, precios, internacional, record);
       const subject = `🏆 Reto 13M — Mejores picks del ${cdmx.toLocaleDateString("es-MX", { timeZone: "America/Mexico_City", day: "numeric", month: "short" })} (${lista.length})`;
       const res = await sendEmail(resendKey, u.email, subject, html);
       results.push({ apodo, email: u.email, picks: lista.length, nfl_valor: nflValor.length, bajas: bajas.length, precios: precios.length, intl: internacional.length, send: res.status });
