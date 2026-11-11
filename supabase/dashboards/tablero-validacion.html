@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Reto 13M · Validación</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0a0a; --surface:#141414; --surface2:#1b1b1b; --line:#272727;
+    --ink:#f5f5f5; --ink2:#a1a1aa; --ink3:#6b7280;
+    --real:#22c55e;      /* lo que GANAMOS de verdad */
+    --model:#60a5fa;     /* lo que el modelo DICE */
+    --warn:#f59e0b; --bad:#ef4444;
+    --accent:#3b82f6;
+  }
+  :root[data-theme="light"]{
+    --bg:#f5f6f8; --surface:#ffffff; --surface2:#f0f1f4; --line:#e3e5ea;
+    --ink:#101114; --ink2:#52555e; --ink3:#878b94;
+  }
+  @media (prefers-color-scheme:light){
+    :root:not([data-theme="dark"]){
+      --bg:#f5f6f8; --surface:#ffffff; --surface2:#f0f1f4; --line:#e3e5ea;
+      --ink:#101114; --ink2:#52555e; --ink3:#878b94;
+    }
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Arial,sans-serif;
+    font-feature-settings:"tnum" 1;-webkit-font-smoothing:antialiased;line-height:1.5}
+  .wrap{max-width:880px;margin:0 auto;padding:22px 16px 60px}
+  header{border-bottom:2px solid var(--accent);padding:14px 0 18px;margin-bottom:22px}
+  .eyebrow{font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--ink3);font-weight:600}
+  h1{margin:4px 0 2px;font-size:26px;font-weight:800;letter-spacing:-.02em;text-wrap:balance}
+  .sub{color:var(--ink2);font-size:13px;margin:0}
+  .badge{display:inline-block;margin-top:10px;font-size:11px;font-weight:600;color:var(--real);
+    border:1px solid color-mix(in srgb,var(--real) 45%,transparent);border-radius:999px;padding:3px 10px}
+  h2{font-size:14px;font-weight:700;margin:30px 0 4px;letter-spacing:-.01em}
+  .note{color:var(--ink3);font-size:12px;margin:0 0 12px}
+  .grid-kpi{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
+  @media(max-width:640px){.grid-kpi{grid-template-columns:repeat(2,1fr)}}
+  .kpi{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:14px}
+  .kpi .v{font-size:26px;font-weight:800;letter-spacing:-.02em}
+  .kpi .l{font-size:11px;color:var(--ink2);margin-top:2px}
+  .kpi .s{font-size:11px;color:var(--ink3);margin-top:4px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px 16px 6px}
+  .row{display:flex;align-items:center;gap:10px;padding:9px 0;border-bottom:1px solid var(--line)}
+  .row:last-child{border-bottom:none}
+  .row .name{width:88px;flex:none;font-size:13px;font-weight:600}
+  .row .n{width:52px;flex:none;font-size:11px;color:var(--ink3);text-align:right}
+  .track{flex:1;height:22px;background:var(--surface2);border-radius:6px;position:relative;overflow:hidden}
+  .fill{height:100%;border-radius:6px;background:var(--real);display:flex;align-items:center;justify-content:flex-end;padding-right:7px}
+  .fill span{font-size:11px;font-weight:700;color:#06240f}
+  .tag{font-size:10px;color:var(--ink3);width:108px;flex:none;text-align:right}
+  /* calibración: dos marcas por bucket */
+  .calrow{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--line)}
+  .calrow:last-child{border-bottom:none}
+  .calrow .b{width:52px;flex:none;font-size:12px;font-weight:600}
+  .caltrack{flex:1;height:30px;position:relative;background:var(--surface2);border-radius:6px}
+  .mk{position:absolute;top:0;height:100%;display:flex;align-items:center;font-size:10px;font-weight:700;transform:translateX(-50%)}
+  .mk.dice{color:var(--model)}
+  .mk.real{color:var(--real)}
+  .dot{width:11px;height:11px;border-radius:50%;position:absolute;top:50%;transform:translate(-50%,-50%)}
+  .dot.dice{background:var(--model)} .dot.real{background:var(--real)}
+  .calrow .cn{width:44px;flex:none;font-size:11px;color:var(--ink3);text-align:right}
+  .legend{display:flex;gap:16px;align-items:center;font-size:12px;color:var(--ink2);margin:2px 0 14px}
+  .legend i{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:5px;vertical-align:middle}
+  .flag{font-size:11px;padding:1px 7px;border-radius:999px;font-weight:600}
+  .flag.good{color:var(--real);background:color-mix(in srgb,var(--real) 14%,transparent)}
+  .flag.bad{color:var(--warn);background:color-mix(in srgb,var(--warn) 14%,transparent)}
+  .panel{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .panel h3{margin:0 0 8px;font-size:13px}
+  ul.clean{margin:6px 0 0;padding-left:18px;color:var(--ink2);font-size:13px}
+  ul.clean li{margin:5px 0}
+  .ok{color:var(--real);font-weight:600} .no{color:var(--warn);font-weight:600}
+  .disc{background:var(--surface2);border:1px solid var(--line);border-radius:12px;padding:14px 16px;margin-top:26px;color:var(--ink2);font-size:12.5px;line-height:1.55}
+  foot,.foot{display:block;text-align:center;color:var(--ink3);font-size:11px;margin-top:26px}
+  svg{display:block;width:100%;height:auto}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Reto 13M · tablero de validación</div>
+    <h1>Qué tan bien le atinamos (de verdad)</h1>
+    <p class="sub">1,730 picks ya con resultado · 14 oct – 9 nov 2026 · sin dinero, sin EV, sin stake</p>
+    <span class="badge">● Dinero OFF · todo verificado out-of-sample</span>
+  </header>
+
+  <!-- KPIs -->
+  <div class="grid-kpi">
+    <div class="kpi"><div class="v">1,730</div><div class="l">picks verificados</div><div class="s">con resultado real</div></div>
+    <div class="kpi"><div class="v">59.6%</div><div class="l">acierto global</div><div class="s">prob. media que decimos: 59.4%</div></div>
+    <div class="kpi"><div class="v" style="color:var(--real)">79.3%</div><div class="l">tier alta confianza</div><div class="s">193 picks con prob ≥70%</div></div>
+    <div class="kpi"><div class="v">22</div><div class="l">ligas de fútbol</div><div class="s">momios por demanda</div></div>
+  </div>
+
+  <!-- Récord por deporte -->
+  <h2>Récord por deporte</h2>
+  <p class="note">Acierto real (%). El número gris es cuántos picks lleva cada deporte.</p>
+  <div class="card" id="porDeporte"></div>
+
+  <!-- Calibración -->
+  <h2>¿Lo que decimos = lo que ganamos?</h2>
+  <p class="note">Honestidad pura: por cada franja de probabilidad, comparamos lo que el modelo <b>dice</b> vs lo que <b>gana</b> en la realidad. Si coinciden, estamos calibrados.</p>
+  <div class="legend"><span><i style="background:var(--model)"></i>lo que decimos</span><span><i style="background:var(--real)"></i>lo que ganamos</span></div>
+  <div class="card" id="calib"></div>
+  <p class="note" style="margin-top:10px">La franja <b style="color:var(--real)">70%+ es oro</b> (ganamos ~79%). La de <b style="color:var(--warn)">65-70% miente</b> (decimos 67%, ganamos 60%) — por eso el email destaca solo el tier ≥70%. Los <b>volados 50-55%</b> (ganan 49%) no valen la pena.</p>
+
+  <!-- Tier alta confianza por deporte -->
+  <h2>Tier 🔒 alta confianza (≥70%) por deporte</h2>
+  <p class="note">La zona donde más atinamos — lo que ahora encabeza tu email diario.</p>
+  <div class="card" id="alta"></div>
+
+  <!-- Tendencia -->
+  <h2>Tendencia semanal</h2>
+  <p class="note">Acierto por semana (todas las ligas/deportes juntos). La última semana lleva pocos juegos (descanso FIFA).</p>
+  <div class="panel"><svg id="trend" viewBox="0 0 640 180" role="img" aria-label="Tendencia semanal de acierto"></svg></div>
+
+  <!-- Qué está validado -->
+  <h2>Qué está validado (y qué no)</h2>
+  <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px" id="valgrid">
+    <div class="panel">
+      <h3 class="ok">✓ Sí mejora, y ya corre</h3>
+      <ul class="clean">
+        <li><b>Fútbol anclado al mercado</b>: el mercado le gana al modelo → publicamos su probabilidad.</li>
+        <li><b>Tenis ATP recalibrado</b> (shrink validado OOS: el modelo era optimista).</li>
+        <li><b>Tier ≥70%</b>: 193 picks, 79% real. Encabeza el email.</li>
+        <li><b>Cobertura por demanda</b>: momios solo donde hay picks → cuota cuidada, más ligas.</li>
+      </ul>
+    </div>
+    <div class="panel">
+      <h3 class="no">✗ Lo probé y NO se gana el lugar</h3>
+      <ul class="clean">
+        <li><b>Calibración Platt</b>: no mejora Brier OOS en ningún deporte → no se aplica.</li>
+        <li><b>Gate de alineaciones</b>: el XI confirmado no sube el acierto (el modelo ya lo usa).</li>
+        <li><b>Portero NHL</b>: no existe el feed → no se inventa.</li>
+        <li><b>Dinero / EV / Kelly</b>: apagado a propósito.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="disc">
+    <b>Lee esto con cabeza fría.</b> Acertar más no es lo mismo que ganar dinero: la forma fácil de subir el %
+    es apostar favoritos cortos. La métrica que de verdad dice si somos buenos es el <b>CLV</b> (si le ganamos al
+    precio de cierre), que se está midiendo aparte y necesita ~2-3 semanas de datos. Este tablero mide
+    <b>honestidad y acierto</b>, no rentabilidad. Nada aquí es garantía: son probabilidades verificadas contra
+    resultados reales. Sin dinero, sin EV, sin stake.
+  </div>
+
+  <div class="foot">Reto 13M — reto13m.lovable.app · datos al 9 nov 2026</div>
+</div>
+
+<script>
+const porDeporte=[
+ {d:'Fútbol',n:1077,hit:59.0,tag:'anclado a mercado'},
+ {d:'Tenis WTA',n:227,hit:59.9,tag:''},
+ {d:'Tenis ATP',n:152,hit:57.2,tag:'shrink validado'},
+ {d:'NBA',n:124,hit:65.3,tag:'mejor modelo'},
+ {d:'NHL',n:94,hit:62.8,tag:''},
+ {d:'NFL',n:56,hit:58.9,tag:'edge vs cierre'},
+];
+const buckets=[
+ {b:'50-55',n:402,dice:52.6,real:49.5,bad:true},
+ {b:'55-60',n:598,dice:57.5,real:59.5},
+ {b:'60-65',n:380,dice:62.1,real:60.0},
+ {b:'65-70',n:157,dice:67.2,real:60.5,bad:true},
+ {b:'70-80',n:139,dice:73.8,real:79.9,good:true},
+ {b:'80+',n:54,dice:84.3,real:77.8,good:true},
+];
+const alta=[
+ {d:'NBA',n:41,hit:85.4},{d:'Fútbol',n:27,hit:81.5},{d:'NHL',n:10,hit:80.0},
+ {d:'Tenis WTA',n:54,hit:77.8},{d:'Tenis ATP',n:50,hit:76.0},{d:'NFL',n:11,hit:72.7},
+];
+const weeks=[
+ {w:'12 oct',n:296,hit:61.8},{w:'19 oct',n:442,hit:56.1},{w:'26 oct',n:472,hit:59.3},
+ {w:'02 nov',n:511,hit:61.1},{w:'09 nov',n:9,hit:88.9},
+];
+
+function barRows(el,data,colorFn){
+  el.innerHTML=data.map(r=>{
+    const w=Math.max(6,Math.min(100,r.hit));
+    const col=colorFn?colorFn(r):'var(--real)';
+    const dark = r.hit>=60;
+    return `<div class="row">
+      <div class="name">${r.d}</div>
+      <div class="n">${r.n}</div>
+      <div class="track"><div class="fill" style="width:${w}%;background:${col}"><span style="color:${dark?'#06240f':'#06240f'}">${r.hit.toFixed(1)}%</span></div></div>
+      <div class="tag">${r.tag||''}</div>
+    </div>`;
+  }).join('');
+}
+barRows(document.getElementById('porDeporte'),porDeporte);
+barRows(document.getElementById('alta'),alta,()=> 'var(--real)');
+
+// Calibración: marcas dice vs real sobre eje 40-90%
+(function(){
+  const el=document.getElementById('calib');
+  const min=40,max=90,span=max-min;
+  const pos=v=>((v-min)/span)*100;
+  el.innerHTML=buckets.map(r=>{
+    const flag = r.good?'<span class="flag good">oro</span>':r.bad?'<span class="flag bad">ojo</span>':'';
+    return `<div class="calrow">
+      <div class="b">${r.b}</div>
+      <div class="caltrack">
+        <div class="dot dice" style="left:${pos(r.dice)}%" title="dice ${r.dice}%"></div>
+        <div class="dot real" style="left:${pos(r.real)}%" title="gana ${r.real}%"></div>
+        <div class="mk dice" style="left:${pos(r.dice)}%;top:-15px">${r.dice}</div>
+        <div class="mk real" style="left:${pos(r.real)}%;bottom:-15px">${r.real}</div>
+      </div>
+      <div class="cn">${r.n} ${flag}</div>
+    </div>`;
+  }).join('');
+})();
+
+// Tendencia semanal (línea SVG)
+(function(){
+  const svg=document.getElementById('trend');
+  const W=640,H=180,pl=38,pr=16,pt=16,pb=30;
+  const xs=(i)=>pl+(i/(weeks.length-1))*(W-pl-pr);
+  const ylo=45,yhi=95;
+  const ys=(v)=>pt+(1-(v-ylo)/(yhi-ylo))*(H-pt-pb);
+  let g='';
+  // grid 50/60/70/80/90
+  [50,60,70,80,90].forEach(v=>{
+    g+=`<line x1="${pl}" y1="${ys(v)}" x2="${W-pr}" y2="${ys(v)}" stroke="var(--line)" stroke-width="1"/>`;
+    g+=`<text x="${pl-6}" y="${ys(v)+3}" text-anchor="end" font-size="10" fill="var(--ink3)">${v}%</text>`;
+  });
+  // línea 50% de referencia (volado)
+  g+=`<line x1="${pl}" y1="${ys(50)}" x2="${W-pr}" y2="${ys(50)}" stroke="var(--warn)" stroke-dasharray="3 3" stroke-width="1" opacity=".6"/>`;
+  const pts=weeks.map((d,i)=>[xs(i),ys(d.hit)]);
+  const path=pts.map((p,i)=>(i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1)).join(' ');
+  g+=`<path d="${path}" fill="none" stroke="var(--real)" stroke-width="2.5" stroke-linejoin="round"/>`;
+  weeks.forEach((d,i)=>{
+    const faint = d.n<30;
+    g+=`<circle cx="${xs(i)}" cy="${ys(d.hit)}" r="${faint?3:4.5}" fill="var(--real)" opacity="${faint?.4:1}"/>`;
+    g+=`<text x="${xs(i)}" y="${ys(d.hit)-9}" text-anchor="middle" font-size="10" font-weight="700" fill="var(--ink)" opacity="${faint?.5:1}">${d.hit.toFixed(0)}%</text>`;
+    g+=`<text x="${xs(i)}" y="${H-10}" text-anchor="middle" font-size="10" fill="var(--ink3)">${d.w}</text>`;
+  });
+  svg.innerHTML=g;
+})();
+</script>
+</body>
+</html>

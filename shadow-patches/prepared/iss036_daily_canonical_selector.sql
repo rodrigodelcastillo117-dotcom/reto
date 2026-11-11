@@ -1,0 +1,155 @@
+-- ============================================================================
+-- iss036 — DAILY PICK CANÓNICO (reemplazo staged de v_reto13m_daily) · STAGED
+-- Corrige AUDIT_NO_PASS 5606928639 (STOP-SHIP v_reto13m_daily) + §24 del prompt.
+-- NO APLICAR bajo freeze. NO va en supabase/migrations. Depende de iss033.
+-- ============================================================================
+-- CONTAMINACIÓN de public.v_reto13m_daily (verificada en pg_get_viewdef, 2026-09-09):
+--   1) btts_no := 100 - btts_yes   (COMPLEMENTO derivado, no del mismo snapshot). §16/N.
+--   2) candidato "Over 2.5 goles" := (markets->>'over25')  SIN mirar la línea real del
+--      proveedor => ofrece Over 2.5 cuando la línea real es 3.5 (Vancouver, Atlanta,
+--      Portland MLS hoy). STOP-SHIP §15/§18.
+--   3) set de candidatos + umbrales (45..83.3) hardcodeados en la vista.
+--
+-- PRINCIPIO (§24, §49): el daily NO recalcula probabilidad. SELECCIONA y RANKEA
+-- filas de la superficie canónica. Prohibido: recalcular P, hardcodear 2.5,
+-- complemento BTTS, mercado con línea distinta a la del proveedor.
+--
+-- FUENTE CANÓNICA: v2.soccer_prediction_v2_staged (iss033) — 1 fila/evento con
+-- p_home/p_draw/p_away, btts_yes+btts_no EXPLÍCITOS del mismo snapshot, y O/U
+-- (p_over/p_under) SOLO sobre la línea REAL del proveedor (over_line, line_source).
+-- ============================================================================
+
+-- ── GATE STATUS por evento (iss045 fn_event_gate_status) — coherence_ok && !suppress.
+-- coherence_ok: los escalares publicados (p_home/p_draw/p_away/btts_yes/p_over) SUMAN la
+--   matriz PERSISTIDA c.score_dist dentro de 0.2pp (una fila corrupta => coherence_ok=false).
+-- suppress: discrepancia real (>=12pp) vs no-vig de v_momios_confiables (columnas REALES
+--   home_ml/draw_ml/away_ml/over_odds/under_odds); NO_MARKET_DIAGNOSTIC/OK no suprimen.
+-- Odds de contexto (nunca P_RETO). top_only_eligible = READY && coherence_ok && !suppress.
+-- F1 (5620477307, iss036): CROSS-SNAPSHOT LEAK FIX. The gate is keyed by the FULL
+--   staged PK (canonical_event_id, decision_time, model_version). Before, it exposed
+--   only canonical_event_id, so with >1 snapshot per event an eligible gate row from
+--   snapshot A could join a corrupt candidate row of snapshot B and leak. Each staged
+--   row now carries its OWN gate status; downstream views join on ALL THREE keys.
+create or replace view v2.v_soccer_event_gate as
+select c.espn_event_id as canonical_event_id,
+       c.decision_time, c.model_version,               -- F1: FULL staged PK exposed & keyed
+       g.coherence_ok, g.disc_flag, coalesce(g.suppress,false) as suppress,
+       (c.model_status='READY_UNVALIDATED' and coalesce(g.coherence_ok,false) and not coalesce(g.suppress,false)) as top_only_eligible,
+       g.gate_reason
+from v2.soccer_prediction_v2_staged c
+-- F3 (5620477307): ML odds AS-OF decision_time — latest VALID PREGAME confiable row.
+--   The cutoff mc.snapshot_at <= c.decision_time makes eligibility REPLAY-STABLE: a
+--   post-decision odds row can never retroactively flip an event's gate status.
+left join lateral (
+  select mc.home_ml, mc.draw_ml, mc.away_ml
+  from public.v_momios_confiables mc
+  where mc.espn_event_id = c.espn_event_id and mc.confiable is true
+    and mc.snapshot_at <= c.decision_time
+  order by mc.snapshot_at desc limit 1
+) oml on true
+-- F4 (5620477307): over/under odds from the latest valid row at the EXACT canonical
+--   line (mc.over_line = c.over_line) — a SEPARATE lateral. A market quoted at a
+--   different line (e.g. 5.5 vs canonical 3.5) is NEVER used for the total diagnostic.
+--   If no exact-line odds <= decision exist, over/under odds are NULL so the total
+--   diagnostic is unavailable/fail-neutral (never a 5.5 price vs a P_OVER@3.5 model).
+left join lateral (
+  select mc.over_odds, mc.under_odds
+  from public.v_momios_confiables mc
+  where mc.espn_event_id = c.espn_event_id and mc.confiable is true
+    and mc.snapshot_at <= c.decision_time
+    and mc.over_line = c.over_line
+  order by mc.snapshot_at desc limit 1
+) oou on true
+-- F2 (5620477307): fn_event_gate_status now checks EVERY candidate field against the
+--   persisted matrix (p_under, btts_no, top_scores added). New arg order threaded here.
+left join lateral v2.fn_event_gate_status(
+  c.score_dist, c.p_home, c.p_draw, c.p_away, c.p_over, c.p_under, c.over_line,
+  c.btts_yes, c.btts_no, c.top_scores,
+  oml.home_ml, oml.draw_ml, oml.away_ml, oou.over_odds, oou.under_odds
+) g on true;
+
+-- Superficie de ANÁLISIS: TODOS los eventos READY (incluye suprimidos e incoherentes) — visibles.
+-- F1: join on the FULL PK (no event-id-only join anywhere) so each staged row sees its
+--     own gate status even when multiple snapshots of the same event coexist.
+create or replace view v2.v_soccer_analysis_all as
+select c.*, gt.coherence_ok, gt.disc_flag, gt.suppress, gt.top_only_eligible, gt.gate_reason
+from v2.soccer_prediction_v2_staged c
+left join v2.v_soccer_event_gate gt
+  on gt.canonical_event_id = c.espn_event_id
+ and gt.decision_time    = c.decision_time
+ and gt.model_version    = c.model_version
+where c.model_status = 'READY_UNVALIDATED';
+
+-- Candidatos canónicos: 1X2 (3) + BTTS sí/no (explícitos) + O/U a la línea REAL.
+-- Cada candidato lleva su market/side/line y su probabilidad canónica tal cual.
+-- 5619542059-1/3: EXCLUYE eventos incoherentes O suprimidos (coherence_ok && !suppress).
+-- F1: FULL-PK join (canonical_event_id + decision_time + model_version). The gate is
+--   1 row per staged row, so this is a 1:1 join -> no N×M duplication and no chance an
+--   eligible snapshot's gate row selects a corrupt snapshot's candidate rows.
+-- F5: OU OVER/UNDER candidate rows now expose the settlement pair canonical_push
+--   (=c.p_push) and canonical_line_type (=c.ou_line_type); NULL for non-OU candidates.
+--   Handicap/other settlement stays DERIVABLE from the persisted score_dist via the
+--   single-source v2.fn_total_weights (no extra handicap columns; handicaps are not
+--   candidate markets here).
+create or replace view v2.v_soccer_daily_candidates as
+select c.espn_event_id as canonical_event_id,
+       c.home_team, c.away_team, c.competition_id, c.kickoff, c.decision_time,
+       c.model_version, c.feature_snapshot_id as model_snapshot_id,
+       cand.canonical_market, cand.canonical_side, cand.canonical_line, cand.canonical_probability,
+       cand.canonical_push, cand.canonical_line_type,       -- F5: OU settlement (NULL for non-OU)
+       c.sample_home, c.sample_away
+from v2.soccer_prediction_v2_staged c
+join v2.v_soccer_event_gate gt
+  on gt.canonical_event_id = c.espn_event_id
+ and gt.decision_time    = c.decision_time
+ and gt.model_version    = c.model_version
+ and gt.top_only_eligible                                   -- <-- coherence_ok && !suppress
+cross join lateral (
+  values
+    ('1X2'::text, 'HOME'::text, null::numeric, c.p_home,    null::numeric, null::text),
+    ('1X2',       'DRAW',        null,          c.p_draw,    null,          null),
+    ('1X2',       'AWAY',        null,          c.p_away,    null,          null),
+    ('BTTS',      'YES',         null,          c.btts_yes,  null,          null),
+    ('BTTS',      'NO',          null,          c.btts_no,   null,          null),   -- del MISMO snapshot, NO 100-yes
+    -- O/U SOLO a la línea real del proveedor; si over_line es null => no hay candidato O/U.
+    -- canonical_push/canonical_line_type acompañan el settlement de esta línea real.
+    ('OU',        'OVER',        c.over_line,   case when c.over_line is not null then c.p_over end,  c.p_push, c.ou_line_type),
+    ('OU',        'UNDER',       c.over_line,   case when c.over_line is not null then c.p_under end, c.p_push, c.ou_line_type)
+) cand(canonical_market, canonical_side, canonical_line, canonical_probability, canonical_push, canonical_line_type)
+where c.model_status = 'READY_UNVALIDATED'          -- fail-closed: sólo eventos con P_RETO
+  and cand.canonical_probability is not null;
+
+-- Ranking diario: NO crea probabilidad; ordena candidatos por probabilidad canónica
+-- (+ desempates por muestra y kickoff). rank_dia sobre (día MX). Pick del Día = rank 1.
+create or replace view v2.v_soccer_daily_canonical as
+with cand as (
+  select d.*,
+    (d.kickoff at time zone 'America/Mexico_City')::date as dia_mx,
+    least(coalesce(d.sample_home,0), coalesce(d.sample_away,0)) as muestra_min
+  from v2.v_soccer_daily_candidates d
+),
+-- mejor candidato POR EVENTO (para no listar 7 filas del mismo partido)
+best_per_event as (
+  select *, row_number() over (
+      partition by canonical_event_id
+      order by canonical_probability desc, muestra_min desc, canonical_market
+    ) as rn_event
+  from cand
+),
+ranked as (
+  select b.*, row_number() over (
+      partition by dia_mx
+      order by canonical_probability desc, muestra_min desc, kickoff, canonical_event_id
+    ) as rank_dia
+  from best_per_event b
+  where rn_event = 1
+)
+select 'FUT'::text as deporte, canonical_event_id, home_team, away_team, competition_id,
+       kickoff, dia_mx, decision_time, model_version, model_snapshot_id,
+       canonical_market, canonical_side, canonical_line, canonical_probability,
+       muestra_min, rank_dia, (rank_dia = 1) as es_mejor_del_dia
+from ranked;
+
+-- Contrato de salida (§24): canonical_event_id, canonical_market, canonical_side,
+-- canonical_line, canonical_probability, model_snapshot_id, rank_dia. Sin recomputo,
+-- sin 2.5 fijo, sin complemento BTTS, O/U sólo a la línea real del proveedor.
