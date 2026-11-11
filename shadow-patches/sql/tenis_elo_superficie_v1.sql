@@ -47,3 +47,12 @@ end $b$;
 -- 3) PENDIENTE (hacer CON la DB, para testear): en v_reto_tenis_predicciones_v1,
 --    reemplazar r1.rating/r2.rating por blend  rating = 0.8*global + 0.2*coalesce(surface,global)
 --    con surface = tenis_superficie(a.torneo, a.tour) via LEFT JOIN tenis_elo_surface_prod.
+
+-- ===== APLICADO 2026-11-11 =====
+-- 3) BLEND aplicado en v_reto_tenis_predicciones_v1 (CTE base):
+--    rb = 0.8*global + 0.2*COALESCE(surface, global), surface = tenis_superficie(torneo,tour)
+--    vía LEFT JOIN tenis_elo_surface_prod. Se expone columna 'superficie'. Verificado:
+--    picks sanos, tenis sigue en v_reto13m_daily (feed del front) con ratings nuevos.
+-- 4) Cron: select cron.schedule('tenis-elo-superficie','50 */8 * * *','select public.tenis_elo_surface_refresh();');
+--    (corre 10 min despues del Elo global). matview refrescado para que el front lo tome.
+-- 5) reto_modelo_validacion_v1 (tenis GANADOR): nota v2 añadida con el delta OOS honesto.
