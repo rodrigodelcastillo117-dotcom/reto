@@ -43,8 +43,9 @@ serve(async (req) => {
     }).join("");
     const intl = (c.internacional || []).map((i: any) => `${i.liga} (${i.n})`).join(" · ") || "ninguna próxima";
     const clvTxt = clv.estado === "recolectando"
-      ? `🕐 recolectando (${clv.dias_datos||0} día(s), ${clv.eventos||0} eventos) — concluyente en ~2-3 semanas`
-      : `${(clv.clv_pp>0?"+":"")}${clv.clv_pp} pp (${clv.estado})`;
+      ? `🕐 recolectando (${clv.eventos||0} eventos) — aún sin señal concluyente`
+      : `${(clv.clv_pp>0?"+":"")}${clv.clv_pp} pp · le gana al cierre ${clv.gano_cierre_pct ?? "—"}% (${clv.eventos||0} picks · ${clv.alcance||"motor ESPN"}) · ${clv.estado}`;
+    const clvSoccer = clv.soccer ? `<br><span style="color:#9ca3af;font-size:12px;">⚽ Fútbol: ${clv.soccer}</span>` : "";
 
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;background:#0a0a0a;font-family:Arial,Helvetica,sans-serif;color:#e5e5e5;">
@@ -60,7 +61,7 @@ serve(async (req) => {
       ✅ <strong>${tot.hit ?? "—"}%</strong> global <span style="color:#6b7280;">(${tot.n ?? 0} picks)</span><br>
       <span style="color:#22c55e;">🔒 Alta confianza ≥70%: <strong>${tot.hit_alta ?? "—"}%</strong></span> <span style="color:#6b7280;">(${tot.n_alta ?? 0})</span><br>
       📈 Forma: 7 días <strong>${f7.hit ?? "—"}%</strong> (${f7.n ?? 0}) · 30 días ${f30.hit ?? "—"}% (${f30.n ?? 0})<br>
-      💹 CLV: ${clvTxt}
+      💹 CLV: ${clvTxt}${clvSoccer}
     </div>
   </div>
 
