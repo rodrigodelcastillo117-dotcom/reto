@@ -86,12 +86,26 @@ CREATE OR REPLACE VIEW public.v_reto_tablero_validacion_v1 AS
                    FROM g
                   WHERE g.kickoff > (now() - '30 days'::interval))) AS j
         ), clv_m AS (
-         SELECT v_reto_clv_motor_v1.deporte,
-            v_reto_clv_motor_v1.clv_pp,
-            v_reto_clv_motor_v1.le_gano_al_cierre,
-            v_reto_clv_motor_v1.kickoff
-           FROM v_reto_clv_motor_v1
-          WHERE v_reto_clv_motor_v1.clv_pp IS NOT NULL
+         SELECT DISTINCT ON (u.espn_event_id) u.espn_event_id,
+            u.deporte,
+            u.clv_pp,
+            u.le_gano_al_cierre,
+            u.kickoff
+           FROM ( SELECT reto_clv_motor_hist_v1.espn_event_id,
+                    reto_clv_motor_hist_v1.deporte,
+                    reto_clv_motor_hist_v1.clv_pp,
+                    reto_clv_motor_hist_v1.le_gano_al_cierre,
+                    reto_clv_motor_hist_v1.kickoff
+                   FROM public.reto_clv_motor_hist_v1
+                UNION ALL
+                 SELECT v_reto_clv_motor_v1.espn_event_id,
+                    v_reto_clv_motor_v1.deporte,
+                    v_reto_clv_motor_v1.clv_pp,
+                    v_reto_clv_motor_v1.le_gano_al_cierre,
+                    v_reto_clv_motor_v1.kickoff
+                   FROM v_reto_clv_motor_v1
+                  WHERE v_reto_clv_motor_v1.clv_pp IS NOT NULL AND v_reto_clv_motor_v1.kickoff < now()) u
+          ORDER BY u.espn_event_id
         ), clv_pd AS (
          SELECT jsonb_agg(jsonb_build_object('d', x.deporte, 'n', x.n, 'gano_pct', x.gano, 'clv_pp', x.clv) ORDER BY x.n DESC) AS j
            FROM ( SELECT clv_m.deporte,
