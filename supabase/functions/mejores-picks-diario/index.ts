@@ -404,6 +404,41 @@ serve(async (req) => {
       .order("commence_time");
     const internacional = (intlRaw || []).filter((g: any) => intlKeys.some((k) => String(g.sport_key || "").includes(k)));
 
+    // 🔄 Mercado CONTRARIAN: si un (deporte,mercado) acierta <45% fuera de muestra (validado), el
+    // sistema manda el LADO OPUESTO automáticamente. Gate de integridad: solo invierte segmentos que
+    // reprueban OOS con margen y muestra; nunca por ruido. Hoy no hay ninguno -> no cambia nada.
+    try {
+      const { data: pol } = await sb.from("v_reto_polaridad_mercado_v1").select("deporte, mercado").eq("invertir", true);
+      const invSet = new Set((pol || []).map((x: any) => `${String(x.deporte).toLowerCase()}|${String(x.mercado).toLowerCase()}`));
+      if (invSet.size > 0) {
+        const norm = (s: string) => String(s || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+        for (const p of lista) {
+          const key = `${String(p.deporte || "").toLowerCase()}|${String(p.mercado || "").toLowerCase()}`;
+          if (!invSet.has(key)) continue;
+          const raw = typeof p.prob_pct === "string" ? parseFloat(p.prob_pct) : (p.prob_pct as number);
+          const mkt = String(p.mercado || "").toLowerCase();
+          let flipeado = false;
+          if (mkt.includes("btts")) {
+            p.pick = /\bno\b/i.test(p.pick) ? String(p.pick).replace(/\bno\s*/i, "").trim() : ("No " + p.pick);
+            flipeado = true;
+          } else {
+            // mercado de equipo: el rival en "A vs B"
+            const partes = String(p.partido || "").split(/\s+vs\.?\s+|\s+-\s+/i);
+            if (partes.length === 2) {
+              const a = partes[0].trim(), b = partes[1].trim();
+              const pk = norm(p.pick);
+              const rival = pk.includes(norm(a)) ? b : pk.includes(norm(b)) ? a : null;
+              if (rival) { p.pick = rival; flipeado = true; }
+            }
+          }
+          if (flipeado) {
+            if (isFinite(raw)) p.prob_pct = (100 - raw).toFixed(1);
+            p.mercado = (p.mercado || "") + " 🔄 contrarian";
+          }
+        }
+      }
+    } catch (_e) { /* sin inversión */ }
+
     // 📊 Récord verificado en vivo (para el encabezado del email). Falla suave: si no hay, se omite.
     let record: any = null;
     try {
