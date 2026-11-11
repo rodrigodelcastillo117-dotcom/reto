@@ -109,7 +109,22 @@ CREATE OR REPLACE VIEW public.v_reto_tablero_validacion_v1 AS
                 'clv_pp', ( SELECT round(avg(clv_m.clv_pp), 2) FROM clv_m),
                 'gano_cierre_pct', ( SELECT round(100.0 * avg(clv_m.le_gano_al_cierre::integer::numeric), 1) FROM clv_m),
                 'por_deporte', ( SELECT clv_pd.j FROM clv_pd),
-                'soccer', 'pendiente — el cierre de fútbol aún se está estableciendo',
+                'soccer', ( SELECT jsonb_build_object(
+                        'fuente', 'evidencia_mercado_samebook_dk',
+                        'alcance', '1X2/ML — cierre DraftKings T-0..30min (mediana ~7min), mismo libro',
+                        'eventos', s.picks_con_cierre,
+                        'clv_pp', s.drift_promedio_pp,
+                        'gano_cierre_pct', s.pct_clv_positivo,
+                        'desde', s.desde,
+                        'hasta', s.hasta,
+                        'estado',
+                        CASE
+                            WHEN s.picks_con_cierre < 100 THEN 'preliminar'::text
+                            WHEN s.pct_clv_positivo >= 55::numeric THEN 'positivo'::text
+                            WHEN s.pct_clv_positivo <= 45::numeric THEN 'negativo'::text
+                            ELSE 'neutral'::text
+                        END)
+                   FROM public.reto_clv_cache_v1 s WHERE s.deporte = 'soccer'::text ),
                 'estado',
                 CASE
                     WHEN ( SELECT count(*) FROM clv_m) < 30 THEN 'recolectando'::text

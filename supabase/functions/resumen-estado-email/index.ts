@@ -45,7 +45,10 @@ serve(async (req) => {
     const clvTxt = clv.estado === "recolectando"
       ? `🕐 recolectando (${clv.eventos||0} eventos) — aún sin señal concluyente`
       : `${(clv.clv_pp>0?"+":"")}${clv.clv_pp} pp · le gana al cierre ${clv.gano_cierre_pct ?? "—"}% (${clv.eventos||0} picks · ${clv.alcance||"motor ESPN"}) · ${clv.estado}`;
-    const clvSoccer = clv.soccer ? `<br><span style="color:#9ca3af;font-size:12px;">⚽ Fútbol: ${clv.soccer}</span>` : "";
+    const sc: any = (clv.soccer && typeof clv.soccer === "object") ? clv.soccer : null;
+    const clvSoccer = sc
+      ? `<br><span style="color:#9ca3af;font-size:12px;">⚽ Fútbol (cierre DraftKings, mismo libro): ${(sc.clv_pp>0?"+":"")}${sc.clv_pp} pp · le gana al cierre ${sc.gano_cierre_pct ?? "—"}% (${sc.eventos||0} picks · ${sc.estado})</span>`
+      : (typeof clv.soccer === "string" ? `<br><span style="color:#9ca3af;font-size:12px;">⚽ Fútbol: ${clv.soccer}</span>` : "");
 
     const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head>
 <body style="margin:0;background:#0a0a0a;font-family:Arial,Helvetica,sans-serif;color:#e5e5e5;">
